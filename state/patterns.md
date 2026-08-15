@@ -42,6 +42,41 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-017 — Truncation detected only in one direction, and an error that ate its own evidence
+
+- **Count:** 4 identical faults on one task (live cycles 40-42, 46-47)
+- **Class:** A validity check that covers one failure direction and silently
+  admits the opposite one, compounded by an error message that names the
+  symptom while discarding the artefact that would explain it. Either alone is
+  a bug; together they guarantee the fault repeats undiagnosed.
+- **Instance, both halves.**
+  1. `llm.complete` treated a reply as good if its content was non-empty. A
+     reply that ran INTO `max_tokens` is non-empty -- so a truncated payload
+     passed as healthy, was billed `ok=True`, and failed thousands of lines
+     later as "unparseable JSON" with no connection to its real cause.
+     Measured: cycle 47 returned exactly `out=32000` against a cap of 32,000,
+     and the text stopped mid-way through a Python string literal.
+  2. The parse error said only "engine returned no parseable JSON object". The
+     reply was thrown away. Four occurrences produced four identical messages
+     and zero information; the diagnosis only became possible once the message
+     carried the length and the first and last 300 characters -- at which point
+     the truncation was obvious in one reading.
+- **Structural fix.** `finish_reason == "length"` is the authoritative
+  truncation signal, with completion-tokens-at-cap as corroboration; a
+  truncated reply now fails at the call, named for what it is, and is billed
+  `ok=False`. The parse error carries bounded evidence -- enough to tell
+  truncation from prose from a wrong shape, capped so a runaway reply cannot
+  flood the journal. `meristem/llm.py`, `meristem/engine.py`.
+- **Relation to P-014, which this partly corrects.** P-014 concluded no call
+  had ever been truncated -- true of the data available then, and false now:
+  the check that would have detected truncation did not exist, so the evidence
+  could not have appeared. Both failure modes are real: an over-large task can
+  make the model decline (P-014) *or* run past the cap (P-017), and they look
+  nothing alike from the outside.
+- **The rule:** an error must preserve what is needed to diagnose it. A message
+  that reports only its own name converts a recurring fault into a recurring
+  mystery.
+
 ## P-016 — Two opposite failures wearing the same label
 
 - **Count:** 1 (live cycles 40-42, the circuit breaker's first real firing)

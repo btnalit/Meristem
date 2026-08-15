@@ -150,13 +150,28 @@ def _complete_one(
                 slot=slot["id"],
                 raw=data,
             )
-            # Bill the attempt before judging it: the tokens are spent either way.
+            # A reply can fail in two directions, and we only ever checked one.
+            # Empty content was caught (P-004); a reply that ran INTO the cap
+            # was not -- it arrives non-empty, is judged fine, and then fails
+            # far downstream as "unparseable JSON" with the evidence gone
+            # (P-017). finish_reason is the authoritative signal; a completion
+            # exactly at max_tokens is corroboration, not proof.
+            finish = choice.get("finish_reason")
+            truncated = finish == "length" or (
+                limit and completion.completion_tokens >= limit
+            )
             attempts_log.append({"role": role, "completion": completion,
-                                 "ok": bool(text.strip())})
+                                 "ok": bool(text.strip()) and not truncated})
             if not text.strip():
                 raise ValueError(
-                    f"empty content (finish_reason={choice.get('finish_reason')}); "
+                    f"empty content (finish_reason={finish}); "
                     "raise max_tokens -- reasoning consumed the budget"
+                )
+            if truncated:
+                raise ValueError(
+                    f"reply truncated at {completion.completion_tokens} tokens "
+                    f"(finish_reason={finish}, cap={limit}); the task needs "
+                    "splitting or the slot needs a larger max_tokens"
                 )
             return completion
         except urllib.error.HTTPError as exc:
