@@ -229,6 +229,15 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
             "usd": round(result.usd, 6),
             "approved_by": [v.get("slot") for v in result.votes
                             if v.get("verdict") == "approve"],
+            # A rejection that records no reason teaches nothing: the candidate
+            # is discarded with its branch, so if the objection is not captured
+            # here it is gone. Rejections are the raw material of the pattern
+            # register -- they must outlive the worktree.
+            "rejected_by": [
+                {"slot": v.get("slot"), "weakens_gate": v.get("weakens_gate"),
+                 "reasons": [str(r)[:200] for r in (v.get("reasons") or [])[:3]]}
+                for v in result.votes if v.get("verdict") != "approve"
+            ],
             "reason": result.reason,
             "branch": branch if keep else "",
         })
