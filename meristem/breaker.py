@@ -14,17 +14,58 @@ from __future__ import annotations
 from . import JOURNAL, read_jsonl
 
 
+def _cycles_for(task: str) -> list[dict]:
+    return [
+        row
+        for row in read_jsonl(JOURNAL)
+        if row.get("kind") == "cycle" and row.get("why") == task
+    ]
+
+
+def _faulted_cycles() -> set[int]:
+    """Cycle numbers that ended in a fault rather than a verdict."""
+    return {
+        row.get("cycle")
+        for row in read_jsonl(JOURNAL)
+        if row.get("kind") == "fault"
+    }
+
+
 def rejections_for(task: str) -> int:
-    """Count how many cycle records for this task had outcome 'rejected'."""
+    """Rejections that were actually JUDGED -- faults do not count.
+
+    A fault and a rejection look identical in the outcome field (both land as
+    'rejected') but they mean opposite things. A rejection is the gates
+    working: the change was seen and refused, and retrying the same approach
+    will be refused again. A fault is the MECHANISM failing -- an unparseable
+    reply, a rate limit -- where the proposal was never judged at all and a
+    retry is exactly the right move.
+
+    Counting them together parks a task the gates never objected to, which is
+    what happened to memory-graph/edges.py: three unparseable replies, zero
+    verdicts, parked as though it had been refused three times (P-016).
+    """
+    faulted = _faulted_cycles()
     return sum(
         1
-        for row in read_jsonl(JOURNAL)
-        if row.get("kind") == "cycle"
-        and row.get("why") == task
-        and row.get("outcome") == "rejected"
+        for row in _cycles_for(task)
+        if row.get("outcome") == "rejected" and row.get("cycle") not in faulted
     )
 
 
-def should_park(task: str, limit: int = 3) -> bool:
-    """True when the task has been rejected enough times to park."""
-    return rejections_for(task) >= limit
+def faults_for(task: str) -> int:
+    """Cycles on this task where the mechanism failed before any verdict."""
+    faulted = _faulted_cycles()
+    return sum(1 for row in _cycles_for(task) if row.get("cycle") in faulted)
+
+
+def should_park(task: str, limit: int = 3, fault_limit: int = 6) -> bool:
+    """True when the task should be set aside.
+
+    Two independent thresholds, because the two failure modes deserve
+    different patience: a judged rejection repeats deterministically, so the
+    limit is tight; a fault is often transient, so it gets a looser one --
+    but not an unlimited one, since a task the mechanism can never express is
+    also a task worth parking.
+    """
+    return rejections_for(task) >= limit or faults_for(task) >= fault_limit

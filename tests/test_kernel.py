@@ -144,6 +144,49 @@ class TestImmuneSelfTest(unittest.TestCase):
         self.assertEqual(deterministic.vault_reference_invariant(), [])
 
 
+class TestBreakerDistinguishesFaults(unittest.TestCase):
+    """P-016: a fault and a judged rejection both land as outcome 'rejected'
+    but mean opposite things. Counting them together parks a task the gates
+    never objected to."""
+
+    def setUp(self):
+        self.rows = []
+        self._real = breaker.read_jsonl
+        breaker.read_jsonl = lambda _p: self.rows
+
+    def tearDown(self):
+        breaker.read_jsonl = self._real
+
+    def test_faults_do_not_count_as_rejections(self):
+        task = "a task the mechanism could not express"
+        for cycle in (1, 2, 3):
+            self.rows.append({"kind": "cycle", "cycle": cycle, "why": task,
+                              "outcome": "rejected"})
+            self.rows.append({"kind": "fault", "cycle": cycle, "error": "unparseable"})
+        self.assertEqual(breaker.rejections_for(task), 0)
+        self.assertEqual(breaker.faults_for(task), 3)
+        self.assertFalse(breaker.should_park(task),
+                         "parked a task no gate ever refused")
+
+    def test_judged_rejections_still_park(self):
+        task = "a task the gates refused"
+        for cycle in (1, 2, 3):
+            self.rows.append({"kind": "cycle", "cycle": cycle, "why": task,
+                              "outcome": "rejected"})
+        self.assertEqual(breaker.rejections_for(task), 3)
+        self.assertTrue(breaker.should_park(task))
+
+    def test_persistent_faults_eventually_park(self):
+        """Patience for faults is looser, not unlimited: a task the mechanism
+        can never express is also worth setting aside."""
+        task = "a task that always faults"
+        for cycle in range(1, 7):
+            self.rows.append({"kind": "cycle", "cycle": cycle, "why": task,
+                              "outcome": "rejected"})
+            self.rows.append({"kind": "fault", "cycle": cycle, "error": "boom"})
+        self.assertTrue(breaker.should_park(task))
+
+
 class TestGermline(unittest.TestCase):
     def test_incomplete_manifest_rejected(self):
         self.assertTrue(germline_validate.validate({"id": "x"}, "x"))

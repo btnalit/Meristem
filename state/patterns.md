@@ -42,6 +42,30 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-016 — Two opposite failures wearing the same label
+
+- **Count:** 1 (live cycles 40-42, the circuit breaker's first real firing)
+- **Class:** Two conditions that demand opposite responses are recorded under
+  one label, so any policy keyed on that label is wrong for one of them. The
+  record is not false -- it is merely undifferentiated, which is enough.
+- **Instance:** A cycle that faults and a cycle the gates refuse both land as
+  `outcome: "rejected"`. The breaker counted them together and parked
+  `memory-graph/edges.py` after three unparseable engine replies -- three
+  cycles in which **no gate ever formed an opinion**. A rejection means the
+  change was seen and refused, and repeating it will fail again. A fault means
+  the proposal never reached judgement, and retrying is exactly right.
+- **Structural fix:** `rejections_for` counts only cycles with no
+  corresponding fault record, `faults_for` counts the rest, and `should_park`
+  carries two thresholds -- tight for judged rejections, which repeat
+  deterministically; looser for faults, which are often transient. Not
+  unlimited, though: a task the mechanism can never express is also worth
+  setting aside. `meristem/breaker.py`.
+- **Worth noting about the breaker itself:** it worked. Eleven cycles once went
+  to one impossible task; this time three went to a task and the loop moved on
+  by itself. The defect was in *what it counted*, not in whether it should
+  count -- and the seed built it, so the correction is a repair of its own
+  work, from evidence its own journal supplied.
+
 ## P-014 — An empty proposal, and a misdiagnosis of it
 
 - **Count:** 2 (live cycles 30-31, same task)
