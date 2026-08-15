@@ -1,58 +1,48 @@
-"""Edge derivation for the memory graph.
+"""Derive edges between nodes by simple substring matching on ids.
 
-Four rules, each a short loop over nodes. Substring match on ids only —
-no regex, no graph library, no classes.
+Four rules, each a short loop over nodes:
+  - pattern mentions another node's id -> "relates_to"
+  - cycle title mentions a pattern/gap id -> "addresses"
+  - cycle changed files under body/organs/<name>/ -> "touched"
+  - organ -> "measured_by" each probe it declares
 """
-
 from __future__ import annotations
 
 
 def derive(nodes: list[dict]) -> list[dict]:
-    """Return edges derived from node relationships.
+    """Return a list of {"from", "to", "type", "weight"} edge dicts."""
+    edges = []
+    ids = {n["id"] for n in nodes}
+    node_map = {n["id"]: n for n in nodes}
 
-    Each edge is {"from", "to", "type", "weight"} with weight 1.0.
-    """
-    edges: list[dict] = []
-    ids = [n["id"] for n in nodes]
-    pg_ids = [n["id"] for n in nodes if n.get("kind") in ("pattern", "gap")]
+    for node in nodes:
+        nid = node["id"]
+        kind = node.get("kind", "")
+        title = node.get("title", "")
 
-    # Rule 1: a pattern whose title or text mentions another node's id
-    for n in nodes:
-        if n.get("kind") != "pattern":
-            continue
-        hay = f"{n.get('title', '')} {n.get('text', '')}"
-        for oid in ids:
-            if oid != n["id"] and oid in hay:
-                edges.append({"from": n["id"], "to": oid,
-                              "type": "relates_to", "weight": 1.0})
+        if kind == "pattern":
+            for other_id in ids:
+                if other_id != nid and other_id in title:
+                    edges.append({"from": nid, "to": other_id,
+                                  "type": "relates_to", "weight": 1.0})
 
-    # Rule 2: a cycle whose title mentions a pattern or gap id
-    for n in nodes:
-        if n.get("kind") != "cycle":
-            continue
-        title = n.get("title", "")
-        for pid in pg_ids:
-            if pid in title:
-                edges.append({"from": n["id"], "to": pid,
-                              "type": "addresses", "weight": 1.0})
-
-    # Rule 3: a cycle whose changed files include body/organs/<name>/
-    for n in nodes:
-        if n.get("kind") != "cycle":
-            continue
-        for path in n.get("changed", []):
-            if path.startswith("body/organs/"):
+        if kind == "cycle":
+            for other_id in ids:
+                if other_id != nid and other_id in title:
+                    other = node_map.get(other_id)
+                    if other and other.get("kind") in ("pattern", "gap"):
+                        edges.append({"from": nid, "to": other_id,
+                                      "type": "addresses", "weight": 1.0})
+            for path in node.get("changed", []):
                 parts = path.split("/")
-                if len(parts) >= 3 and parts[2]:
-                    edges.append({"from": n["id"], "to": parts[2],
-                                  "type": "touched", "weight": 1.0})
+                if len(parts) >= 3 and parts[0] == "body" and parts[1] == "organs":
+                    if parts[2] in ids:
+                        edges.append({"from": nid, "to": parts[2],
+                                      "type": "touched", "weight": 1.0})
 
-    # Rule 4: an organ measured_by each probe it declares
-    for n in nodes:
-        if n.get("kind") != "organ":
-            continue
-        for probe in n.get("probes", []):
-            edges.append({"from": n["id"], "to": probe,
-                          "type": "measured_by", "weight": 1.0})
+        if kind == "organ":
+            for probe_id in node.get("probes", []):
+                edges.append({"from": nid, "to": probe_id,
+                              "type": "measured_by", "weight": 1.0})
 
     return edges
