@@ -8,5 +8,5 @@
   "dependencies": [],
   "probes": ["probe-word-count-basic"],
   "metrics": ["usage", "success_rate"],
-  "lifecycle": "calibrate"
+  "lifecycle": "active"
 }
