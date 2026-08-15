@@ -4,12 +4,19 @@ Order matters -- ouroboros's lesson, transplanted: deterministic checks run
 before or instead of LLM review, because a check that costs nothing should
 never be paid for twice.
 
-Checks here are the ones a machine can settle with certainty:
+EVERY check here takes the tree it inspects. This is not stylistic. A gate
+that reads a module-level path constant instead of the candidate it was handed
+inspects the CURRENT checkout and therefore passes every candidate -- looking
+exactly like a working gate while enforcing nothing (P-009, found in live
+cycle 5 after a mutation slipped a vault reference past it).
+
+Checks a machine can settle with certainty:
   * review-surface budget (kernel LOC cap -- the born-in ceiling gate)
-  * closure fits one review context
+  * closure fits one review context, and is not understated
   * protected paths untouched (root of trust, substrate)
   * no secrets
   * vault-reference invariant (only gates/ may name the vault)
+  * append-only registers keep every entry they had
   * every organ manifest is admissible
   * every dependency is explainable
 """
@@ -21,7 +28,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 
-from .. import BODY, CONTROL, REPO, VAULT, read_json, read_text
+from .. import REPO, VAULT, read_json, read_text
 from . import closure as closure_mod
 from . import germline_validate
 
@@ -39,6 +46,9 @@ SECRET_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 )
 
+#: Names that betray the vault's location. Only gates/ may say them.
+VAULT_NEEDLES = ("MERISTEM_VAULT", "VAULT", "eval-vault", "meristem-vault")
+
 
 @dataclass
 class Verdict:
@@ -51,49 +61,48 @@ class Verdict:
         self.failures.append(reason)
 
 
-def kernel_loc() -> int:
+def kernel_loc(root: pathlib.Path = REPO) -> int:
     """Lines of evolvable kernel code. tests/ and fixtures/ are excluded by
     constitution -- they are how we check the kernel, not the kernel itself."""
-    total = 0
-    for path in sorted((REPO / "meristem").rglob("*.py")):
-        total += len(path.read_text(encoding="utf-8").splitlines())
-    return total
+    return sum(
+        len(path.read_text(encoding="utf-8").splitlines())
+        for path in sorted((root / "meristem").rglob("*.py"))
+    )
 
 
-def control_tokens() -> int:
+def control_tokens(root: pathlib.Path = REPO) -> int:
     """Prompt + constitution budget: text the model is asked to hold."""
-    total = 0
-    for path in sorted(CONTROL.rglob("*.md")):
-        total += len(path.read_text(encoding="utf-8").split()) * 2
-    return total
+    return sum(
+        len(path.read_text(encoding="utf-8").split()) * 2
+        for path in sorted((root / "control").rglob("*.md"))
+    )
 
 
-def vault_reference_invariant() -> list[str]:
+def vault_reference_invariant(root: pathlib.Path = REPO) -> list[str]:
     """Only meristem/gates/* may reference the vault. If ordinary kernel code
     could name it, a mutated prompt assembler could quietly read rubrics."""
     offenders = []
-    needles = ("MERISTEM_VAULT", "VAULT", "eval-vault", "meristem-vault")
-    for path in sorted((REPO / "meristem").rglob("*.py")):
-        rel = path.relative_to(REPO).as_posix()
-        if rel.startswith("meristem/gates/"):
+    for path in sorted((root / "meristem").rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        # gates/ needs the vault; __init__ owns its single definition.
+        if rel.startswith("meristem/gates/") or rel == "meristem/__init__.py":
             continue
         text = path.read_text(encoding="utf-8")
-        for needle in needles:
-            # __init__.py owns the single definition; everything else must not name it.
-            if needle in text and rel != "meristem/__init__.py":
+        for needle in VAULT_NEEDLES:
+            if needle in text:
                 offenders.append(f"{rel} references the vault ({needle})")
                 break
     return offenders
 
 
-def scan_secrets(paths: list[pathlib.Path]) -> list[str]:
+def scan_secrets(paths: list[pathlib.Path], root: pathlib.Path = REPO) -> list[str]:
     found = []
     for path in paths:
         if not path.is_file():
             continue
-        # Paths may originate outside the repo (tests, fixtures); never let a
+        # Paths may originate outside the tree (tests, fixtures); never let a
         # path-shape surprise silence the secret scanner.
-        label = path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else str(path)
+        label = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
         text = read_text(path)
         for pattern in SECRET_PATTERNS:
             if pattern.search(text):
@@ -102,7 +111,7 @@ def scan_secrets(paths: list[pathlib.Path]) -> list[str]:
     return found
 
 
-def memory_integrity(changed: list[str]) -> list[str]:
+def memory_integrity(changed: list[str], root: pathlib.Path = REPO) -> list[str]:
     """Append-only memory may gain entries; it may never lose them.
 
     Tier A rewrites whole files, which makes accidental erasure the natural
@@ -117,13 +126,13 @@ def memory_integrity(changed: list[str]) -> list[str]:
         if not (rel.startswith("state/") and rel.endswith(".md")):
             continue
         result = subprocess.run(
-            ["git", "show", f"HEAD:{rel}"], cwd=str(REPO),
+            ["git", "show", f"HEAD:{rel}"], cwd=str(root),
             capture_output=True, text=True,
         )
         if result.returncode != 0:
             continue  # new file: nothing to lose yet
         before = set(re.findall(r"^##\s+([A-Z]-\d+)", result.stdout, re.M))
-        after = set(re.findall(r"^##\s+([A-Z]-\d+)", read_text(REPO / rel), re.M))
+        after = set(re.findall(r"^##\s+([A-Z]-\d+)", read_text(root / rel), re.M))
         lost = sorted(before - after)
         if lost:
             problems.append(
@@ -133,9 +142,9 @@ def memory_integrity(changed: list[str]) -> list[str]:
     return problems
 
 
-def organ_manifests() -> list[str]:
+def organ_manifests(root: pathlib.Path = REPO) -> list[str]:
     problems = []
-    organs = BODY / "organs"
+    organs = root / "body" / "organs"
     if not organs.is_dir():
         return problems
     for entry in sorted(organs.iterdir()):
@@ -145,27 +154,35 @@ def organ_manifests() -> list[str]:
         if manifest is None:
             problems.append(f"organ '{entry.name}' has no readable organ.json")
             continue
-        problems += [f"organ '{entry.name}': {p}" for p in germline_validate.validate(manifest, entry.name)]
+        problems += [
+            f"organ '{entry.name}': {p}"
+            for p in germline_validate.validate(manifest, entry.name)
+        ]
     return problems
 
 
-def run(changed: list[str], declared_closure: int | None = None) -> Verdict:
-    """Run every deterministic check against a candidate's changed paths."""
+def run(
+    changed: list[str],
+    declared_closure: int | None = None,
+    root: pathlib.Path = REPO,
+) -> Verdict:
+    """Every deterministic check, against the tree actually being judged."""
+    root = pathlib.Path(root)
     verdict = Verdict()
 
-    loc = kernel_loc()
+    loc = kernel_loc(root)
     verdict.notes["kernel_loc"] = loc
     verdict.notes["kernel_loc_cap"] = KERNEL_LOC_CAP
     if loc > KERNEL_LOC_CAP:
         verdict.fail(f"kernel is {loc} lines, over the {KERNEL_LOC_CAP} cap")
 
-    verdict.notes["control_tokens"] = control_tokens()
+    verdict.notes["control_tokens"] = control_tokens(root)
 
     for rel in changed:
-        if any(rel.startswith(prefix) for prefix in PROTECTED_PREFIXES):
+        if rel.startswith(PROTECTED_PREFIXES):
             verdict.fail(f"touches protected path '{rel}' (root of trust / substrate)")
 
-    computed = closure_mod.compute(changed, budget_tokens=CLOSURE_TOKEN_CAP)
+    computed = closure_mod.compute(changed, CLOSURE_TOKEN_CAP, root)
     verdict.notes["closure_tokens"] = computed.tokens
     verdict.notes["closure_files"] = len(computed.paths)
     if not computed.fits:
@@ -173,27 +190,24 @@ def run(changed: list[str], declared_closure: int | None = None) -> Verdict:
             f"review closure is ~{computed.tokens} tokens, over the "
             f"{CLOSURE_TOKEN_CAP} budget -- split the organ before growing it"
         )
-    # A candidate may not understate its own closure.
     if declared_closure is not None and computed.tokens > declared_closure:
-        verdict.fail(
-            f"real closure ~{computed.tokens} exceeds declared {declared_closure}"
-        )
+        verdict.fail(f"real closure ~{computed.tokens} exceeds declared {declared_closure}")
     for edge in computed.undeclared:
         verdict.fail(f"undeclared dependency: {edge}")
 
-    for offender in vault_reference_invariant():
+    for offender in vault_reference_invariant(root):
         verdict.fail(f"vault-reference invariant: {offender}")
 
-    for secret in scan_secrets([(REPO / rel) for rel in changed]):
+    for secret in scan_secrets([(root / rel) for rel in changed], root):
         verdict.fail(f"possible secret: {secret}")
 
-    for problem in memory_integrity(changed):
+    for problem in memory_integrity(changed, root):
         verdict.fail(problem)
 
-    for problem in organ_manifests():
+    for problem in organ_manifests(root):
         verdict.fail(problem)
 
-    if VAULT.is_relative_to(REPO):
-        verdict.fail("eval vault resolves inside the repository -- rubrics would leak")
+    if VAULT.is_relative_to(root):
+        verdict.fail("eval vault resolves inside the tree -- rubrics would leak")
 
     return verdict

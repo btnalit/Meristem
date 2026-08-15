@@ -62,23 +62,29 @@ def guard_protected(base: str, candidate: str) -> list[str]:
 
 
 def canary(commit: str) -> tuple[bool, str]:
-    """Boot the candidate in an isolated worktree and dry-run one cycle.
+    """Boot the candidate in an isolated worktree and prove it is alive.
 
     Bricking can be semantic, not just a crash -- so 'it starts' is not the
-    test; 'it can execute its own self-test' is.
+    test. Nor is the immune self-test alone: cycle 5 passed the fixtures and
+    still broke a kernel invariant its own suite asserts (P-010). Alive means
+    BOTH the fixtures fire and the kernel's own tests pass.
     """
     path = REPO.parent / "meristem-canary"
     subprocess.run(["git", "worktree", "remove", "--force", str(path)],
                    cwd=str(REPO), capture_output=True)
     git("worktree", "add", "-q", "--detach", str(path), commit)
+    env = {**os.environ, "PYTHONPATH": str(path)}
+    stages = (
+        ("immune self-test", [sys.executable, "-m", "meristem.loop", "selftest"]),
+        ("kernel tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
+    )
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "meristem.loop", "selftest"],
-            cwd=str(path), capture_output=True, text=True, timeout=300,
-            env={**os.environ, "PYTHONPATH": str(path)},
-        )
-        ok = result.returncode == 0
-        return ok, (result.stdout + result.stderr).strip()[:600]
+        for label, argv in stages:
+            result = subprocess.run(argv, cwd=str(path), capture_output=True,
+                                    text=True, timeout=600, env=env)
+            if result.returncode != 0:
+                return False, f"{label} failed:\n{(result.stdout + result.stderr)[-600:]}"
+        return True, "canary alive: immune self-test and kernel tests both pass"
     except (subprocess.SubprocessError, OSError) as exc:
         return False, f"canary boot failed: {exc}"
     finally:

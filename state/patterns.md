@@ -42,6 +42,58 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-009 — A gate that inspects the wrong tree
+
+**The most serious class found so far, and the one this whole project exists
+to prevent: a gate that looks exactly like a working gate while enforcing
+nothing.**
+
+- **Count:** 1 (found in live cycle 5, when a mutation slipped a vault
+  reference past a check written specifically to catch vault references)
+- **Class:** A check reads a module-level path constant instead of the subject
+  it was handed. Every content-based assertion then describes the *current
+  checkout* rather than the *candidate*, so it passes unconditionally. It
+  cannot fail, it produces no error, and its passing verdict is recorded as
+  evidence of safety.
+- **Instance:** `deterministic.run(changed)` resolved every file through the
+  `REPO` constant. The mutation was written into a worktree. So kernel LOC,
+  the vault-reference invariant, closure size, memory integrity, organ
+  manifests, and the secret scan all examined unmodified code. Only the
+  path-string checks (protected prefixes) ever really ran. The gate had been
+  inert for candidate content since the first cycle.
+- **What saved it:** the expensive gate. The reviewers read the actual `git
+  diff`, so cycle 4's erasure was still caught. Defence in depth worked
+  exactly as intended -- which is also why the failure stayed invisible for
+  four cycles. **A redundant check earning its keep looks identical to a
+  redundant check doing nothing.**
+- **Structural fix:** every gate function takes the tree it inspects as an
+  argument, with the constant only as a default; the loop passes the candidate
+  worktree. The signature now makes the correct call the natural one and the
+  wrong call impossible to write by omission.
+  `meristem/gates/deterministic.py`, `meristem/gates/closure.py`,
+  `meristem/loop.py`.
+- **The class test:** had this fix existed from the start, could the same
+  failure have arrived through another surface? Yes -- any future check that
+  closes over a global. Hence the rule stated as a rule, at the top of the
+  module: a gate never reads a path constant when it was handed a subject.
+
+## P-010 — "Alive" defined more narrowly than "correct"
+
+- **Count:** 1 (same cycle, downstream of P-009)
+- **Class:** A promotion gate certifies a weaker property than the one the
+  project actually requires, so a candidate is admitted and marked *last-good*
+  while failing checks the repository already contains.
+- **Instance:** The canary ran only the immune self-test. Cycle 5's candidate
+  passed the fixtures, was promoted, became last-good — and broke a kernel
+  invariant its own test suite asserts. Worse, last-good then pointed at the
+  broken commit, so the rollback target was itself unsound.
+- **Structural fix:** the canary runs the fixtures **and** the kernel test
+  suite; a candidate must satisfy both before it can become main.
+  `substrate/supervisor.py`.
+- **Open, recorded not solved:** last-good is still set at promotion, before
+  the change has proven itself in service. A commit that dies later still
+  leaves last-good pointing at it. Tracked in `gaps.md`.
+
 ## P-008 — Whole-file replacement erases what it was asked to extend
 
 - **Count:** 1 (caught by the review gate in real cycle 4 — the first time the

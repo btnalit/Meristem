@@ -81,6 +81,31 @@ class TestImmuneSelfTest(unittest.TestCase):
         finally:
             register.write_text(original, encoding="utf-8")
 
+    def test_gates_inspect_the_tree_they_are_given(self):
+        """P-009: a gate that reads a path constant instead of its subject
+        inspects the current checkout and passes everything. Build a fake tree
+        containing a violation and require the gate to see it THERE."""
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = pathlib.Path(tmp)
+            (fake / "meristem" / "gates").mkdir(parents=True)
+            (fake / "control").mkdir()
+            (fake / "meristem" / "__init__.py").write_text("", encoding="utf-8")
+            # A vault reference in ordinary kernel code: must be caught.
+            (fake / "meristem" / "leaky.py").write_text(
+                'VAULT_PATH = "meristem-vault"\n', encoding="utf-8")
+            offenders = deterministic.vault_reference_invariant(fake)
+            self.assertTrue(offenders, "gate did not inspect the tree it was given")
+            self.assertIn("leaky.py", offenders[0])
+            # And the real tree must still be clean.
+            self.assertEqual(deterministic.vault_reference_invariant(KERNEL_REPO), [])
+
+    def test_kernel_loc_counts_the_given_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = pathlib.Path(tmp)
+            (fake / "meristem").mkdir(parents=True)
+            (fake / "meristem" / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+            self.assertEqual(deterministic.kernel_loc(fake), 2)
+
     def test_vault_reference_invariant_holds(self):
         """Only gates/ may name the vault; __init__ owns the one definition."""
         self.assertEqual(deterministic.vault_reference_invariant(), [])

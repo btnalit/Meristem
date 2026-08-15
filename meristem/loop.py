@@ -195,7 +195,9 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
         git("-c", "user.name=meristem", "-c", "user.email=meristem@localhost",
             "commit", "-q", "-m", f"cycle {cycle}: {task}\n\n{mutation.rationale}", cwd=workdir)
 
-        verdict = deterministic.run(result.changed)
+        # The candidate tree, not this checkout. A gate handed the wrong tree
+        # inspects unmodified code and passes everything (P-009).
+        verdict = deterministic.run(result.changed, root=workdir)
         if not verdict.passed:
             result.reason = "deterministic: " + "; ".join(verdict.failures)
             return result
@@ -207,7 +209,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
             return result
 
         diff = git("diff", "HEAD~1", "HEAD", cwd=workdir)
-        computed = closure_mod.compute(result.changed)
+        computed = closure_mod.compute(result.changed, root=workdir)
         review_result = review.run(diff, task, computed.files, config=models)
         result.votes = review_result.votes
         for completion in review_result.completions:
