@@ -16,7 +16,7 @@ import subprocess
 import json
 from dataclasses import dataclass
 
-from . import BODY, MeristemError, read_json
+from . import BODY, JOURNAL, MeristemError, append_jsonl, read_json
 
 LIFECYCLE = ("candidate", "calibrate", "register", "active", "deprecating", "archive")
 
@@ -86,15 +86,24 @@ def advance(organ_id: str, stage: str) -> Organ:
     return organ
 
 
-def invoke(organ_id: str, payload: dict, timeout: int = 120) -> dict:
+def invoke(organ_id: str, payload: dict, *, caller: str = "kernel",
+           timeout: int = 120) -> dict:
     """Call an active organ over the fixed ABI: stdin JSON -> stdout JSON.
 
     Every call is an observed dependency edge; the closure calculator reads
-    these from the journal (see gates/closure.py).
+    these from the journal (see gates/closure.py). The caller parameter
+    identifies who invoked the organ -- "kernel" by default, or the calling
+    organ's id when one organ calls another -- so organ-to-organ edges become
+    observable rather than assumed.
     """
     organ = load(organ_id)
     if organ is None or not organ.is_active:
         raise MeristemError(f"organ '{organ_id}' is not active")
+    append_jsonl(JOURNAL, {
+        "kind": "organ_call",
+        "caller": caller,
+        "callee": organ_id,
+    })
     result = subprocess.run(
         organ.entrypoint,
         input=json.dumps(payload),

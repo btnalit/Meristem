@@ -146,6 +146,101 @@ class TestGermline(unittest.TestCase):
         self.assertEqual(deterministic.organ_manifests(), [])
 
 
+class TestGermlineInvoke(unittest.TestCase):
+    def test_invoke_records_organ_call_in_journal(self):
+        """invoke() must append a journal record with kind 'organ_call',
+        the caller, and the callee -- so organ-to-organ edges become
+        observable in the closure calculator rather than assumed."""
+        from unittest.mock import patch
+
+        organs_dir = KERNEL_REPO / "body" / "organs"
+        organs_dir.mkdir(parents=True, exist_ok=True)
+        test_dir = organs_dir / "_test_invoke"
+        test_dir.mkdir(exist_ok=True)
+        manifest = {
+            "id": "_test_invoke",
+            "version": "1",
+            "capability": "test organ for invoke journal recording",
+            "entrypoint": [sys.executable, "-c",
+                           "import json,sys; print(json.dumps({'ok': True}))"],
+            "input_schema": {},
+            "output_schema": {},
+            "dependencies": [],
+            "probes": ["p1"],
+            "metrics": [],
+            "lifecycle": "active",
+        }
+        manifest_path = test_dir / "organ.json"
+        created = False
+        try:
+            if not manifest_path.exists():
+                created = True
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            recorded = []
+            with patch("meristem.germline.append_jsonl",
+                       side_effect=lambda path, rec: recorded.append((path, rec))):
+                result = germline.invoke("_test_invoke", {}, caller="test_caller")
+
+            self.assertEqual(result, {"ok": True})
+            self.assertEqual(len(recorded), 1)
+            _, record = recorded[0]
+            self.assertEqual(record["kind"], "organ_call")
+            self.assertEqual(record["caller"], "test_caller")
+            self.assertEqual(record["callee"], "_test_invoke")
+        finally:
+            if created:
+                manifest_path.unlink(missing_ok=True)
+                test_dir.rmdir()
+
+    def test_invoke_default_caller_is_kernel(self):
+        """When no caller is specified, it defaults to 'kernel'."""
+        from unittest.mock import patch
+
+        organs_dir = KERNEL_REPO / "body" / "organs"
+        organs_dir.mkdir(parents=True, exist_ok=True)
+        test_dir = organs_dir / "_test_invoke_def"
+        test_dir.mkdir(exist_ok=True)
+        manifest = {
+            "id": "_test_invoke_def",
+            "version": "1",
+            "capability": "test organ for default caller",
+            "entrypoint": [sys.executable, "-c",
+                           "import json,sys; print(json.dumps({'ok': True}))"],
+            "input_schema": {},
+            "output_schema": {},
+            "dependencies": [],
+            "probes": ["p1"],
+            "metrics": [],
+            "lifecycle": "active",
+        }
+        manifest_path = test_dir / "organ.json"
+        created = False
+        try:
+            if not manifest_path.exists():
+                created = True
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            recorded = []
+            with patch("meristem.germline.append_jsonl",
+                       side_effect=lambda path, rec: recorded.append((path, rec))):
+                germline.invoke("_test_invoke_def", {})
+
+            self.assertEqual(len(recorded), 1)
+            _, record = recorded[0]
+            self.assertEqual(record["caller"], "kernel")
+        finally:
+            if created:
+                manifest_path.unlink(missing_ok=True)
+                test_dir.rmdir()
+
+
 class TestClosure(unittest.TestCase):
     def test_kernel_always_in_closure(self):
         result = closure.compute([])
