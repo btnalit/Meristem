@@ -756,5 +756,106 @@ class TestCircuitBreaker(unittest.TestCase):
             tmp_path.unlink(missing_ok=True)
 
 
+class TestParkedTaskSkipping(unittest.TestCase):
+    def test_take_task_skips_parked_tasks(self):
+        """take_task must skip tasks that are parked: have a 'parked' journal
+        record and still appear in state/mailbox.md. Without this check,
+        parking would stall the agenda instead of advancing it."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            control = tmpdir / "control"
+            control.mkdir()
+            (control / "agenda.md").write_text(
+                "- [ ] parked task\n- [ ] open task\n",
+                encoding="utf-8",
+            )
+            state = tmpdir / "state"
+            state.mkdir()
+            (state / "mailbox.md").write_text(
+                "- PARKED: parked task (rejected in cycles: 1, 2, 3)\n",
+                encoding="utf-8",
+            )
+            journal = state / "journal.jsonl"
+            with journal.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "cycle", "cycle": 4,
+                                    "why": "parked task",
+                                    "outcome": "parked"}) + "\n")
+
+            with patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.JOURNAL", journal):
+                task = loop.take_task()
+            self.assertEqual(task, "open task")
+
+    def test_take_task_unparks_when_mailbox_cleared(self):
+        """When the human removes the mailbox entry, the task is unparked
+        even though the journal still has the parked record. The journal is
+        append-only and cannot be rewritten, so the mailbox is the clear
+        signal: no mailbox line, no park."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            control = tmpdir / "control"
+            control.mkdir()
+            (control / "agenda.md").write_text(
+                "- [ ] formerly parked task\n- [ ] open task\n",
+                encoding="utf-8",
+            )
+            state = tmpdir / "state"
+            state.mkdir()
+            # Mailbox is empty -- human cleared the entry
+            (state / "mailbox.md").write_text("", encoding="utf-8")
+            journal = state / "journal.jsonl"
+            with journal.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "cycle", "cycle": 4,
+                                    "why": "formerly parked task",
+                                    "outcome": "parked"}) + "\n")
+
+            with patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.JOURNAL", journal):
+                task = loop.take_task()
+            self.assertEqual(task, "formerly parked task")
+
+    def test_take_task_skips_done_and_parked(self):
+        """A task that is done is skipped; a task that is parked is skipped;
+        a task that is neither is taken. Both filters apply independently."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            control = tmpdir / "control"
+            control.mkdir()
+            (control / "agenda.md").write_text(
+                "- [ ] done task\n"
+                "- [ ] parked task\n"
+                "- [ ] open task\n",
+                encoding="utf-8",
+            )
+            state = tmpdir / "state"
+            state.mkdir()
+            (state / "mailbox.md").write_text(
+                "- PARKED: parked task (rejected in cycles: 1, 2, 3)\n",
+                encoding="utf-8",
+            )
+            journal = state / "journal.jsonl"
+            with journal.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "cycle", "cycle": 1,
+                                    "why": "done task",
+                                    "outcome": "candidate"}) + "\n")
+                f.write(json.dumps({"kind": "cycle", "cycle": 2,
+                                    "why": "parked task",
+                                    "outcome": "parked"}) + "\n")
+
+            with patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.JOURNAL", journal):
+                task = loop.take_task()
+            self.assertEqual(task, "open task")
+
+
 if __name__ == "__main__":
     unittest.main()

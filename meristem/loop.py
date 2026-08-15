@@ -77,19 +77,47 @@ def done_tasks() -> set[str]:
     }
 
 
+def parked_tasks() -> set[str]:
+    """Tasks that are parked: have a 'parked' journal cycle record AND still
+    appear in state/mailbox.md.
+
+    A human clears parking by removing the mailbox entry. The journal record
+    persists (append-only, never rewritten) but the task is then unparked and
+    can be retried. Without this check, take_task would re-take a parked task
+    every cycle, so parking would stall the agenda instead of advancing it.
+    """
+    parked_in_journal = {
+        row.get("why", "")
+        for row in read_jsonl(JOURNAL)
+        if row.get("kind") == "cycle" and row.get("outcome") == "parked"
+    }
+    if not parked_in_journal:
+        return set()
+    mailbox_text = read_text(REPO / "state" / "mailbox.md")
+    return {
+        task
+        for task in parked_in_journal
+        if any(task in line for line in mailbox_text.splitlines())
+    }
+
+
 def take_task() -> str | None:
     """P0: the human is the first reflect. Tasks come from control/agenda.md,
     which stays pure human-authored source -- the loop never writes to it.
 
     P1 grows reflect, which proposes its own -- but the seed is not handed a
     parts list; it is handed the capability gap and proposes the decomposition.
-    A rejected task stays open, so it is retried.
+    A rejected task stays open, so it is retried. A parked task is skipped
+    until a human clears it from state/mailbox.md.
     """
     done = done_tasks()
+    parked = parked_tasks()
     for line in read_text(CONTROL / "agenda.md").splitlines():
         line = line.strip()
-        if line.startswith("- [ ] ") and line[6:].strip() not in done:
-            return line[6:].strip()
+        if line.startswith("- [ ] "):
+            task = line[6:].strip()
+            if task not in done and task not in parked:
+                return task
     return None
 
 
