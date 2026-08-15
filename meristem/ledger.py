@@ -47,7 +47,8 @@ def price(slot_id: str, models: dict) -> tuple[float, float]:
     return 0.0, 0.0
 
 
-def record(cycle: int, role: str, completion, models: dict | None = None) -> float:
+def record(cycle: int, role: str, completion, models: dict | None = None,
+           ok: bool = True) -> float:
     """Append one usage row; return its estimated USD cost."""
     usd_in, usd_out = price(completion.slot or completion.model, models or {})
     cost = (
@@ -65,6 +66,7 @@ def record(cycle: int, role: str, completion, models: dict | None = None) -> flo
             "completion_tokens": completion.completion_tokens,
             "reasoning_tokens": getattr(completion, "reasoning_tokens", 0),
             "usd": round(cost, 6),
+            "ok": ok,
         },
     )
     return cost
@@ -86,6 +88,26 @@ def spent(cycle: int | None = None) -> float:
 def calls(cycle: int | None = None) -> int:
     """Model calls made -- the binding constraint on quota-limited endpoints."""
     return len(_rows(cycle))
+
+
+def drain_attempts(cycle: int, models: dict | None = None) -> int:
+    """Bill every model attempt made since the last drain, successful or not.
+
+    P-015: usage was recorded only where a caller succeeded, so the two cycles
+    that faulted on an empty proposal have no usage rows at all -- their real
+    cost is simply unknown. A budget gate that cannot see failures is blind to
+    precisely the runaway it exists to stop, and a retry storm is the cheapest
+    way to burn a quota.
+    """
+    from . import llm as llm_mod
+
+    drained = 0
+    for attempt in llm_mod.attempts_log:
+        record(cycle, attempt["role"], attempt["completion"], models or {},
+               ok=attempt["ok"])
+        drained += 1
+    llm_mod.attempts_log.clear()
+    return drained
 
 
 def check(cycle: int, budget: Budget | None = None) -> None:

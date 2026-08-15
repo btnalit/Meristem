@@ -265,6 +265,12 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
                                       "domain": run.domain, "probe_kind": run.kind})
         return result
     finally:
+        # Bill every attempt this cycle made, including the ones that
+        # failed -- their tokens were spent all the same (P-015).
+        try:
+            ledger_mod.drain_attempts(cycle, models)
+        except Exception:
+            pass
         # The six questions, by construction -- not aspiration, schema.
         # The rationale summary travels here so a reviewer can answer all
         # six from the journal alone, without opening decisions.jsonl.
@@ -411,7 +417,7 @@ def print_probe_proposals() -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend", "probe-proposals"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend", "probe-proposals", "agenda"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -421,6 +427,43 @@ def main(argv=None) -> int:
             print(f"FAIL {failure}")
         print("immune self-test:", "FAILED" if failures else "ok")
         return 1 if failures else 0
+
+    if args.command == "agenda":
+        # Live status as a VIEW, never as an edit. agenda.md stays pure
+        # human-authored source (P-011) -- marking it in place dirtied the
+        # checkout every cycle and blocked git twice. State is derived from
+        # the journal, which already knows it.
+        rows = read_jsonl(JOURNAL)
+        done, parked, rejects = set(), set(), {}
+        for row in rows:
+            if row.get("kind") != "cycle":
+                continue
+            why, outcome = row.get("why", ""), row.get("outcome")
+            if outcome == "candidate":
+                done.add(why)
+            elif outcome == "parked":
+                parked.add(why)
+            elif outcome == "rejected":
+                rejects[why] = rejects.get(why, 0) + 1
+        mailbox = read_text(REPO / "state" / "mailbox.md")
+        open_count = 0
+        for line in read_text(CONTROL / "agenda.md").splitlines():
+            line = line.strip()
+            if not line.startswith("- [ ] "):
+                continue
+            task = line[6:].strip()
+            n = rejects.get(task, 0)
+            if task in done:
+                mark = "done"
+            elif task in parked and task in mailbox:
+                mark = "PARKED (clear it from mailbox.md to retry)"
+            else:
+                open_count += 1
+                mark = "next" if open_count == 1 else "open"
+                if n:
+                    mark += f" ({n} rejection{'s' if n > 1 else ''})"
+            print(f"  [{mark:<12}] {task[:88]}")
+        return 0
 
     if args.command == "gaps":
         for line in read_text(REPO / "state" / "gaps.md").splitlines():

@@ -29,9 +29,12 @@
 [budget]
 cycle_usd = 1.0
 campaign_usd = 25.0
-# One cycle = 1 mutate + 2 review + probe scoring, so 40 leaves headroom for
-# retries while still stopping a runaway loop well inside the 5-hour quota.
-cycle_calls = 40
+# Measured over 38 live cycles: a cycle makes 1-6 calls, median 3. The old cap
+# of 40 was ~7x the observed maximum, which is not a cap -- it is a number that
+# could never fire, the same defect P-006 recorded. 12 is twice the observed
+# worst case: enough headroom for fallback and retries, tight enough that a
+# runaway is stopped while it is still cheap.
+cycle_calls = 12
 campaign_calls = 1000
 
 # The capability-critical role: reads the whole kernel, returns complete

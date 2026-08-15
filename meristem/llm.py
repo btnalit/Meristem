@@ -21,6 +21,13 @@ from . import CONTROL, MeristemError
 #: volume, and answer a too-eager client with 429. Pacing is therefore part of
 #: correctness, not politeness. Module-level so every role shares one throttle.
 _last_call = 0.0
+
+#: Every settled attempt, successful or not, appended here by _complete_one and
+#: drained by the ledger (P-015). Billing happens at the CALL, not at the point
+#: where a caller happens to succeed: a failing call costs exactly as much as a
+#: succeeding one, and a budget gate blind to failures is blind to the runaway
+#: it exists to stop.
+attempts_log: list = []
 MIN_INTERVAL = 3.0
 RATE_LIMIT_BACKOFF = (15.0, 45.0, 90.0, 180.0)
 
@@ -134,12 +141,7 @@ def _complete_one(
             # EMPTY content field with a perfectly successful HTTP 200. Reading
             # that as a valid empty answer would let a truncation masquerade as
             # a model that had nothing to say.
-            if not text.strip():
-                raise ValueError(
-                    f"empty content (finish_reason={choice.get('finish_reason')}); "
-                    "raise max_tokens -- reasoning consumed the budget"
-                )
-            return Completion(
+            completion = Completion(
                 text=text,
                 model=slot["model"],
                 prompt_tokens=int(usage.get("prompt_tokens", 0)),
@@ -148,6 +150,15 @@ def _complete_one(
                 slot=slot["id"],
                 raw=data,
             )
+            # Bill the attempt before judging it: the tokens are spent either way.
+            attempts_log.append({"role": role, "completion": completion,
+                                 "ok": bool(text.strip())})
+            if not text.strip():
+                raise ValueError(
+                    f"empty content (finish_reason={choice.get('finish_reason')}); "
+                    "raise max_tokens -- reasoning consumed the budget"
+                )
+            return completion
         except urllib.error.HTTPError as exc:
             last = exc
             if exc.code == 429 and attempt + 1 < attempts:
