@@ -33,7 +33,18 @@ needs them is human work by construction.
 - [ ] The ledger records cost per call but nothing reports it per role. Add a `spend` command to meristem/loop.py that prints total calls and tokens grouped by role and by model, reading only state/journal.jsonl. Add a unit test.
 - [ ] meristem/gates/review.py builds its prompt with the full closure file list but never tells reviewers which files actually CHANGED. Pass the changed-path list into build_prompt and include it as its own clearly-labelled section, so reviewers can distinguish the change from its context. Do not remove the closure list; do not soften the terminal weakening rule.
 
+## Fix your own mechanism limit
+
+Six cycles were spent trying to add ONE entry to state/gaps.md, and every
+attempt replaced the whole file instead. That is not disobedience — it is what
+whole-file replacement does when a file is long: reproducing two hundred lines
+verbatim to add three is a task the mechanism is bad at, so it summarises
+instead. The deterministic gate now catches the erasure, but catching it every
+time is not the same as making it impossible. Change the mechanism.
+
+- [ ] Give the mutation protocol an append operation so adding to a register cannot erase it. In meristem/engine.py, accept an optional "appends" object in the engine's JSON reply, mapping a repo-relative path to text to add at the end of that file, and extend the SYSTEM prompt to document it and to instruct that appends are the correct way to add an entry to an append-only register under state/. Make Mutation carry it, have apply() append rather than overwrite for those paths, and include appended paths in Mutation.changed. Reject any append path that starts with root/ or substrate/ exactly as file writes are rejected. Add unit tests in tests/test_kernel.py covering: an append adds without erasing, and an append to a protected path is refused. Weaken no existing check.
+
 ## Self-detection — the metric that matters most
 
-- [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Append only: every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
-- [ ] Append one new entry to state/backlog.md describing a structural improvement you would make, and why it is worth doing. Append only; change no other file.
+- [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
+- [ ] Append one new entry to state/backlog.md describing a structural improvement you would make, and why it is worth doing. Use the appends mechanism; change no other file.
