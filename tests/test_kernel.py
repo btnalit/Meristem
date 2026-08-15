@@ -173,9 +173,39 @@ class TestGermline(unittest.TestCase):
             ("candidate", "calibrate", "register", "active", "deprecating", "archive"),
         )
 
-    def test_empty_body_is_valid(self):
-        """body/ ships empty on purpose -- zero scaffolding."""
+    def test_body_manifests_are_admissible(self):
+        """Whatever the body currently holds must satisfy the germline.
+
+        This asserted an EMPTY body originally -- true at birth, when body/
+        shipped with zero scaffolding. Organs have since grown, so the
+        invariant worth keeping is not 'nothing is there' but 'everything
+        there is legitimate'.
+        """
         self.assertEqual(deterministic.organ_manifests(), [])
+
+    def test_calibrate_requires_its_probes_to_exist(self):
+        """Calibrate means 'score this against its probes', so a stage that
+        cannot be performed must not be entered.
+
+        Checking only at register let an organ reach calibrate naming a probe
+        nobody had written -- Loop B's measuring-stick-first discipline was
+        documented but not enforced, and the probe library stayed at one entry
+        for thirty cycles.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = pathlib.Path(tmp)
+            organ = tree / "body" / "organs" / "ghost"
+            organ.mkdir(parents=True)
+            (organ / "organ.json").write_text(json.dumps({
+                "id": "ghost", "version": "1", "capability": "c",
+                "entrypoint": ["python3", "main.py"],
+                "input_schema": {}, "output_schema": {},
+                "dependencies": [], "probes": ["probe-that-was-never-written"],
+                "metrics": ["usage"], "lifecycle": "calibrate",
+            }), encoding="utf-8")
+            problems = deterministic.organ_manifests(tree)
+            self.assertTrue(any("do not exist" in p for p in problems),
+                            "calibrate accepted an organ naming a phantom probe")
 
 
 class TestGermlineInvoke(unittest.TestCase):

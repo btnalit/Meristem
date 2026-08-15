@@ -171,7 +171,14 @@ def organ_manifests(root: pathlib.Path = REPO) -> list[str]:
         # "It declares probes" must mean the probes exist. Otherwise the
         # requirement is satisfied by a string, and growth without a measuring
         # stick passes as growth with one.
-        if manifest.get("lifecycle") in ("register", "active"):
+        #
+        # Enforced from CALIBRATE, not register: calibrate means "score this
+        # against its probes", so a stage that cannot be performed must not be
+        # entered. Checking only at register let word-count reach calibrate
+        # naming a probe that was never written -- Loop B's "measuring stick
+        # first" discipline was documented but not enforced, and after 30
+        # cycles the probe library was still the one probe it was born with.
+        if manifest.get("lifecycle") in ("calibrate", "register", "active"):
             absent = probes_mod.missing_probes(manifest.get("probes"))
             if absent:
                 problems.append(

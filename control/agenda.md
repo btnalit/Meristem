@@ -44,6 +44,25 @@ time is not the same as making it impossible. Change the mechanism.
 
 - [ ] Give the mutation protocol an append operation so adding to a register cannot erase it. In meristem/engine.py, accept an optional "appends" object in the engine's JSON reply, mapping a repo-relative path to text to add at the end of that file, and extend the SYSTEM prompt to document it and to instruct that appends are the correct way to add an entry to an append-only register under state/. Make Mutation carry it, have apply() append rather than overwrite for those paths, and include appended paths in Mutation.changed. Reject any append path that starts with root/ or substrate/ exactly as file writes are rejected. Add unit tests in tests/test_kernel.py covering: an append adds without erasing, and an append to a protected path is refused. Weaken no existing check.
 
+## Close G-006 — the limit you diagnosed yourself
+
+You wrote G-006 after burning eleven of thirty cycles on one task that Tier A
+could not do. The diagnosis was right and the fix is yours.
+
+- [ ] Add a circuit breaker to meristem/loop.py so a task cannot burn cycles indefinitely. Count, from state/journal.jsonl, how many times the current task has already been rejected. When that count reaches 3, do not run the mutation at all: append an entry to state/mailbox.md naming the task, the repeated rejection reasons, and the cycle numbers; journal a cycle record with outcome "parked"; and move on to the next open agenda item. A parked task must not be retried until a human clears it from the mailbox. Use the appends mechanism for mailbox.md. Add unit tests covering: a task with fewer than 3 rejections still runs, and a task at 3 rejections is parked without a model call. Weaken no existing check.
+
+## Grow the measuring stick — the loop that never ran
+
+After thirty cycles the probe library still held exactly the one probe it was
+born with, and `internal/active/` was empty. Loop B's discipline is "the
+measuring stick precedes the capability" — but the seed has no PATHWAY to
+write one, because the vault is physically invisible to the engine by design.
+That is a missing mechanism, not a missing task. Build the staging half; the
+gate half moves proposals into the vault.
+
+- [ ] Create the probe staging area and its contract. Add a `probe-proposals` command to meristem/loop.py that lists every proposal directory under state/probe-proposals/ with its id and whether it carries both a statement/ and a rubric/. Write control/probe-protocol.md documenting the staging layout — state/probe-proposals/<probe-id>/{probe.json, statement/, rubric/check.py} — the rule that statement and rubric are separate directories, and the rule that a proposal is never itself the probe: gates promote a validated proposal into the vault, and the seed never writes to the vault directly. Add a unit test for the command. Weaken no existing check.
+- [ ] Write a real probe proposal for the text-stats organ at state/probe-proposals/probe-text-stats-basic/. probe.json carries id, capability_domain "text-processing", and organ "text-stats". statement/task.md describes what the organ must do. rubric/check.py must SCORE BY INVOKING the organ over its ABI (stdin JSON to stdout JSON) rather than by inspecting its source, and must include at least one case on which a sloppy implementation and a correct one give different answers — a probe where both score the same teaches nothing. Change nothing outside state/probe-proposals/probe-text-stats-basic/.
+
 ## Self-detection — the metric that matters most
 
 - [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
