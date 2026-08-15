@@ -1,0 +1,12 @@
+{
+  "id": "word-count",
+  "version": "1",
+  "capability": "Count the number of whitespace-separated words in a text string.",
+  "entrypoint": ["python3", "main.py"],
+  "input_schema": {"text": "string"},
+  "output_schema": {"words": "integer"},
+  "dependencies": [],
+  "probes": ["probe-word-count-basic"],
+  "metrics": ["usage", "success_rate"],
+  "lifecycle": "candidate"
+}
