@@ -81,6 +81,38 @@ class TestImmuneSelfTest(unittest.TestCase):
         finally:
             register.write_text(original, encoding="utf-8")
 
+    def test_memory_integrity_compares_against_the_pre_change_state(self):
+        """P-013: the loop commits the mutation before the gates run, so in
+        the candidate tree HEAD IS the change. A check that reads HEAD as
+        'before' compares the change with itself and never finds a loss."""
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = pathlib.Path(tmp)
+            run = lambda *a: subprocess.run(["git", *a], cwd=str(tree),
+                                            capture_output=True, text=True)
+            run("init", "-q")
+            run("config", "user.email", "t@t")
+            run("config", "user.name", "t")
+            (tree / "state").mkdir()
+            register = tree / "state" / "reg.md"
+            register.write_text("## G-001 — one\n\n## G-002 — two\n", encoding="utf-8")
+            run("add", "-A")
+            run("commit", "-q", "-m", "base")
+            # The mutation erases an entry, and is COMMITTED (as the loop does).
+            register.write_text("## G-009 — only\n", encoding="utf-8")
+            run("add", "-A")
+            run("commit", "-q", "-m", "mutation")
+
+            # Reading HEAD as 'before' sees nothing wrong: the bug.
+            self.assertEqual(
+                deterministic.memory_integrity(["state/reg.md"], tree, "HEAD"), []
+            )
+            # Naming the pre-change state catches the erasure.
+            problems = deterministic.memory_integrity(["state/reg.md"], tree, "HEAD~1")
+            self.assertTrue(problems, "erasure invisible even against HEAD~1")
+            self.assertIn("G-001", problems[0])
+
     def test_gates_inspect_the_tree_they_are_given(self):
         """P-009: a gate that reads a path constant instead of its subject
         inspects the current checkout and passes everything. Build a fake tree

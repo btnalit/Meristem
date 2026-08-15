@@ -42,6 +42,36 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-013 — A check whose reference point has already moved
+
+- **Count:** 1 (live cycles 18–20, the same task rejected three times)
+- **Class:** A "before and after" comparison where the caller supplies a
+  *before* that the change has already overwritten. The check runs, reports
+  no difference, and its silence is recorded as a pass. Kin to P-009 — a gate
+  reading the wrong subject — but subtler, because here the subject is right
+  and only the baseline is wrong.
+- **Instance:** `memory_integrity` read the previous file with
+  `git show HEAD:<path>`. The loop commits the mutation into the worktree
+  *before* the gates run, so in that tree HEAD **is** the mutation. Before and
+  after were the same bytes, no entry ever looked lost, and the structural fix
+  written for P-008 was inert from the moment it shipped.
+- **Structural fix:** the reference point is now an explicit `base` argument
+  the caller must name — `HEAD~1` for a committed candidate, `HEAD` for an
+  uncommitted working tree. A test builds a real two-commit repository and
+  asserts that reading HEAD sees nothing while reading HEAD~1 sees the
+  erasure, so the distinction is pinned rather than remembered.
+  `meristem/gates/deterministic.py`, `meristem/loop.py`.
+- **The class test:** a fix that closes only this instance would be "use
+  HEAD~1 here". The class is *implicit baselines*, so the rule is that any
+  before/after check takes its baseline as an argument and never assumes one.
+- **What caught it, again:** the review panel — and this time the panel's
+  heterogeneity is doing measurable work. `review:sensenova` rejected all
+  three attempts; `review:deepseek` approved the first two. A single-reviewer
+  gate running deepseek would have admitted the erasure of five capability
+  gaps twice. That is the strongest evidence yet for failure independence
+  being the property worth optimising, and it is now two independent
+  observations rather than one.
+
 ## P-012 — A fallback that raises the exception it exists to absorb
 
 - **Count:** 1 (live cycle 6)

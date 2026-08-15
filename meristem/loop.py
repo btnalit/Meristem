@@ -195,7 +195,10 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
 
         # The candidate tree, not this checkout. A gate handed the wrong tree
         # inspects unmodified code and passes everything (P-009).
-        verdict = deterministic.run(result.changed, root=workdir)
+        # The candidate tree AND the state that predates the mutation. The
+        # mutation is already committed here, so HEAD is the change itself --
+        # comparing against it would compare the change with itself (P-013).
+        verdict = deterministic.run(result.changed, root=workdir, base="HEAD~1")
         if not verdict.passed:
             result.reason = "deterministic: " + "; ".join(verdict.failures)
             return result

@@ -112,7 +112,9 @@ def scan_secrets(paths: list[pathlib.Path], root: pathlib.Path = REPO) -> list[s
     return found
 
 
-def memory_integrity(changed: list[str], root: pathlib.Path = REPO) -> list[str]:
+def memory_integrity(
+    changed: list[str], root: pathlib.Path = REPO, base: str = "HEAD"
+) -> list[str]:
     """Append-only memory may gain entries; it may never lose them.
 
     Tier A rewrites whole files, which makes accidental erasure the natural
@@ -121,13 +123,20 @@ def memory_integrity(changed: list[str], root: pathlib.Path = REPO) -> list[str]
     and deterministic: every entry heading that existed must still exist.
 
     Editing an entry's body is allowed. Dropping the entry is not.
+
+    `base` is load-bearing (P-013). The loop commits the mutation into the
+    worktree BEFORE the gates run, so in that tree HEAD is already the
+    mutation: comparing against it compares the change with itself and finds
+    nothing lost, every time. The caller must name the reference point that
+    predates the change -- HEAD~1 for a committed candidate, HEAD for an
+    uncommitted working tree.
     """
     problems = []
     for rel in changed:
         if not (rel.startswith("state/") and rel.endswith(".md")):
             continue
         result = subprocess.run(
-            ["git", "show", f"HEAD:{rel}"], cwd=str(root),
+            ["git", "show", f"{base}:{rel}"], cwd=str(root),
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -176,8 +185,13 @@ def run(
     changed: list[str],
     declared_closure: int | None = None,
     root: pathlib.Path = REPO,
+    base: str = "HEAD",
 ) -> Verdict:
-    """Every deterministic check, against the tree actually being judged."""
+    """Every deterministic check, against the tree actually being judged.
+
+    `base` names the state that predates the change. It is not "HEAD" for a
+    candidate whose mutation is already committed -- see memory_integrity.
+    """
     root = pathlib.Path(root)
     verdict = Verdict()
 
@@ -212,7 +226,7 @@ def run(
     for secret in scan_secrets([(root / rel) for rel in changed], root):
         verdict.fail(f"possible secret: {secret}")
 
-    for problem in memory_integrity(changed, root):
+    for problem in memory_integrity(changed, root, base):
         verdict.fail(problem)
 
     for problem in organ_manifests(root):
