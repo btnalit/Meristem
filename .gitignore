@@ -14,5 +14,12 @@ eval-vault/
 meristem-wt-*/
 meristem-canary/
 
+# Runtime records are PER-DEPLOYMENT state, not source. The constitution
+# forbids deleting or rewriting them; that is satisfied by their living
+# append-only on the deployment's disk. Committing them would dirty the tree
+# every cycle, conflict between deployments, and publish operational traces.
+# The .md registers (patterns, gaps, backlog) ARE knowledge and stay tracked.
+state/*.jsonl
+
 .env
 *.tmp

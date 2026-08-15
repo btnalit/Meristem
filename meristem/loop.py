@@ -76,23 +76,35 @@ def next_cycle() -> int:
     )
 
 
+def done_tasks() -> set[str]:
+    """Tasks that already produced a candidate, read from the journal.
+
+    Completion is a RECORD, not an edit. Marking the agenda file in place made
+    the loop dirty its own checkout every cycle without ever committing --
+    which blocked git operations and left the tree in a state no transaction
+    owned. The journal already knows what succeeded; ask it.
+    """
+    return {
+        row.get("why", "")
+        for row in read_jsonl(JOURNAL)
+        if row.get("kind") == "cycle" and row.get("outcome") == "candidate"
+    }
+
+
 def take_task() -> str | None:
-    """P0: the human is the first reflect. Tasks come from control/agenda.md.
+    """P0: the human is the first reflect. Tasks come from control/agenda.md,
+    which stays pure human-authored source -- the loop never writes to it.
 
     P1 grows reflect, which proposes its own -- but the seed is not handed a
     parts list; it is handed the capability gap and proposes the decomposition.
+    A rejected task stays open, so it is retried.
     """
+    done = done_tasks()
     for line in read_text(CONTROL / "agenda.md").splitlines():
         line = line.strip()
-        if line.startswith("- [ ] "):
+        if line.startswith("- [ ] ") and line[6:].strip() not in done:
             return line[6:].strip()
     return None
-
-
-def complete_task(task: str) -> None:
-    path = CONTROL / "agenda.md"
-    text = read_text(path)
-    path.write_text(text.replace(f"- [ ] {task}", f"- [x] {task}", 1), encoding="utf-8")
 
 
 def make_worktree(cycle: int):
@@ -294,7 +306,6 @@ def main(argv=None) -> int:
         return 2
     print(f"cycle {cycle}: {result.outcome} -- {result.reason}")
     if result.outcome == "candidate":
-        complete_task(task)
         print(f"candidate on branch {result.branch}; run substrate/supervisor.py promote")
     return 0
 
