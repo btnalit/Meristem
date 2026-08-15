@@ -72,6 +72,30 @@ gate half moves proposals into the vault.
 - [ ] Create the probe staging area and its contract. Add a `probe-proposals` command to meristem/loop.py that lists every proposal directory under state/probe-proposals/ with its id and whether it carries both a statement/ and a rubric/. Write control/probe-protocol.md documenting the staging layout — state/probe-proposals/<probe-id>/{probe.json, statement/, rubric/check.py} — the rule that statement and rubric are separate directories, and the rule that a proposal is never itself the probe: gates promote a validated proposal into the vault, and the seed never writes to the vault directly. Add a unit test for the command. Weaken no existing check.
 - [ ] Write a real probe proposal for the text-stats organ at state/probe-proposals/probe-text-stats-basic/. probe.json carries id, capability_domain "text-processing", and organ "text-stats". statement/task.md describes what the organ must do. rubric/check.py must SCORE BY INVOKING the organ over its ABI (stdin JSON to stdout JSON) rather than by inspecting its source, and must include at least one case on which a sloppy implementation and a correct one give different answers — a probe where both score the same teaches nothing. Change nothing outside state/probe-proposals/probe-text-stats-basic/.
 
+## Grow a brain — the memory organ
+
+Right now nothing knows that P-013 was a *repair of* P-008, that G-006 was
+*diagnosed from* eleven wasted cycles, or that probe-word-count-basic
+*measures* the word-count organ. Those relations exist only in prose a human
+reads. A register is a list; what is needed is a graph — one that updates
+itself from the records already being written, and that lets old, unreinforced
+knowledge fade so the map stays about what is live rather than about
+everything that ever happened.
+
+It is an **organ**, not kernel code: capability grows outward, the generating
+point does not. It reads `state/` and answers questions over the ABI; it never
+writes to the registers, because the registers are the source of truth and a
+derived view must not become a second one.
+
+Split small on purpose (P-014): each task is one file of modest size.
+
+- [ ] Create body/organs/memory-graph/organ.json only — no implementation yet. id "memory-graph", version "1", lifecycle "candidate", entrypoint ["python3", "main.py"], capability describing a decaying knowledge graph over Meristem's own records, dependencies [], probes ["probe-memory-graph-basic"], metrics ["usage", "node_count", "query_latency_ms"]. input_schema {"op": "string", "args": "object"}, output_schema {"ok": "boolean", "result": "object"}. Also write body/organs/memory-graph/README.md explaining in one paragraph what it is for and when it should be pruned. Change nothing else.
+- [ ] Write body/organs/memory-graph/extract.py: a module that reads state/patterns.md, state/gaps.md, state/backlog.md and state/journal.jsonl from a workdir given as an argument, and returns a list of node dicts. One node per pattern (id like "P-013", kind "pattern"), per gap ("G-006", kind "gap"), per organ found in body/organs/ (kind "organ"), and per cycle record (kind "cycle", carrying its outcome and the files it changed). Each node carries id, kind, title, and last_seen_cycle. No graph logic and no edges yet; extraction only. Change nothing outside body/organs/memory-graph/.
+- [ ] Write body/organs/memory-graph/edges.py: given the node list from extract.py, derive typed edges. A pattern that names another pattern id in its text gets a "relates_to" edge. A cycle whose "why" text names a gap or pattern id gets "addresses". A cycle that changed a file under body/organs/<name>/ gets "touched" to that organ node. An organ gets "measured_by" to each probe id its organ.json declares. Return a list of {"from", "to", "type", "weight"} with weight 1.0. Change nothing outside body/organs/memory-graph/.
+- [ ] Write body/organs/memory-graph/decay.py: a scoring module. Given nodes, edges, and the current cycle number, compute each node's activation as a value that halves every N cycles since its last_seen_cycle (make N a module constant, default 40), plus a reinforcement bonus for each edge that points at it from a node seen more recently. Expose activation(nodes, edges, current_cycle) -> dict of node id to float, and stale(nodes, edges, current_cycle, threshold) -> list of node ids below the threshold. Decay must never delete anything: it ranks, it does not forget. Change nothing outside body/organs/memory-graph/.
+- [ ] Write body/organs/memory-graph/main.py: the ABI entrypoint. Read one JSON object from stdin with "op" and "args", and print {"ok": bool, "result": {...}}. Support op "build" (extract, derive edges, return counts), op "query" with args {"id": "..."} returning that node plus its immediate neighbours and their activations, and op "stale" with args {"threshold": float} returning the ranked stale list. Use extract.py, edges.py and decay.py. Take the workdir from args or default to the current directory. Change nothing outside body/organs/memory-graph/.
+- [ ] Write a probe proposal at state/probe-proposals/probe-memory-graph-basic/ for the memory-graph organ. probe.json with id, capability_domain "self-knowledge", organ "memory-graph". statement/task.md describing what it must do. rubric/check.py must SCORE BY INVOKING the organ over its ABI, and must include at least one case that a naive implementation gets wrong — for instance that decay ranks a node last seen 200 cycles ago below one last seen recently, and that "stale" never returns a node with a fresh inbound edge. A probe on which the careless and the correct implementation score the same teaches nothing. Change nothing outside state/probe-proposals/probe-memory-graph-basic/.
+
 ## Self-detection — the metric that matters most
 
 - [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
