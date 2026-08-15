@@ -1,23 +1,3 @@
-"""The evolution loop: one cycle, end to end.
-
-    task -> mutation -> candidate commit -> gates -> hand to substrate
-
-The loop never promotes. It produces a candidate and hands it to the
-substrate, which owns promotion and runs its own independent protected-path
-check. That separation is the point: the code being reviewed must not be the
-code that decides what gets in.
-
-A cycle is a git transaction. The worktree is the boundary; a crash discards
-the branch and the step is simply rerun. That is why this file contains no
-recovery machinery -- at seed scale, branch isolation dissolves the problem.
-
-Every accepted mutation answers six questions, by construction (the journal
-entry schema below): why, what, which probe proves it better, which old
-capabilities are shown not to have regressed, what it cost, who approved.
-The rationale summary travels with the journal entry so the six questions can
-be answered from the journal alone, without opening decisions.jsonl.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -290,9 +270,26 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
         drop_worktree(workdir, branch, keep)
 
 
+def print_body() -> int:
+    """List every organ in the registry: id, version, lifecycle, capability.
+
+    The body is as inspectable as the agenda. Reuses germline.registry() so
+    the command and the closure calculator see the same source of truth.
+    """
+    organs = germline.registry()
+    if not organs:
+        print("no organs registered")
+        return 0
+    print(f"{'id':20s} {'ver':5s} {'lifecycle':12s} capability")
+    print(f"{'--':20s} {'---':5s} {'--------':12s} ----------")
+    for organ in organs:
+        print(f"{organ.id:20s} {organ.version:5s} {organ.lifecycle:12s} {organ.capability}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -308,6 +305,9 @@ def main(argv=None) -> int:
             if line.startswith("## "):
                 print(f"  {line[3:]}")
         return 0
+
+    if args.command == "body":
+        return print_body()
 
     if args.command == "status":
         rows = read_jsonl(JOURNAL)

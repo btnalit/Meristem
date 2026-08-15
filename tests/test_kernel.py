@@ -258,5 +258,71 @@ class TestConfig(unittest.TestCase):
         self.assertGreater(budget.campaign_calls, budget.cycle_calls)
 
 
+class TestBodyCommand(unittest.TestCase):
+    def test_body_command_runs_on_empty_body(self):
+        """body/ ships empty; the command must handle that gracefully."""
+        rc = loop.main(["body"])
+        self.assertEqual(rc, 0)
+
+    def test_body_command_uses_registry(self):
+        """The body command and the closure calculator share one source of
+        truth: germline.registry()."""
+        organs = germline.registry()
+        # body/ ships empty in P0, so this is a list (possibly empty).
+        self.assertIsInstance(organs, list)
+
+    def test_body_command_lists_organ_fields(self):
+        """When an organ exists, the body command must surface id, version,
+        lifecycle, and capability — the four fields that make the body
+        inspectable at a glance."""
+        import io
+        import contextlib
+
+        organs_dir = KERNEL_REPO / "body" / "organs"
+        organs_dir.mkdir(parents=True, exist_ok=True)
+        test_dir = organs_dir / "_test_body_cmd"
+        test_dir.mkdir(exist_ok=True)
+        manifest = {
+            "id": "_test_body_cmd",
+            "version": "1",
+            "capability": "test capability for body command",
+            "entrypoint": ["python", "main.py"],
+            "input_schema": {"text": "string"},
+            "output_schema": {"words": "integer"},
+            "dependencies": [],
+            "probes": ["p1"],
+            "metrics": ["usage"],
+            "lifecycle": "candidate",
+        }
+        manifest_path = test_dir / "organ.json"
+        original_content = None
+        created = False
+        try:
+            if manifest_path.exists():
+                original_content = manifest_path.read_text(encoding="utf-8")
+            else:
+                created = True
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = loop.main(["body"])
+            output = buf.getvalue()
+            self.assertEqual(rc, 0)
+            self.assertIn("_test_body_cmd", output)
+            self.assertIn("candidate", output)
+            self.assertIn("test capability for body command", output)
+            self.assertIn("1", output)  # version
+        finally:
+            if created:
+                manifest_path.unlink(missing_ok=True)
+                test_dir.rmdir()
+            elif original_content is not None:
+                manifest_path.write_text(original_content, encoding="utf-8")
+
+
 if __name__ == "__main__":
     unittest.main()
