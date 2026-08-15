@@ -78,3 +78,24 @@ deprecating → archive lifecycle. Until then, word-count is load-bearing.
 **Principle invoked:** Principle 3 (Growth requires metabolism) — every organ
 carries a retirement path, but retirement must rest on evidence that nothing
 depends on what is being retired.
+
+## Prune: word-count organ
+
+**Status:** Not yet actionable — utility figures not verifiable from mutation context.
+
+**Reason:** The task requires pruning to rest on measured utility, not on
+tidiness. While text-stats returns a word count among its outputs (capability
+overlap is necessary for subsumption), the actual utility figures —
+organ_call records in state/journal.jsonl showing whether word-count is still
+being called and whether callers have migrated to text-stats — are not visible
+to the mutation engine (state/ is excluded from the mutation context by
+design, per EXCLUDED_DIRS in engine.py). Without confirming that word-count
+has no remaining callers and that text-stats is being used in its place,
+advancing the organ to archive would be tidiness, not measured pruning.
+
+**To resolve:** Run `python -m meristem.loop utility` to obtain per-organ call
+counts and last-used cycle. If word-count shows zero or near-zero recent calls
+while text-stats shows calls covering the same capability, advance word-count
+from active → deprecating → archive. The lifecycle advance is two steps
+(active → deprecating, then deprecating → archive) and each must go through
+the gates.
