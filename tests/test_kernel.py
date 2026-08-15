@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Kernel self-tests. Outside the LOC cap by constitution: these are how we
 check the kernel, not the kernel itself.
 
@@ -64,7 +65,7 @@ class TestImmuneSelfTest(unittest.TestCase):
         register = KERNEL_REPO / "state" / "patterns.md"
         original = register.read_text(encoding="utf-8")
         try:
-            register.write_text("# Pattern Register\n\n## Z-999 — only\n",
+            register.write_text("# Pattern Register\n\n## Z-999 \u2014 only\n",
                                 encoding="utf-8")
             problems = deterministic.memory_integrity(["state/patterns.md"])
             self.assertTrue(problems, "erasing six pattern entries was allowed")
@@ -97,11 +98,11 @@ class TestImmuneSelfTest(unittest.TestCase):
             run("config", "user.name", "t")
             (tree / "state").mkdir()
             register = tree / "state" / "reg.md"
-            register.write_text("## G-001 — one\n\n## G-002 — two\n", encoding="utf-8")
+            register.write_text("## G-001 \u2014 one\n\n## G-002 \u2014 two\n", encoding="utf-8")
             run("add", "-A")
             run("commit", "-q", "-m", "base")
             # The mutation erases an entry, and is COMMITTED (as the loop does).
-            register.write_text("## G-009 — only\n", encoding="utf-8")
+            register.write_text("## G-009 \u2014 only\n", encoding="utf-8")
             run("add", "-A")
             run("commit", "-q", "-m", "mutation")
 
@@ -345,7 +346,7 @@ class TestGermlineInvoke(unittest.TestCase):
             recorded = []
             with patch("meristem.germline.append_jsonl",
                        side_effect=lambda path, rec: recorded.append((path, rec))):
-                result = germline.invoke("_test_invoke", {}, caller="test_caller")
+                result = germline.invoke("_test_invoke", {}, caller="test_caller", cycle=42)
 
             self.assertEqual(result, {"ok": True})
             self.assertEqual(len(recorded), 1)
@@ -353,6 +354,55 @@ class TestGermlineInvoke(unittest.TestCase):
             self.assertEqual(record["kind"], "organ_call")
             self.assertEqual(record["caller"], "test_caller")
             self.assertEqual(record["callee"], "_test_invoke")
+            self.assertEqual(record["success"], True)
+            self.assertEqual(record["cycle"], 42)
+        finally:
+            if created:
+                manifest_path.unlink(missing_ok=True)
+                test_dir.rmdir()
+
+    def test_invoke_records_failure_on_exception(self):
+        """When the organ process fails, invoke must still write a record
+        with success=False."""
+        from unittest.mock import patch
+
+        organs_dir = KERNEL_REPO / "body" / "organs"
+        organs_dir.mkdir(parents=True, exist_ok=True)
+        test_dir = organs_dir / "_test_invoke_fail"
+        test_dir.mkdir(exist_ok=True)
+        manifest = {
+            "id": "_test_invoke_fail",
+            "version": "1",
+            "capability": "test organ that fails",
+            "entrypoint": [sys.executable, "-c",
+                           "import sys; sys.exit(1)"],
+            "input_schema": {},
+            "output_schema": {},
+            "dependencies": [],
+            "probes": ["p1"],
+            "metrics": [],
+            "lifecycle": "active",
+        }
+        manifest_path = test_dir / "organ.json"
+        created = False
+        try:
+            if not manifest_path.exists():
+                created = True
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            recorded = []
+            with patch("meristem.germline.append_jsonl",
+                       side_effect=lambda path, rec: recorded.append((path, rec))):
+                with self.assertRaises(Exception):
+                    germline.invoke("_test_invoke_fail", {}, caller="test", cycle=1)
+
+            self.assertEqual(len(recorded), 1)
+            _, record = recorded[0]
+            self.assertEqual(record["kind"], "organ_call")
+            self.assertEqual(record["success"], False)
         finally:
             if created:
                 manifest_path.unlink(missing_ok=True)
@@ -560,7 +610,7 @@ class TestBodyCommand(unittest.TestCase):
 
     def test_body_command_lists_organ_fields(self):
         """When an organ exists, the body command must surface id, version,
-        lifecycle, and capability — the four fields that make the body
+        lifecycle, and capability -- the four fields that make the body
         inspectable at a glance."""
         import io
         import contextlib
@@ -720,6 +770,75 @@ class TestSpendCommand(unittest.TestCase):
             tmp_path.unlink(missing_ok=True)
 
 
+class TestUtilityCommand(unittest.TestCase):
+    def test_utility_command_displays_organ_calls(self):
+        """The utility command reads organ_call records from the journal
+        and prints total invocations, successful invocations, and last used
+        cycle per organ."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "organ_call", "caller": "kernel", "callee": "word-count",
+             "success": True, "cycle": 1},
+            {"kind": "organ_call", "caller": "kernel", "callee": "word-count",
+             "success": True, "cycle": 2},
+            {"kind": "organ_call", "caller": "kernel", "callee": "text-stats",
+             "success": False, "cycle": 3},
+            {"kind": "organ_call", "caller": "kernel", "callee": "word-count",
+             "success": True, "cycle": 4},
+            {"kind": "organ_call", "caller": "kernel", "callee": "text-stats",
+             "success": True, "cycle": 5},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            buf = io.StringIO()
+            with patch("meristem.loop.JOURNAL", tmp_path):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["utility"])
+            output = buf.getvalue()
+            self.assertEqual(rc, 0)
+            # Check word-count: 3 total, 3 successful, last cycle 4
+            self.assertIn("word-count", output)
+            self.assertIn("3", output)  # total calls
+            self.assertIn("3", output)  # successful calls
+            self.assertIn("4", output)  # last cycle
+            # Check text-stats: 2 total, 1 successful, last cycle 5
+            self.assertIn("text-stats", output)
+            self.assertIn("2", output)  # total calls
+            self.assertIn("1", output)  # successful calls
+            self.assertIn("5", output)  # last cycle
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_utility_command_on_empty_journal(self):
+        """When no organ calls have been recorded, the command handles it gracefully."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        tmp.write("")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            buf = io.StringIO()
+            with patch("meristem.loop.JOURNAL", tmp_path):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["utility"])
+            self.assertEqual(rc, 0)
+            self.assertIn("no organ calls", buf.getvalue().lower())
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
 class TestAppends(unittest.TestCase):
     def test_append_adds_without_erasing(self):
         """Appends must add text at the end of a file without erasing
@@ -729,11 +848,11 @@ class TestAppends(unittest.TestCase):
             workdir = pathlib.Path(tmp)
             target = workdir / "state" / "gaps.md"
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("## G-001 — first\n\n## G-002 — second\n",
+            target.write_text("## G-001 \u2014 first\n\n## G-002 \u2014 second\n",
                               encoding="utf-8")
             mutation = engine.Mutation(
                 rationale="test",
-                appends={"state/gaps.md": "\n## G-003 — third\n"},
+                appends={"state/gaps.md": "\n## G-003 \u2014 third\n"},
             )
             # Appended paths must appear in changed so the closure
             # calculator and deterministic gates see them.
@@ -1036,9 +1155,9 @@ class TestReflectCommand(unittest.TestCase):
             tmpdir = pathlib.Path(tmp)
             state = tmpdir / "state"
             state.mkdir(parents=True)
-            (state / "gaps.md").write_text("## G-001 — test gap\n",
+            (state / "gaps.md").write_text("## G-001 \u2014 test gap\n",
                                             encoding="utf-8")
-            (state / "patterns.md").write_text("## P-001 — test pattern\n",
+            (state / "patterns.md").write_text("## P-001 \u2014 test pattern\n",
                                                 encoding="utf-8")
             (state / "proposals.md").write_text("", encoding="utf-8")
 

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -5,6 +6,7 @@ import json
 import subprocess
 import sys
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from . import (
@@ -184,7 +186,7 @@ def golden_fixtures() -> list[str]:
     original = read_text(register)
     if original.strip():
         try:
-            register.write_text("# Pattern Register\n\n## Z-999 — only entry\n",
+            register.write_text("# Pattern Register\n\n## Z-999 \u2014 only entry\n",
                                 encoding="utf-8")
             if not deterministic.memory_integrity(["state/patterns.md"]):
                 failures.append("memory-integrity check missed an erased register")
@@ -211,7 +213,7 @@ def golden_fixtures() -> list[str]:
         failures.append("proposal guard held an ordinary proposal")
     if route_proposal("Grow an organ at body/organs/summarise/") != "agenda":
         failures.append("proposal guard held an ordinary proposal")
-    # 7. A cap change must arrive argued. This fixture outlives every
+    # 7a. A cap change must arrive argued. This fixture outlives every
     #    demotion of the approval seat, because what it enforces is
     #    monotonicity -- a budget may not move on an unexamined say-so -- and
     #    not the question of whose hand signs it. An argued, approved change
@@ -342,6 +344,40 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
         drop_worktree(workdir, branch, keep)
 
 
+def print_utility() -> int:
+    """Print per-organ utility: total invocations, successful invocations,
+    and the cycle it was last used.
+
+    Reads only state/journal.jsonl -- the same append-only record the ledger
+    and germline.invoke write to. An organ nobody calls is a pruning candidate,
+    and until this exists no pruning decision can rest on evidence.
+    """
+    rows = [r for r in read_jsonl(JOURNAL) if r.get("kind") == "organ_call"]
+    if not rows:
+        print("no organ calls recorded")
+        return 0
+
+    # Group by callee
+    by_organ: dict[str, dict] = {}
+    for row in rows:
+        callee = row.get("callee", "?")
+        if callee not in by_organ:
+            by_organ[callee] = {"total": 0, "success": 0, "last_cycle": 0}
+        by_organ[callee]["total"] += 1
+        if row.get("success"):
+            by_organ[callee]["success"] += 1
+        cycle = row.get("cycle", 0)
+        if cycle > by_organ[callee]["last_cycle"]:
+            by_organ[callee]["last_cycle"] = cycle
+
+    print(f"{'organ':20s} {'total calls':>12s} {'successful':>12s} {'last cycle':>12s}")
+    print(f"{'-----':20s} {'-----------':>12s} {'----------':>12s} {'----------':>12s}")
+    for organ in sorted(by_organ):
+        info = by_organ[organ]
+        print(f"{organ:20s} {info['total']:12d} {info['success']:12d} {info['last_cycle']:12d}")
+    return 0
+
+
 def print_body() -> int:
     """List every organ in the registry: id, version, lifecycle, capability.
 
@@ -441,7 +477,7 @@ PROPOSAL_GUARDED = (
 #: that the change be argued -- that is monotonicity, not the human.
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
-    "raise the cap", "increase the cap", "lower the cap", "内核上限", "扩容",
+    "raise the cap", "increase the cap", "lower the cap", "\u5185\u6838\u4e0a\u9650", "\u6269\u5bb9",
 )
 
 #: A cap case is incomplete without every one of these. Deterministic, so an
@@ -536,6 +572,7 @@ def run_reflect(*, config=None) -> int:
         result = germline.invoke(
             "memory-graph",
             {"op": "stale", "args": {"threshold": 0.5}},
+            cycle=cycle,
         )
         if result.get("ok"):
             stale_ids = result.get("result", {}).get("stale", [])
@@ -651,7 +688,9 @@ def run_reflect(*, config=None) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend", "probe-proposals", "agenda", "reflect"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body",
+                                            "spend", "probe-proposals", "agenda", "reflect",
+                                            "utility"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -710,6 +749,9 @@ def main(argv=None) -> int:
 
     if args.command == "spend":
         return print_spend()
+
+    if args.command == "utility":
+        return print_utility()
 
     if args.command == "probe-proposals":
         return print_probe_proposals()

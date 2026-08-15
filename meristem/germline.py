@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Germline: the capability registry (bookkeeping half).
 
 The seed is born knowing HOW to grow an organ, never WHICH organs to grow.
@@ -87,7 +88,7 @@ def advance(organ_id: str, stage: str) -> Organ:
 
 
 def invoke(organ_id: str, payload: dict, *, caller: str = "kernel",
-           timeout: int = 120) -> dict:
+           timeout: int = 120, cycle: int = 0) -> dict:
     """Call an active organ over the fixed ABI: stdin JSON -> stdout JSON.
 
     Every call is an observed dependency edge; the closure calculator reads
@@ -95,26 +96,44 @@ def invoke(organ_id: str, payload: dict, *, caller: str = "kernel",
     identifies who invoked the organ -- "kernel" by default, or the calling
     organ's id when one organ calls another -- so organ-to-organ edges become
     observable rather than assumed.
+
+    The record written to the journal now includes the outcome (success/failure)
+    and the cycle number, so the utility command can report successful invocations
+    and last-used cycle.
     """
     organ = load(organ_id)
     if organ is None or not organ.is_active:
         raise MeristemError(f"organ '{organ_id}' is not active")
-    append_jsonl(JOURNAL, {
-        "kind": "organ_call",
-        "caller": caller,
-        "callee": organ_id,
-    })
-    result = subprocess.run(
-        organ.entrypoint,
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=str(organ.path),
-    )
-    if result.returncode != 0:
-        raise MeristemError(f"organ '{organ_id}' exited {result.returncode}: {result.stderr[:400]}")
+    # Record the call before execution, then update with outcome after.
+    # We write a single record that includes the outcome after the call.
+    # Use a try-except to capture failure and still write the record.
+    success = False
+    result = {}
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise MeristemError(f"organ '{organ_id}' returned non-JSON on stdout") from exc
+        proc = subprocess.run(
+            organ.entrypoint,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(organ.path),
+        )
+        if proc.returncode != 0:
+            raise MeristemError(f"organ '{organ_id}' exited {proc.returncode}: {proc.stderr[:400]}")
+        try:
+            result = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise MeristemError(f"organ '{organ_id}' returned non-JSON on stdout") from exc
+        success = True
+    finally:
+        append_jsonl(JOURNAL, {
+            "kind": "organ_call",
+            "caller": caller,
+            "callee": organ_id,
+            "success": success,
+            "cycle": cycle,
+        })
+    if not success:
+        # If we failed, the exception was already raised; this line is unreachable
+        pass
+    return result
