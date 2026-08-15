@@ -301,8 +301,13 @@ def main(argv=None) -> int:
     cycle = next_cycle()
     try:
         result = run_cycle(task, cycle)
-    except MeristemError as exc:
-        print(f"cycle {cycle} FAULT: {exc}", file=sys.stderr)
+    except Exception as exc:
+        # Anything unexpected is still a cycle outcome, not a traceback. An
+        # unhandled exception left the journal recording a rejection with no
+        # reason -- a rejection that teaches nothing (P-012).
+        append_jsonl(JOURNAL, {"kind": "fault", "cycle": cycle, "task": task,
+                               "error": f"{type(exc).__name__}: {exc}"[:400]})
+        print(f"cycle {cycle} FAULT: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     print(f"cycle {cycle}: {result.outcome} -- {result.reason}")
     if result.outcome == "candidate":

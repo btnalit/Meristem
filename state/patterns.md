@@ -42,6 +42,41 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-012 — A fallback that raises the exception it exists to absorb
+
+- **Count:** 1 (live cycle 6)
+- **Class:** Error handling whose recovery path can fail the same way as the
+  path it recovers from. The failure then arrives *outside* every handler
+  written for it, so it surfaces as a raw traceback and the durable record
+  keeps a rejection with no reason attached.
+- **Instance:** The engine's reply had a JSON object followed by commentary —
+  routine for reasoning models. `_parse` caught `JSONDecodeError`, fell back
+  to a greedy `{.*}` regex, and called `json.loads` on the result *without a
+  guard*; "Extra data" propagated out of the fallback. Compounding it,
+  `main()` caught only `MeristemError`, so an ordinary parse failure was not
+  treated as a cycle outcome at all.
+- **Structural fix:** parse with `json.JSONDecoder().raw_decode`, which reads
+  one value and reports where it stopped — trailing prose becomes a non-event
+  rather than an error to recover from. And `main()` treats *any* exception as
+  a cycle outcome, journalling a `fault` record: an unexplained rejection is
+  the one outcome the loop must never produce. `meristem/engine.py`,
+  `meristem/loop.py`.
+
+## P-011 — Completion recorded as an edit instead of a record
+
+- **Count:** 1 (surfaced twice during live verification, as a blocked `git pull`)
+- **Class:** State that belongs in a record is written as a mutation of tracked
+  source, outside any transaction and never committed. The tree is dirty
+  forever after, and ordinary operations start failing for reasons unrelated
+  to what they are doing.
+- **Instance:** The loop marked finished agenda items by rewriting
+  `control/agenda.md` in the main checkout. Nothing owned that change, so it
+  accumulated and twice blocked `git pull --rebase` mid-verification.
+- **Structural fix:** the journal already knows which tasks produced a
+  candidate, so completion is read from it. `agenda.md` returns to pure
+  human-authored source the loop only reads — and a rejected task correctly
+  stays open for retry. `meristem/loop.py`.
+
 ## P-009 — A gate that inspects the wrong tree
 
 **The most serious class found so far, and the one this whole project exists

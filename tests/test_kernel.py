@@ -167,6 +167,18 @@ class TestEngine(unittest.TestCase):
     def test_parse_tolerates_fenced_json(self):
         self.assertEqual(engine._parse('```json\n{"a": 1}\n```'), {"a": 1})
 
+    def test_parse_tolerates_trailing_commentary(self):
+        """P-012: reasoning models append prose after the payload. The
+        recovery path must not raise the error it exists to absorb."""
+        self.assertEqual(
+            engine._parse('{"a": 1}\n\nLet me know if you want changes!'), {"a": 1}
+        )
+
+    def test_parse_reports_unparseable_as_meristem_error(self):
+        with self.assertRaises(Exception) as ctx:
+            engine._parse("no json here at all")
+        self.assertNotIsInstance(ctx.exception, json.JSONDecodeError)
+
 
 class TestReview(unittest.TestCase):
     def test_unparseable_vote_is_reject(self):

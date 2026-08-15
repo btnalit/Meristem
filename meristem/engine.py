@@ -90,16 +90,30 @@ def build_context() -> str:
 
 
 def _parse(text: str) -> dict:
+    """Extract the first complete JSON object from a model reply.
+
+    Reasoning models routinely append commentary after the payload, and the
+    naive fallback -- a greedy {.*} regex followed by json.loads -- can raise
+    the very JSONDecodeError it was written to absorb, turning a recoverable
+    parse into an unhandled traceback (P-012). raw_decode reads one value and
+    reports where it stopped, so trailing prose is simply ignored.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", text).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.S)
-        if not match:
-            raise MeristemError("engine returned no JSON object")
-        return json.loads(match.group(0))
+
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            value, _ = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
+            continue
+        if isinstance(value, dict):
+            return value
+        start = text.find("{", start + 1)
+    raise MeristemError("engine returned no parseable JSON object")
 
 
 def propose(task: str, *, config=None, extra: str = "") -> Mutation:
