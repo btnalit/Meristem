@@ -1,0 +1,77 @@
+# Role routing. Contract tier (layer 3): changing this changes the cognitive
+# black box, so it is a human-merged change even though it is one line.
+#
+# Everything speaks the OpenAI-compatible /chat/completions shape, so DeepSeek,
+# GLM, Kimi, Qwen, OpenRouter, and local Ollama / vLLM / llama.cpp are all the
+# same code path. Switching providers is a config change, never a code change.
+#
+# NO KEYS IN THIS FILE, EVER. Only the NAME of the environment variable.
+# usd_in / usd_out are USD per 1M tokens, used by the ledger's budget gate.
+
+[budget]
+cycle_usd = 1.0
+campaign_usd = 25.0
+
+# The capability-critical role. A mid-tier open model is the intended default;
+# frontier models are not required to modify a 1.5k-line kernel.
+[roles.mutate]
+id = "mutate"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+temperature = 0.2
+max_tokens = 16000
+usd_in = 0.28
+usd_out = 0.42
+
+# Reviewers optimise FAILURE INDEPENDENCE, not model count. Slots should name
+# different providers and training lineages; three models from one family may
+# fail together. Whether cheap-and-heterogeneous actually beats one strong
+# reviewer is a measurable hypothesis -- the golden fixtures are the instrument.
+[[roles.review.slots]]
+id = "review:deepseek"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+temperature = 0.0
+usd_in = 0.28
+usd_out = 0.42
+
+[[roles.review.slots]]
+id = "review:glm"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-4-plus"
+api_key_env = "ZHIPU_API_KEY"
+temperature = 0.0
+usd_in = 0.60
+usd_out = 0.60
+
+[[roles.review.slots]]
+id = "review:kimi"
+base_url = "https://api.moonshot.cn/v1"
+model = "moonshot-v1-32k"
+api_key_env = "MOONSHOT_API_KEY"
+temperature = 0.0
+usd_in = 0.35
+usd_out = 0.35
+
+# Cheapest adequate. Executable check.py rubrics are preferred and cost nothing;
+# this role only handles what cannot be asserted.
+[roles.score]
+id = "score"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+temperature = 0.0
+usd_in = 0.28
+usd_out = 0.42
+
+# Tier C only. Not used in P0.
+[roles.escalate]
+id = "escalate"
+base_url = "https://api.anthropic.com/v1"
+model = "claude-sonnet-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.2
+usd_in = 3.0
+usd_out = 15.0
