@@ -20,6 +20,7 @@ from . import (
     read_text,
     write_json,
 )
+from . import breaker as breaker_mod
 from . import engine as engine_mod
 from . import germline
 from . import ledger as ledger_mod
@@ -410,6 +411,33 @@ def main(argv=None) -> int:
     if not task:
         print("agenda is empty; nothing to do")
         return 0
+
+    # Circuit breaker: park a task that has been rejected too many times
+    # before any model call is made. Unbounded retry on the same task is
+    # not progress, it is a loop -- the breaker turns that loop into a stop.
+    if breaker_mod.should_park(task):
+        rejection_cycles = [
+            row.get("cycle")
+            for row in read_jsonl(JOURNAL)
+            if row.get("kind") == "cycle"
+            and row.get("why") == task
+            and row.get("outcome") == "rejected"
+        ]
+        cycle = next_cycle()
+        cycles_str = ", ".join(str(c) for c in rejection_cycles)
+        mailbox = REPO / "state" / "mailbox.md"
+        mailbox.parent.mkdir(parents=True, exist_ok=True)
+        with mailbox.open("a", encoding="utf-8") as handle:
+            handle.write(f"- PARKED: {task} (rejected in cycles: {cycles_str})\n")
+        append_jsonl(JOURNAL, {
+            "kind": "cycle",
+            "cycle": cycle,
+            "outcome": "parked",
+            "why": task,
+        })
+        print(f"task parked: {task} (rejected in cycles: {cycles_str})")
+        return 0
+
     cycle = next_cycle()
     try:
         result = run_cycle(task, cycle)
