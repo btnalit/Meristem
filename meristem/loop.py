@@ -191,6 +191,27 @@ def golden_fixtures() -> list[str]:
         finally:
             register.write_text(original, encoding="utf-8")
 
+    # 7. Proposal guard: model output that names guarded ground must be held
+    #    for human review, not queued. Reflect is a new way for model output
+    #    to reach the work queue, so it needs the same fence the mutation path
+    #    already has. If route_proposal ever stops catching guarded ground,
+    #    the immune self-test fails and the loop stops -- the same proof that
+    #    protected-path rejection and secret scanning actually fire.
+    if route_proposal("Fix the bug in substrate/supervisor.py") != "mailbox":
+        failures.append("proposal guard let a guarded path reach the queue")
+    if route_proposal("Fix the bug in root/panic.py") != "mailbox":
+        failures.append("proposal guard let a guarded path reach the queue")
+    if route_proposal("Rewrite meristem/gates/review.py") != "mailbox":
+        failures.append("proposal guard let a guarded path reach the queue")
+    if route_proposal("Update control/constitution.md") != "mailbox":
+        failures.append("proposal guard let a guarded path reach the queue")
+    if route_proposal("Update control/checklists.md") != "mailbox":
+        failures.append("proposal guard let a guarded path reach the queue")
+    if route_proposal("Add a utility command to meristem/loop.py") != "agenda":
+        failures.append("proposal guard held an ordinary proposal")
+    if route_proposal("Grow an organ at body/organs/summarise/") != "agenda":
+        failures.append("proposal guard held an ordinary proposal")
+
     return failures
 
 
