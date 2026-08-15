@@ -499,7 +499,20 @@ def main(argv=None) -> int:
         print(f"  accepted      : {len(accepted)}")
         print(f"  rejected      : {sum(1 for c in cycles if c.get('outcome') == 'rejected')}")
         print(f"  faults        : {sum(1 for r in rows if r.get('kind') == 'fault')}")
-        print(f"kernel LOC      : {deterministic.kernel_loc()} / {deterministic.KERNEL_LOC_CAP}")
+        loc = deterministic.kernel_loc()
+        # Core Pressure: how close the generating point is to its cap.
+        # The design says externalize at >=0.9 -- proactively, not when
+        # the deterministic gate finally refuses a change. Reporting it
+        # is what makes "not yet needed" a measurement rather than a
+        # guess about capability that was never built.
+        core_pressure = loc / deterministic.KERNEL_LOC_CAP
+        closure_now = closure_mod.compute([]).tokens
+        closure_pressure = closure_now / deterministic.CLOSURE_TOKEN_CAP
+        print(f"kernel LOC      : {loc} / {deterministic.KERNEL_LOC_CAP}")
+        print(f"  core pressure : {core_pressure:.2f}"
+              + ("  <- externalize capability into an organ" if core_pressure >= 0.9 else ""))
+        print(f"  closure press : {closure_pressure:.2f} ({closure_now} tokens)"
+              + ("  <- split an organ" if closure_pressure >= 0.9 else ""))
         print(f"organs (body)   : {len(organs)}"
               + (f"  [{', '.join(f'{o.id}:{o.lifecycle}' for o in organs)}]" if organs else ""))
         print(f"MCR by tier     : {tiers or '(none accepted yet)'}")

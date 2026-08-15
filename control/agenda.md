@@ -140,6 +140,34 @@ fixtures and never asserts that what one produces is what the next consumes.
 - [ ] Make the dating in body/organs/memory-graph/extract.py actually take effect: every pattern and gap node currently gets last_seen_cycle 0. Find the highest cycle number among journal records whose "why" text contains that node's id, and use it; when none mentions it, use the highest cycle whose changed-file list includes the register file that holds it. Verify by building and confirming that P-018 has a higher last_seen_cycle than P-001. Change nothing outside body/organs/memory-graph/.
 - [ ] Strengthen the memory-graph selfcheck so it would have caught this. In addition to exercising each module alone, it must run extract then edges then decay in sequence over the real workdir and fail when edges returns an empty list while extract returned more than ten nodes, or when every pattern node has last_seen_cycle 0. A self-check that only tests parts in isolation cannot see a broken contract between them. Change nothing outside body/organs/memory-graph/. ADD ONLY — keep every existing error path, structured error return and non-zero exit code exactly as it is.
 
+## Initiative — stop waiting to be told
+
+Measured after 67 cycles: **AGR = 0.00**. Not one task has ever been proposed
+by you. You execute well, you diagnose your own limits, you repair your own
+mechanisms — but "what next" has come from a human every single time. That is
+the gap this section closes, and it is the one the design always called P1.
+
+The heartbeat now exists in the substrate: it wakes at irregular intervals and
+runs a cycle if the agenda has work, or asks you to reflect if it does not.
+The soil supplies the pulse. The thought is yours.
+
+Reflection needs a model call, and organs cannot make one — the ABI is
+stdin/stdout with no LLM channel. So reflect is a kernel step that COMPOSES
+what already exists, and its first real consumer is the brain you just grew.
+
+- [ ] Add a `reflect` command to meristem/loop.py. It must: invoke the memory-graph organ via meristem.germline.invoke with op "stale" and threshold 0.5 to get low-activation node ids; read state/gaps.md and state/patterns.md; make exactly ONE model call using the "score" role with that digest, asking for up to three concrete next tasks; and append them to state/proposals.md using the appends style, each as a line beginning "- [ ] ". Never write to control/agenda.md — a human promotes a proposal into the agenda. Print how many proposals were appended. Exactly one model call per invocation, and record it through the ledger like any other. Change only meristem/loop.py, and add a unit test that the command exists and refuses to write agenda.md.
+- [ ] Make the reflect prompt in meristem/loop.py demand BOTH kinds of proposal: at least one repair (something measurably wrong — a failing probe, a recurring rejection, a gap) and at least one growth proposal (a capability you do not have but that the evidence suggests is worth having). The constitution's phrase is "Spiral, not circular": a loop that only ever repairs converges on a fixed point and stops. Change only meristem/loop.py.
+- [ ] Guard the reflect proposals in meristem/loop.py before they are written: any proposal whose text names a path under root/, substrate/, meristem/gates/, control/constitution.md or control/checklists.md must be appended to state/mailbox.md instead of state/proposals.md, marked as needing human review. A proposal is data from a model, and data from a model passes through the same protected-path scanning as a mutation. Add a unit test for both branches. Change only meristem/loop.py.
+
+## Measure what the design says to measure
+
+Five of the six growth metrics are empty. Two are worth closing now; the rest
+wait on evidence (externalize/internalize need Core Pressure to demand them,
+and reproduce is succession, deliberately P3).
+
+- [ ] Collect organ utility. meristem/germline.py already journals an "organ_call" record on every invoke. Add a `utility` command to meristem/loop.py that reads state/journal.jsonl and prints, per organ: total calls, successful calls, and the cycle it was last used. An organ that has never been called is a candidate for pruning, and until this exists no pruning decision can be evidence-based. Add a unit test. Change only meristem/loop.py.
+- [ ] Complete the germline lifecycle for word-count: advance body/organs/word-count/organ.json from "calibrate" to "register", then to "active". Its probe probe-word-count-basic exists in the vault and scores 100, so both stages are performable. Change nothing outside body/organs/word-count/.
+
 ## Self-detection — the metric that matters most
 
 - [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.

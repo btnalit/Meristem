@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import pathlib
 import subprocess
 import sys
+import time
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -180,13 +182,67 @@ def run_loop(cycles: int) -> int:
     return 0
 
 
+#: Heartbeat bounds, in seconds. Jitter is not decoration: a fixed cadence
+#: synchronises with the provider's rate-limit windows and turns every retry
+#: into a thundering herd against the same boundary. A uniform interval
+#: decorrelates the seed from anything with a period of its own.
+BEAT_MIN, BEAT_MAX = 900, 2700
+
+
+def heartbeat(beats: int, dry: bool = False) -> int:
+    """Wake at irregular intervals and let the seed act unattended.
+
+    Cadence is substrate work: deciding WHEN the seed may act without being
+    asked is promotion-adjacent authority, so it lives in the soil. What
+    HAPPENS on a beat is the seed's own -- run the next agenda item if there
+    is one, otherwise reflect and propose its own. The soil supplies the
+    pulse; it does not supply the thought.
+
+    Panic is checked every beat, before anything else. A latch set while the
+    seed sleeps must stop it at the next wake, not at the next convenient
+    moment.
+    """
+    for beat in range(1, beats + 1):
+        if panic.engaged():
+            print("PANIC latch engaged; heartbeat stopping", file=sys.stderr)
+            return 3
+        print(f"--- beat {beat}/{beats} @ {time.strftime('%H:%M:%S')}", flush=True)
+        argv = ["cycle"] if pending_task() else ["reflect"]
+        result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
+                                cwd=str(REPO),
+                                **({} if os.name == "nt" else {"start_new_session": True}))
+        if result.returncode == 0 and argv[0] == "cycle":
+            promote()
+        if beat < beats and not dry:
+            delay = random.randint(BEAT_MIN, BEAT_MAX)
+            print(f"    next beat in {delay // 60}m {delay % 60}s", flush=True)
+            time.sleep(delay)
+    return 0
+
+
+def pending_task() -> bool:
+    """Is there work already queued? Read-only, and failure means 'reflect'."""
+    result = subprocess.run([sys.executable, "-m", "meristem.loop", "status"],
+                            cwd=str(REPO), capture_output=True, text=True)
+    for line in result.stdout.splitlines():
+        if line.startswith("open agenda item"):
+            return "(none)" not in line
+    return False
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="supervisor")
-    parser.add_argument("command", choices=["run", "promote", "rollback", "canary"])
+    parser.add_argument("command",
+                        choices=["run", "promote", "rollback", "canary", "heartbeat"])
     parser.add_argument("--cycles", type=int, default=1)
+    parser.add_argument("--beats", type=int, default=8)
+    parser.add_argument("--dry", action="store_true",
+                        help="beat without sleeping, for verification")
     parser.add_argument("--reason", default="manual")
     args = parser.parse_args(argv)
 
+    if args.command == "heartbeat":
+        return heartbeat(args.beats, args.dry)
     if args.command == "run":
         return run_loop(args.cycles)
     if args.command == "promote":
