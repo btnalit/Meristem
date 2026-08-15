@@ -585,7 +585,17 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     accumulates debt. Both directions are required every pass.
     """
     models = config or llm_mod.load_models()
+    # Reflect writes no "cycle" record, so next_cycle() hands it the SAME
+    # number every time -- and the per-cycle call cap counts every reflection
+    # ever made against that one number. Twelve pressure beats reached 51
+    # calls against a cap of 12 and every one of them faulted (P-021). A
+    # reflection is its own accounting unit; it records that fact so the next
+    # one gets a fresh number.
     cycle = next_cycle()
+    append_jsonl(JOURNAL, {"kind": "cycle", "cycle": cycle,
+                           "outcome": "reflection",
+                           "why": "reflect" + (" --pressure" if pressure else ""),
+                           "what": [], "reason": "reflection, not a mutation"})
 
     # 1. Invoke the memory-graph organ for stale (low-activation) node ids.
     #    The organ may not exist or may not be active yet; reflect still

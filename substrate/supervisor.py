@@ -202,6 +202,7 @@ def heartbeat(beats: int, dry: bool = False) -> int:
     seed sleeps must stop it at the next wake, not at the next convenient
     moment.
     """
+    pressure_raised = False
     for beat in range(1, beats + 1):
         if panic.engaged():
             print("PANIC latch engaged; heartbeat stopping", file=sys.stderr)
@@ -212,12 +213,26 @@ def heartbeat(beats: int, dry: bool = False) -> int:
         # the gate: pressure pre-empts ordinary work, because a kernel that
         # keeps growing while nothing watches ends at a wall no cycle can pass.
         pressure = core_pressure()
-        if pressure >= PRESSURE_MANDATE:
+        # Pressure pre-empts work ONCE, then stands aside. Reflection only
+        # proposes; the relief itself arrives as ordinary cycles executing the
+        # agenda. Pre-empting on every beat while pressure stays high is a
+        # livelock -- the more urgent it gets the less gets done -- which is
+        # exactly what twelve wasted beats demonstrated (P-021).
+        if pressure >= PRESSURE_MANDATE and not pressure_raised:
             print(f"    core pressure {pressure:.2f} >= {PRESSURE_MANDATE}"
-                  " -- reflecting under pressure mandate", flush=True)
+                  " -- reflecting under pressure mandate (once)", flush=True)
+            argv = ["reflect", "--pressure"]
+            pressure_raised = True
+        elif pending_task():
+            argv = ["cycle"]
+        elif pressure >= PRESSURE_MANDATE:
+            # Still under pressure with an empty agenda: the last mandate
+            # produced nothing actionable, so ask again rather than idle.
+            print(f"    core pressure {pressure:.2f}, agenda empty"
+                  " -- re-issuing the mandate", flush=True)
             argv = ["reflect", "--pressure"]
         else:
-            argv = ["cycle"] if pending_task() else ["reflect"]
+            argv = ["reflect"]
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
                                 cwd=str(REPO),
                                 **({} if os.name == "nt" else {"start_new_session": True}))

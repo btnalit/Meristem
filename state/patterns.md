@@ -42,6 +42,33 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-021 — An urgency mechanism that starves the work it demands
+
+- **Count:** 1 (twelve consecutive wasted beats)
+- **Class:** A trigger pre-empts ordinary work in order to *plan* relief,
+  while the relief can only arrive through the ordinary work it pre-empts.
+  The more urgent the condition, the less progress toward resolving it -- a
+  livelock assembled from two individually reasonable rules.
+- **Instance:** Core pressure at 0.87 made every heartbeat beat choose
+  `reflect --pressure` over running the agenda. Reflection only PROPOSES; the
+  externalization that would lower pressure sits in the agenda as ordinary
+  cycles. Twelve beats produced proposals and zero relief, and pressure never
+  moved off 0.87.
+- **Two compounding defects in the same log.** Reflect writes no "cycle"
+  record, so `next_cycle()` returned the same number every time and the
+  per-cycle call cap counted 51 calls against a limit of 12 -- so every one of
+  those reflections also faulted. And nine proposals had accumulated with no
+  path from `proposals.md` into the agenda: the seed had been thinking, and
+  nothing was listening.
+- **Structural fix:** pressure pre-empts ONCE per heartbeat run, then stands
+  aside so the agenda can execute; it re-issues only when the agenda is empty
+  and pressure persists, since that means the previous mandate produced
+  nothing actionable. Reflection journals its own cycle record, making it a
+  proper accounting unit. `substrate/supervisor.py`, `meristem/loop.py`.
+- **The shape worth remembering:** when a mechanism reacts to a condition by
+  *scheduling* rather than *acting*, ask what executes the schedule -- and
+  whether the reaction has starved it.
+
 ## P-020 — The soil called a seed interface that did not exist yet
 
 - **Count:** 1 (heartbeat beat 10, the pressure trigger's first firing)
