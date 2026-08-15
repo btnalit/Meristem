@@ -138,7 +138,6 @@ fixtures and never asserts that what one produces is what the next consumes.
 
 - [x] Make body/organs/memory-graph/extract.py carry the fields the edge rules need. Every node keeps id, kind, title and last_seen_cycle, and additionally: pattern and gap nodes carry "text" holding the body of their entry; cycle nodes carry "changed" holding the list of files that cycle changed and "why" holding its task text. Verify by running the build op and confirming the edge count is greater than zero. Change nothing outside body/organs/memory-graph/.
 - [x] Make the dating in body/organs/memory-graph/extract.py actually take effect: every pattern and gap node currently gets last_seen_cycle 0. Find the highest cycle number among journal records whose "why" text contains that node's id, and use it; when none mentions it, use the highest cycle whose changed-file list includes the register file that holds it. Verify by building and confirming that P-018 has a higher last_seen_cycle than P-001. Change nothing outside body/organs/memory-graph/.
-- [ ] Add ONE function to body/organs/memory-graph/main.py named pipeline_check(workdir) that calls extract, then edges, then decay in sequence and returns a list of problem strings: "no edges from N nodes" when edges is empty while extract returned more than ten nodes, and "all pattern nodes undated" when every pattern node has last_seen_cycle 0. Then call it from the existing selfcheck op and merge its problems into the result. ADD ONLY — keep every existing error path, structured error return and non-zero exit code exactly as it is. Keep the new function under 25 lines. Change nothing outside body/organs/memory-graph/.
 
 ## The audit tier has no instrument — build it first
 
@@ -193,3 +192,9 @@ and reproduce is succession, deliberately P3).
 
 - [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
 - [ ] Append one new entry to state/backlog.md describing a structural improvement you would make, and why it is worth doing. Use the appends mechanism; change no other file.
+
+## Deferred — reshape before retrying
+
+- [ ] Add ONE function to body/organs/memory-graph/main.py named pipeline_check(workdir) that calls extract, then edges, then decay in sequence and returns a list of problem strings: "no edges from N nodes" when edges is empty while extract returned more than ten nodes, and "all pattern nodes undated" when every pattern node has last_seen_cycle 0. Then call it from the existing selfcheck op and merge its problems into the result. ADD ONLY — keep every existing error path, structured error return and non-zero exit code exactly as it is. Keep the new function under 25 lines. Change nothing outside body/organs/memory-graph/.
+
+*Rejected three times: each attempt rewrote surrounding error paths while asked to add only. Needs reshaping into a change that cannot touch what it is not adding.*
