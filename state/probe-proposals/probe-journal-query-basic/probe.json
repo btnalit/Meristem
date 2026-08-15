@@ -1,0 +1,6 @@
+{
+  "id": "probe-journal-query-basic",
+  "capability_domain": "self-knowledge",
+  "organ": "journal-query",
+  "description": "Verifies that the journal-query organ correctly answers questions about state/journal.jsonl over its ABI, distinguishing judged rejections from mechanism faults."
+}
