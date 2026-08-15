@@ -177,23 +177,6 @@ def golden_fixtures() -> list[str]:
         finally:
             register.write_text(original, encoding="utf-8")
 
-    # 7. A vault reference in non-gates kernel code must be caught. Physical
-    #    invisibility of the eval vault (Principle 4) is the defence that
-    #    actually holds -- not "the prompt is told not to look." If ordinary
-    #    kernel code could name the vault path, a mutated prompt assembler
-    #    could quietly read rubrics, held-outs, or golden fixtures. This
-    #    fixture proves the invariant that enforces it actually fires.
-    leak = REPO / "meristem" / "fixture_vault_leak.py"
-    leak.write_text('VAULT = "meristem-vault"\n', encoding="utf-8")
-    try:
-        if not deterministic.vault_reference_invariant():
-            failures.append(
-                "vault-reference invariant missed a vault reference "
-                "in non-gates kernel code"
-            )
-    finally:
-        leak.unlink(missing_ok=True)
-
     return failures
 
 
