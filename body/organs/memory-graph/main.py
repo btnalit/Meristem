@@ -1,132 +1,213 @@
 #!/usr/bin/env python3
 """Memory-graph organ: ABI entrypoint.
 
-Reads one JSON object from stdin with "op" and "args",
-prints {"ok": bool, "result": {...}}.
+Reads one JSON object from stdin with "op" and "args", prints
+{"ok": bool, "result": {...}}.
 
 Ops:
-  build     — extract nodes, derive edges, return counts
-  query     — return a node plus its immediate neighbours and their activations
-  stale     — return ranked stale list
-  selfcheck — exercise extract, edges, and decay with tiny fixtures
+  build     — extract, derive edges, return counts
+  query     — args {"id": "..."}: node plus immediate neighbours and activations
+  stale     — args {"threshold": float}: ranked stale list
+  explain   — args {"id": "..."}: node's activation decomposed into its inputs
+  selfcheck — exercise each module and the full pipeline
 """
 
 import json
-import pathlib
 import sys
-import tempfile
+import pathlib
+
+# Import sibling modules from this organ's own directory.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import extract
 import edges
 import decay
 
 
-def _build(args):
-    workdir = pathlib.Path(args.get("workdir", "."))
-    nodes = extract.extract(workdir)
-    edge_list = edges.derive(nodes)
-    return {"ok": True, "result": {"nodes": len(nodes), "edges": len(edge_list)}}
+def _current_cycle(workdir):
+    """Highest cycle number from the journal, or 0 if none."""
+    journal = pathlib.Path(workdir) / "state" / "journal.jsonl"
+    try:
+        rows = []
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return max(
+            (r.get("cycle", 0) for r in rows if r.get("kind") == "cycle"),
+            default=0,
+        )
+    except (OSError, FileNotFoundError):
+        return 0
 
 
-def _query(args):
-    workdir = pathlib.Path(args.get("workdir", "."))
-    node_id = args.get("id", "")
+def _build_graph(workdir):
+    """Extract nodes, derive edges, return (nodes, edges, current_cycle)."""
     nodes = extract.extract(workdir)
-    edge_list = edges.derive(nodes)
-    node = None
+    derived_edges = edges.derive(nodes)
+    current = _current_cycle(workdir)
+    return nodes, derived_edges, current
+
+
+def _node_by_id(nodes, node_id):
     for n in nodes:
         if n.get("id") == node_id:
-            node = n
-            break
+            return n
+    return None
+
+
+def op_build(args):
+    workdir = args.get("workdir", ".")
+    nodes, derived_edges, current = _build_graph(workdir)
+    return {"ok": True, "result": {
+        "nodes": len(nodes),
+        "edges": len(derived_edges),
+        "current_cycle": current,
+    }}
+
+
+def op_query(args):
+    workdir = args.get("workdir", ".")
+    node_id = args.get("id", "")
+    nodes, derived_edges, current = _build_graph(workdir)
+    activations = decay.activation(nodes, derived_edges, current)
+    node = _node_by_id(nodes, node_id)
     if node is None:
         return {"ok": False, "result": {"error": f"node '{node_id}' not found"}}
+    inbound = [e for e in derived_edges if e["to"] == node_id]
+    outbound = [e for e in derived_edges if e["from"] == node_id]
+    neighbour_ids = set()
+    for e in inbound:
+        neighbour_ids.add(e["from"])
+    for e in outbound:
+        neighbour_ids.add(e["to"])
     neighbours = []
-    for e in edge_list:
-        if e["from"] == node_id:
-            for n in nodes:
-                if n.get("id") == e["to"]:
-                    neighbours.append(n)
-        elif e["to"] == node_id:
-            for n in nodes:
-                if n.get("id") == e["from"]:
-                    neighbours.append(n)
-    current_cycle = max((n.get("last_seen_cycle", 0) for n in nodes), default=0)
-    activations = decay.activation(nodes, edge_list, current_cycle)
-    return {"ok": True, "result": {"node": node, "neighbours": neighbours, "activations": activations}}
+    for nid in sorted(neighbour_ids):
+        n = _node_by_id(nodes, nid)
+        if n:
+            neighbours.append({
+                "id": nid,
+                "kind": n.get("kind", ""),
+                "title": n.get("title", ""),
+                "activation": activations.get(nid, 0.0),
+            })
+    return {"ok": True, "result": {
+        "node": node,
+        "activation": activations.get(node_id, 0.0),
+        "neighbours": neighbours,
+        "current_cycle": current,
+    }}
 
 
-def _stale(args):
-    workdir = pathlib.Path(args.get("workdir", "."))
-    threshold = float(args.get("threshold", 0.5))
-    nodes = extract.extract(workdir)
-    edge_list = edges.derive(nodes)
-    current_cycle = max((n.get("last_seen_cycle", 0) for n in nodes), default=0)
-    stale_list = decay.stale(nodes, edge_list, current_cycle, threshold)
-    return {"ok": True, "result": {"stale": stale_list}}
+def op_stale(args):
+    workdir = args.get("workdir", ".")
+    threshold = args.get("threshold", 0.5)
+    nodes, derived_edges, current = _build_graph(workdir)
+    stale_ids = decay.stale(nodes, derived_edges, current, threshold)
+    activations = decay.activation(nodes, derived_edges, current)
+    ranked = sorted(stale_ids, key=lambda nid: activations.get(nid, 0.0))
+    return {"ok": True, "result": {
+        "stale": ranked,
+        "threshold": threshold,
+        "current_cycle": current,
+    }}
 
 
-def _selfcheck(args):
-    """Exercise extract, edges, and decay with tiny in-memory fixtures.
+def op_explain(args):
+    """Decompose a node's activation into the inputs that produced it.
 
-    Returns {"ok": true, "result": {"modules": ["extract", "edges", "decay"]}}
-    on success, or {"ok": false, "result": {"failed": "<module>"}} naming
-    the first module that raised.
+    Returns the node's activation alongside last_seen_cycle, the current
+    cycle, how many cycles have elapsed, and the list of inbound edges with
+    the last_seen_cycle of each source. A score nobody can decompose is a
+    score nobody can trust — this is the organ's own instrument for showing
+    why it ranked something the way it did.
     """
+    workdir = args.get("workdir", ".")
+    node_id = args.get("id", "")
+    nodes, derived_edges, current = _build_graph(workdir)
+    activations = decay.activation(nodes, derived_edges, current)
+    node = _node_by_id(nodes, node_id)
+    if node is None:
+        return {"ok": False, "result": {"error": f"node '{node_id}' not found"}}
+    last_seen = node.get("last_seen_cycle", 0)
+    elapsed = current - last_seen
+    inbound = [e for e in derived_edges if e["to"] == node_id]
+    inbound_with_sources = []
+    for e in inbound:
+        source = _node_by_id(nodes, e["from"])
+        source_last_seen = source.get("last_seen_cycle", 0) if source else 0
+        inbound_with_sources.append({
+            "from": e["from"],
+            "type": e.get("type", ""),
+            "weight": e.get("weight", 1.0),
+            "source_last_seen_cycle": source_last_seen,
+        })
+    return {"ok": True, "result": {
+        "id": node_id,
+        "kind": node.get("kind", ""),
+        "title": node.get("title", ""),
+        "activation": activations.get(node_id, 0.0),
+        "last_seen_cycle": last_seen,
+        "current_cycle": current,
+        "elapsed_cycles": elapsed,
+        "inbound_edges": inbound_with_sources,
+    }}
+
+
+def op_selfcheck(args):
+    """Exercise each module alone and the full pipeline in sequence.
+
+    Runs extract then edges then decay over the real workdir and fails
+    when edges returns an empty list while extract returned more than ten
+    nodes, or when every pattern node has last_seen_cycle 0. A self-check
+    that only tests parts in isolation cannot see a broken contract between
+    them.
+    """
+    workdir = args.get("workdir", ".")
     modules = []
-
-    # extract: build a tiny workdir with minimal state files
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmpdir = pathlib.Path(tmp)
-            state_dir = tmpdir / "state"
-            state_dir.mkdir()
-            (state_dir / "patterns.md").write_text(
-                "## P-001 — test pattern\n\nbody text\n")
-            (state_dir / "gaps.md").write_text(
-                "## G-001 — test gap\n\nbody text\n")
-            (state_dir / "backlog.md").write_text(
-                "## B-001 — test backlog\n\nbody text\n")
-            (state_dir / "journal.jsonl").write_text("")
-            nodes = extract.extract(tmpdir)
+        nodes = extract.extract(workdir)
         modules.append("extract")
-    except Exception:
-        return {"ok": False, "result": {"failed": "extract"}}
-
-    # edges: derive from a tiny node list
+    except Exception as exc:
+        return {"ok": False, "result": {"modules": modules,
+                                       "failed": f"extract: {exc}"}}
     try:
-        test_nodes = [
-            {"id": "P-001", "kind": "pattern", "title": "test",
-             "last_seen_cycle": 1},
-            {"id": "C-1", "kind": "cycle", "title": "cycle 1",
-             "last_seen_cycle": 1,
-             "changed": ["body/organs/test/"], "why": "P-001"},
-        ]
-        edge_list = edges.derive(test_nodes)
+        derived_edges = edges.derive(nodes)
         modules.append("edges")
-    except Exception:
-        return {"ok": False, "result": {"failed": "edges"}}
-
-    # decay: activation and stale from tiny inputs
+    except Exception as exc:
+        return {"ok": False, "result": {"modules": modules,
+                                       "failed": f"edges: {exc}"}}
     try:
-        test_nodes = [
-            {"id": "P-001", "kind": "pattern", "title": "test",
-             "last_seen_cycle": 1},
-        ]
-        test_edges = []
-        activations = decay.activation(test_nodes, test_edges, 10)
-        stale_list = decay.stale(test_nodes, test_edges, 10, 0.5)
+        current = _current_cycle(workdir)
+        decay.activation(nodes, derived_edges, current)
         modules.append("decay")
-    except Exception:
-        return {"ok": False, "result": {"failed": "decay"}}
-
+    except Exception as exc:
+        return {"ok": False, "result": {"modules": modules,
+                                       "failed": f"decay: {exc}"}}
+    # Pipeline contract: the assembly must work, not just the parts.
+    if len(nodes) > 10 and len(derived_edges) == 0:
+        return {"ok": False, "result": {
+            "modules": modules,
+            "failed": "pipeline: edges returned 0 while extract returned >10 nodes",
+        }}
+    pattern_nodes = [n for n in nodes if n.get("kind") == "pattern"]
+    if pattern_nodes and all(n.get("last_seen_cycle", 0) == 0 for n in pattern_nodes):
+        return {"ok": False, "result": {
+            "modules": modules,
+            "failed": "pipeline: every pattern node has last_seen_cycle 0",
+        }}
     return {"ok": True, "result": {"modules": modules}}
 
 
 HANDLERS = {
-    "build": _build,
-    "query": _query,
-    "stale": _stale,
-    "selfcheck": _selfcheck,
+    "build": op_build,
+    "query": op_query,
+    "stale": op_stale,
+    "explain": op_explain,
+    "selfcheck": op_selfcheck,
 }
 
 
@@ -135,24 +216,20 @@ def main():
         payload = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
         print(json.dumps({"ok": False, "result": {"error": "invalid JSON on stdin"}}))
-        return 1
-
+        sys.exit(1)
     op = payload.get("op", "")
-    args = payload.get("args") or {}
-
+    args = payload.get("args", {}) or {}
     handler = HANDLERS.get(op)
     if handler is None:
         print(json.dumps({"ok": False, "result": {"error": f"unknown op '{op}'"}}))
-        return 1
-
+        sys.exit(1)
     try:
-        result = handler(args)
-        print(json.dumps(result))
-        return 0
+        response = handler(args)
+        print(json.dumps(response))
     except Exception as exc:
         print(json.dumps({"ok": False, "result": {"error": str(exc)}}))
-        return 1
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
