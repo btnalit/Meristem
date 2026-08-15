@@ -115,7 +115,34 @@ def promote() -> int:
     git("update-ref", LAST_GOOD, candidate)
     git("update-ref", "-d", CANDIDATE_REF, check=False)
     print(f"promoted {candidate[:12]} -> main; last-good updated")
+    publish()
     return 0
+
+
+def publish() -> None:
+    """Push a promoted main to the configured remote.
+
+    Substrate work, not kernel work: the seed proposes, the soil decides what
+    becomes main -- and therefore what leaves this machine. Only ever a
+    fast-forward of main, never a force, and only after canary and promotion
+    have already passed.
+
+    Opt-in by design. The constitution forbids publishing beyond this machine
+    and its CONFIGURED remotes without human permission, so an unset
+    MERISTEM_PUBLISH means the seed evolves locally and says so. A missing
+    credential is reported, never fatal: failing to publish must not undo a
+    promotion that already succeeded.
+    """
+    if os.environ.get("MERISTEM_PUBLISH", "").lower() not in ("1", "true", "yes"):
+        print("publish: disabled (set MERISTEM_PUBLISH=1 to push promotions)")
+        return
+    result = subprocess.run(["git", "push", "origin", "main"], cwd=str(REPO),
+                            capture_output=True, text=True, timeout=120)
+    if result.returncode == 0:
+        print(f"published main -> origin ({resolve('HEAD')[:12]})")
+    else:
+        print(f"publish FAILED (promotion stands): {result.stderr.strip()[:200]}",
+              file=sys.stderr)
 
 
 def rollback(reason: str) -> int:
