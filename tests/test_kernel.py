@@ -54,6 +54,33 @@ class TestImmuneSelfTest(unittest.TestCase):
     def test_understated_closure_refused(self):
         self.assertFalse(deterministic.run([], declared_closure=1).passed)
 
+    def test_memory_erasure_refused(self):
+        """Registers may gain entries; they may never lose them.
+
+        Tier A rewrites whole files, so 'add an entry' degrades naturally into
+        'replace the file with one entry' -- this actually happened in cycle 4.
+        """
+        register = KERNEL_REPO / "state" / "patterns.md"
+        original = register.read_text(encoding="utf-8")
+        try:
+            register.write_text("# Pattern Register\n\n## Z-999 — only\n",
+                                encoding="utf-8")
+            problems = deterministic.memory_integrity(["state/patterns.md"])
+            self.assertTrue(problems, "erasing six pattern entries was allowed")
+        finally:
+            register.write_text(original, encoding="utf-8")
+
+    def test_memory_edit_within_entry_allowed(self):
+        """Editing an entry's body is legitimate; only losing the entry is not."""
+        register = KERNEL_REPO / "state" / "patterns.md"
+        original = register.read_text(encoding="utf-8")
+        try:
+            register.write_text(original + "\n\nAn appended clarification.\n",
+                                encoding="utf-8")
+            self.assertEqual(deterministic.memory_integrity(["state/patterns.md"]), [])
+        finally:
+            register.write_text(original, encoding="utf-8")
+
     def test_vault_reference_invariant_holds(self):
         """Only gates/ may name the vault; __init__ owns the one definition."""
         self.assertEqual(deterministic.vault_reference_invariant(), [])

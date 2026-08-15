@@ -42,6 +42,33 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-008 — Whole-file replacement erases what it was asked to extend
+
+- **Count:** 1 (caught by the review gate in real cycle 4 — the first time the
+  immune system stopped a live mutation)
+- **Class:** The mutation mechanism's own shape makes a specific destruction
+  the *natural* failure mode. Tier A returns complete replacement files, so
+  "add an entry to this register" degrades gracefully into "replace this
+  register with one entry" — and the result looks entirely well-formed.
+- **Instance:** Asked to record a new failure class, the engine rewrote
+  `state/patterns.md` from seven entries to one, deleting P-002…P-007 and
+  renumbering its own entry as P-001. Both reviewers, from different lineages,
+  independently flagged `weakens_gate=True` and cited Principle 6 and the
+  register's role in Principle 2.
+- **Why a prompt rule is not the fix:** "discipline is not a fix." The engine
+  was not disobeying an instruction; it was doing exactly what whole-file
+  replacement does. The class survives any wording that asks it to be careful.
+- **Structural fix:** a deterministic check — append-only registers under
+  `state/` may gain entries and may have entry bodies edited, but every
+  existing `## X-NNN` heading must still be present. Cheap, total, and it fires
+  before the expensive reviewer is ever paid. Plus a golden fixture, so the
+  check that guards the register is itself guarded.
+  `meristem/gates/deterministic.py`, `meristem/loop.py`.
+- **What this instance is evidence *for*:** two heterogeneous reviewers
+  reaching the same correct verdict independently is the first real datum in
+  favour of the failure-independence hypothesis (§ models.toml). One data
+  point, recorded as such.
+
 ## P-007 — An environment difference that reads as a capability regression
 
 - **Count:** 1 (found on first deployment to Linux)

@@ -151,6 +151,20 @@ def golden_fixtures() -> list[str]:
     if deterministic.run([], declared_closure=1).passed:
         failures.append("deterministic gate accepted an understated closure")
 
+    # 6. Erasing append-only memory must be refused. Tier A rewrites whole
+    #    files, so "add an entry to this register" fails naturally as "replace
+    #    the register with one entry" -- a real rejection, seen in cycle 4.
+    register = REPO / "state" / "patterns.md"
+    original = read_text(register)
+    if original.strip():
+        try:
+            register.write_text("# Pattern Register\n\n## Z-999 — only entry\n",
+                                encoding="utf-8")
+            if not deterministic.memory_integrity(["state/patterns.md"]):
+                failures.append("memory-integrity check missed an erased register")
+        finally:
+            register.write_text(original, encoding="utf-8")
+
     return failures
 
 

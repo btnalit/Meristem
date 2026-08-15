@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 from dataclasses import dataclass, field
 
 from .. import BODY, CONTROL, REPO, VAULT, read_json, read_text
@@ -101,6 +102,37 @@ def scan_secrets(paths: list[pathlib.Path]) -> list[str]:
     return found
 
 
+def memory_integrity(changed: list[str]) -> list[str]:
+    """Append-only memory may gain entries; it may never lose them.
+
+    Tier A rewrites whole files, which makes accidental erasure the natural
+    failure mode when the task is "add an entry to this register". Asking the
+    prompt to be careful is discipline, not a fix -- so the check is structural
+    and deterministic: every entry heading that existed must still exist.
+
+    Editing an entry's body is allowed. Dropping the entry is not.
+    """
+    problems = []
+    for rel in changed:
+        if not (rel.startswith("state/") and rel.endswith(".md")):
+            continue
+        result = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"], cwd=str(REPO),
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            continue  # new file: nothing to lose yet
+        before = set(re.findall(r"^##\s+([A-Z]-\d+)", result.stdout, re.M))
+        after = set(re.findall(r"^##\s+([A-Z]-\d+)", read_text(REPO / rel), re.M))
+        lost = sorted(before - after)
+        if lost:
+            problems.append(
+                f"{rel} drops append-only entries {lost} -- "
+                "registers may gain entries, never lose them"
+            )
+    return problems
+
+
 def organ_manifests() -> list[str]:
     problems = []
     organs = BODY / "organs"
@@ -154,6 +186,9 @@ def run(changed: list[str], declared_closure: int | None = None) -> Verdict:
 
     for secret in scan_secrets([(REPO / rel) for rel in changed]):
         verdict.fail(f"possible secret: {secret}")
+
+    for problem in memory_integrity(changed):
+        verdict.fail(problem)
 
     for problem in organ_manifests():
         verdict.fail(problem)
