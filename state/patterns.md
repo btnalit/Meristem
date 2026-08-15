@@ -42,6 +42,35 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-018 — Splitting a task without verifying the seams
+
+- **Count:** 1 (memory-graph organ, cycles 38-51)
+- **Class:** A unit of work divided to fit a mechanism's limit, with nothing
+  checking that the pieces still fit *each other*. Each part passes its own
+  gates honestly; the assembly is broken, and nothing looks wrong until
+  something tries to run it.
+- **Instance:** `main.py` calls `edges.derive_edges(nodes)`; `edges.py`
+  defines `derive(nodes)`. Both were written by the seed, each approved 2/2,
+  each correct in isolation. The mismatch came from the *instructions* -- I
+  named the function differently in the two tasks that wrote them. The organ
+  reported `ok: false` the first time it was invoked.
+- **Why the gates could not catch it:** the closure calculator reasons about
+  dependencies between organs and files, not about whether one module's call
+  matches another's definition. The reviewers saw one file at a time and had
+  no reason to doubt a plausible function name. This is a real limit of
+  per-change review: correctness of the seam is a property of the assembly,
+  and no reviewer of a part is looking at it.
+- **Structural fix:** the organ gets a `selfcheck` op that imports its own
+  modules and exercises each entry point with tiny fixtures, so a part-to-part
+  mismatch is caught by the organ itself rather than by whoever calls it. That
+  is the organ-scale analogue of the golden fixtures: something whose only job
+  is to prove the pieces still connect.
+- **The lesson about splitting:** P-014 and P-017 both push toward smaller
+  tasks, and this is the cost of that push. Dividing work to fit an output
+  budget multiplies seams, and seams are exactly what per-piece review cannot
+  see. Every split should name the interface, not just the behaviour -- and
+  the assembly needs a check of its own.
+
 ## P-017 — Truncation detected only in one direction, and an error that ate its own evidence
 
 - **Count:** 4 identical faults on one task (live cycles 40-42, 46-47)

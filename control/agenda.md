@@ -97,6 +97,17 @@ Split small on purpose (P-014): each task is one file of modest size.
 - [ ] Write only two small files: state/probe-proposals/probe-memory-graph-basic/probe.json with id "probe-memory-graph-basic", capability_domain "self-knowledge", organ "memory-graph", and a one-line description; and state/probe-proposals/probe-memory-graph-basic/statement/task.md describing in a short paragraph what the memory-graph organ must do to pass. Write no rubric yet. Change nothing else.
 - [ ] Write state/probe-proposals/probe-memory-graph-basic/rubric/check.py only. It reads {"workdir": "..."} from stdin and prints {"score": float, "detail": "..."}. It must SCORE BY INVOKING body/organs/memory-graph/main.py over its ABI — send {"op": "build"} and {"op": "stale", "args": {"threshold": 0.5}} and check the shapes that come back — never by reading the organ's source. Include one discriminating case: a node whose last_seen_cycle is far in the past must rank below a recent one, and a stale list that returns a node with a fresh inbound edge is wrong. Build any fixture data with small helper functions rather than long embedded string literals — a rubric that needs thousands of tokens of escaped text to express itself will be truncated before it is finished. Change nothing else.
 
+## Make the brain actually run
+
+The five pieces exist but do not fit: main.py calls `edges.derive_edges(...)`
+while edges.py defines `derive(...)`. My fault — I named the function
+differently in the two tasks that wrote them, and nothing checked that an
+organ's own modules agree with each other. Splitting a task into small pieces
+buys nothing if the seams between the pieces go unverified.
+
+- [ ] Make body/organs/memory-graph/main.py call the function edges.py actually defines. Read edges.py, use its real function name, and verify by running: echo the JSON {"op":"build","args":{"workdir":"."}} into main.py from the repository root and confirm it prints ok true with node and edge counts. Fix only what is needed to make the three modules agree. Change nothing outside body/organs/memory-graph/.
+- [ ] Add a self-check to the memory-graph organ: a new op "selfcheck" in main.py that imports extract, edges and decay, calls each one's main entry with tiny in-memory fixtures, and returns {"ok": true, "result": {"modules": [...]}} — or ok false naming the module that failed. This is the organ proving its own seams hold, so a mismatch between its parts is caught by the organ rather than by whoever calls it. Change nothing outside body/organs/memory-graph/.
+
 ## Self-detection — the metric that matters most
 
 - [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
