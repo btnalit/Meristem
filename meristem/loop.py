@@ -441,6 +441,13 @@ def run_reflect(*, config=None) -> int:
     makes exactly ONE model call with the "score" role; appends proposals
     to state/proposals.md. Never writes to control/agenda.md -- a human
     promotes a proposal into the agenda.
+
+    The prompt demands BOTH kinds of proposal every time: at least one
+    repair (something measurably wrong) and at least one growth proposal
+    (a capability not yet possessed). The constitution's phrase is
+    "Spiral, not circular": a loop that only ever repairs converges on a
+    fixed point and stops; a loop that only ever grows without repairing
+    accumulates debt. Both directions are required every pass.
     """
     models = config or llm_mod.load_models()
     cycle = next_cycle()
@@ -464,6 +471,11 @@ def run_reflect(*, config=None) -> int:
     patterns_text = read_text(REPO / "state" / "patterns.md")
 
     # 3. Build a digest and make exactly ONE model call with the score role.
+    #    The prompt demands both a repair and a growth proposal every time.
+    #    Without this structural requirement the model collapses to whichever
+    #    mode is easiest -- usually repair, because the evidence for it is
+    #    already in the digest -- and the loop converges on a fixed point
+    #    instead of spiralling outward (Principle 2: "Spiral, not circular").
     digest = (
         "# Reflection digest\n\n"
         "## Stale knowledge (low-activation node ids)\n"
@@ -474,7 +486,19 @@ def run_reflect(*, config=None) -> int:
         f"{patterns_text}\n\n"
         "Propose up to three concrete, actionable next tasks for Meristem. "
         "Each should be specific enough to be taken from the agenda and "
-        "executed as a single mutation. Reply with ONLY a JSON object:\n"
+        "executed as a single mutation.\n\n"
+        "You MUST include at least one proposal of EACH kind:\n"
+        "1. REPAIR: something measurably wrong -- a failing probe, a "
+        "recurring rejection, a gap. Name the specific evidence (which "
+        "probe, which cycle, which gap id).\n"
+        "2. GROWTH: a capability you do not have but that the evidence "
+        "suggests is worth having. What would become possible, and what "
+        "measuring stick would prove it works?\n\n"
+        "The constitution says 'Spiral, not circular': a loop that only "
+        "ever repairs converges on a fixed point and stops. A loop that "
+        "only ever grows without repairing accumulates debt. Both kinds "
+        "are required every pass.\n\n"
+        "Reply with ONLY a JSON object:\n"
         '{"proposals": ["task 1", "task 2", "task 3"]}'
     )
     messages = [
@@ -483,8 +507,16 @@ def run_reflect(*, config=None) -> int:
             "content": (
                 "You are the reflection step of Meristem, a self-modifying "
                 "kernel. You are given a digest of stale knowledge, known "
-                "gaps, and recurring patterns. Propose up to three concrete "
-                "next tasks. Reply with ONLY a JSON object: "
+                "gaps, and recurring patterns. You must propose up to three "
+                "concrete next tasks.\n\n"
+                "You MUST include at least one REPAIR proposal (something "
+                "measurably wrong -- a failing probe, a recurring rejection, "
+                "a gap) and at least one GROWTH proposal (a capability you "
+                "do not have but that the evidence suggests is worth having). "
+                "The constitution's phrase is 'Spiral, not circular': a loop "
+                "that only ever repairs converges on a fixed point and stops. "
+                "Both kinds are required every time.\n\n"
+                "Reply with ONLY a JSON object: "
                 '{"proposals": ["...", "...", "..."]}'
             ),
         },
