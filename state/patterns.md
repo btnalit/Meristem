@@ -42,6 +42,25 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-007 — An environment difference that reads as a capability regression
+
+- **Count:** 1 (found on first deployment to Linux)
+- **Class:** A measurement harness fails for an environmental reason and
+  reports the failure **in the units of the thing being measured**. A probe
+  that cannot start scores 0, which is indistinguishable from a probe that ran
+  and found the system broken. This is the most dangerous shape a bug can take
+  here: it corrupts the scoreboard, and the scoreboard is what every accept /
+  reject decision rests on.
+- **Instance:** The probe runner spawned rubrics with the bare name `python`.
+  Debian ships only `python3`, so every rubric would have scored 0 on the
+  deployment host while scoring 100 on the development host.
+- **Structural fix:** rubrics are spawned with `sys.executable` — the very
+  interpreter already running the kernel — so the harness cannot disagree with
+  itself about which Python exists. `meristem/gates/probes.py`.
+- **Generalisation:** never name an external tool the environment might not
+  have when a self-reference is available. Where a probe genuinely cannot run,
+  it must report *inability*, not a score.
+
 ## P-006 — A gate denominated in a unit the world does not charge in
 
 - **Count:** 1 (found while routing a quota-limited endpoint)

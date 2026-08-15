@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from dataclasses import dataclass, field
 
 from .. import SCOREBOARD, VAULT, read_json, read_jsonl
@@ -78,8 +79,11 @@ def run_probe(manifest: dict, workdir: str) -> ProbeRun:
     score, detail = 0.0, ""
     if check.exists():
         try:
+            # sys.executable, never a bare name: "python" does not exist on a
+            # stock Debian, and a rubric that cannot start scores 0 -- an
+            # environment difference would read as a capability regression.
             result = subprocess.run(
-                ["python", str(check)],
+                [sys.executable, str(check)],
                 input=json.dumps({"workdir": workdir, "probe": manifest.get("id")}),
                 capture_output=True, text=True, timeout=120, cwd=str(path),
             )
