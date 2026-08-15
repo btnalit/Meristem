@@ -108,6 +108,19 @@ buys nothing if the seams between the pieces go unverified.
 - [ ] Make body/organs/memory-graph/main.py call the function edges.py actually defines. Read edges.py, use its real function name, and verify by running: echo the JSON {"op":"build","args":{"workdir":"."}} into main.py from the repository root and confirm it prints ok true with node and edge counts. Fix only what is needed to make the three modules agree. Change nothing outside body/organs/memory-graph/.
 - [ ] Add a self-check to the memory-graph organ: a new op "selfcheck" in main.py that imports extract, edges and decay, calls each one's main entry with tiny in-memory fixtures, and returns {"ok": true, "result": {"modules": [...]}} — or ok false naming the module that failed. This is the organ proving its own seams hold, so a mismatch between its parts is caught by the organ rather than by whoever calls it. Change nothing outside body/organs/memory-graph/.
 
+## Give the brain a sense of time
+
+The graph builds and decays, but its clock is broken: P-018, written minutes
+ago, ranks as stale alongside P-001 and P-002, the two oldest entries. The
+cause is that pattern and gap nodes have no last_seen_cycle — the registers
+record what was learned, never when — so extract.py gives them all the same
+default and decay cannot tell recent knowledge from ancient. A memory that
+cannot date its own contents cannot forget selectively, and selective
+forgetting is the entire point.
+
+- [ ] Make body/organs/memory-graph/extract.py date its pattern and gap nodes from evidence rather than a default. For each P-NNN or G-NNN node, find the highest cycle number among journal cycle records whose "why" text mentions that id, and use it as last_seen_cycle; when no cycle mentions it, fall back to the cycle in which the file containing it was last changed, found from journal records whose changed-file list includes state/patterns.md or state/gaps.md. Only when neither exists, use 0. Change nothing outside body/organs/memory-graph/.
+- [ ] Add an op "explain" to body/organs/memory-graph/main.py taking args {"id": "..."} and returning that node's activation together with the inputs that produced it: its last_seen_cycle, the current cycle, how many cycles have elapsed, and the list of inbound edges with the last_seen_cycle of each source. A score nobody can decompose is a score nobody can trust — and this is the organ's own instrument for showing why it ranked something the way it did. Change nothing outside body/organs/memory-graph/.
+
 ## Self-detection — the metric that matters most
 
 - [ ] Append one new capability gap to state/gaps.md that you observed while running, which is not already G-001 through G-005. Use the appends mechanism. Every existing G-NNN heading must survive, and no other file may change. State what is missing, why it matters, and what it is blocked on.
