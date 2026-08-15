@@ -45,6 +45,16 @@ def git(*args, check=True, cwd=None) -> str:
     return result.stdout.strip()
 
 
+def resolve(ref: str) -> str:
+    """Commit id for a ref, or '' when it does not exist.
+
+    `git rev-parse <missing-ref>` echoes the ref name back on stdout, so a
+    naive read mistakes 'no candidate' for 'candidate present'. --verify
+    --quiet is the honest form.
+    """
+    return git("rev-parse", "--verify", "--quiet", ref, check=False)
+
+
 def guard_protected(base: str, candidate: str) -> list[str]:
     """The substrate's own protected-path check. Plain git, no kernel code."""
     changed = git("diff", "--name-only", f"{base}..{candidate}").splitlines()
@@ -80,7 +90,7 @@ def promote() -> int:
     if panic.engaged():
         print("PANIC latch is engaged; refusing to promote", file=sys.stderr)
         return 3
-    candidate = git("rev-parse", CANDIDATE_REF, check=False)
+    candidate = resolve(CANDIDATE_REF)
     if not candidate:
         print("no candidate awaiting promotion")
         return 0
@@ -104,7 +114,7 @@ def promote() -> int:
 
 def rollback(reason: str) -> int:
     """Revert, never reset. The failure is recorded, not erased."""
-    last_good = git("rev-parse", LAST_GOOD, check=False)
+    last_good = resolve(LAST_GOOD)
     head = git("rev-parse", "HEAD")
     if not last_good or last_good == head:
         print("nothing to roll back to")

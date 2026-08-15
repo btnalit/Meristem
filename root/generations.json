@@ -1,0 +1,6 @@
+{
+  "live": "gen-0",
+  "last_good": "gen-0",
+  "generations": ["gen-0"],
+  "note": "Succession is specified but not enabled in P0. The substrate is frozen in practice until P3; the thaw path exists, the door is not open."
+}

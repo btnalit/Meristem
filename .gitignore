@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# The eval vault must NEVER be committed. Rubrics and held-outs are invisible
+# to the mutation engine by construction; if they ever appear here that is a
+# constitutional violation, not a convenience.
+meristem-vault/
+eval-vault/
+
+# Transient worktrees created per mutation cycle.
+meristem-wt-*/
+meristem-canary/
+
+.env
+*.tmp
