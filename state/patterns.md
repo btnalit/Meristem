@@ -42,6 +42,33 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-023 — The prompt accumulated what the constitution had already excluded
+
+- **Count:** 2 faults (cycles 107, 108), plus every cycle paying for it silently
+- **Class:** A budget exclusion honoured in one place and ignored in another.
+  P-022 removed `tests/` from the CLOSURE budget; the same file was still sent
+  in full inside every MUTATION prompt. Fixing a rule where it is checked, but
+  not where it is spent, leaves the cost exactly where it was.
+- **Instance:** `tests/test_kernel.py` had reached 56KB -- larger than any
+  kernel file and the single biggest item in the engine's context. Input
+  reached 55,961 tokens and the engine returned nothing twice: the budget was
+  gone before it arrived at the code it was asked to change. Alongside it,
+  `control/agenda.md` had grown to 28KB holding forty tasks averaging ~500
+  characters, nearly all of them already finished -- sent in full on every
+  cycle.
+- **Structural fix:** tests are included in the mutation context only when the
+  task names one, so a task that must edit tests still sees them; the agenda
+  was cut to its five genuinely open items with retired text moved to
+  `state/agenda-archive.md`. Context for an ordinary task fell 25%, and the
+  agenda from 28,310 to 3,080 characters.
+- **Whose failure:** mine. I added tasks to the agenda for dozens of cycles and
+  never removed a finished one -- accumulation instead of metabolism, in the
+  one file charged by the token on every mutation. The constitution's own
+  clause was sitting there unapplied.
+- **The rule:** an exclusion must hold everywhere the excluded thing costs
+  something, not only where it is measured. And any file that rides in every
+  prompt has a size budget whether or not anyone wrote one down.
+
 ## P-022 — A budget spent on what the constitution excludes from it
 
 - **Count:** 1 (three consecutive cycles blocked, 97-99)

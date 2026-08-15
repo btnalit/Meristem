@@ -88,12 +88,25 @@ def mutable_files() -> list[str]:
     return out
 
 
-def build_context() -> str:
-    """The whole mutable surface, in one prompt. This is the point."""
+def build_context(task: str = "") -> str:
+    """The whole mutable surface, in one prompt. This is the point.
+
+    With one exception the constitution already grants: tests/ carries its own
+    budget (v3.1 1.3) and had grown to 56KB -- larger than any kernel file and
+    the biggest single item in every prompt. Sending it unconditionally spent
+    the output budget before the engine reached the code it was asked to
+    change, which is how cycles 107 and 108 came back proposing nothing
+    (P-023). It is included only when the task actually names it, so a task
+    that must edit tests still sees them.
+    """
     chunks = []
+    wants_tests = "test" in task.lower()
     for rel in mutable_files():
-        body = read_text(REPO / rel)
-        chunks.append(f"=== FILE: {rel} ===\n{body}")
+        if rel.startswith("tests/") and not wants_tests:
+            chunks.append(f"=== FILE: {rel} === (omitted: {len(read_text(REPO / rel))}"
+                          " chars of tests; name a test in the task to see them)")
+            continue
+        chunks.append(f"=== FILE: {rel} ===\n{read_text(REPO / rel)}")
     return "\n\n".join(chunks)
 
 
@@ -159,7 +172,7 @@ def propose(task: str, *, config=None, extra: str = "") -> Mutation:
                 f"# Checklist\n{checklists}\n\n"
                 f"# Task\n{task}\n\n"
                 + (f"# Additional context\n{extra}\n\n" if extra else "")
-                + f"# Current mutable source\n{build_context()}"
+                + f"# Current mutable source\n{build_context(task)}"
             ),
         },
     ]
