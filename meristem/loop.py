@@ -287,9 +287,67 @@ def print_body() -> int:
     return 0
 
 
+def print_spend() -> int:
+    """Print total calls and tokens grouped by role and by model.
+
+    Reads only state/journal.jsonl -- the same append-only record the ledger
+    writes to. No new state, no new files; the data was already collected,
+    it just was not queryable.
+    """
+    rows = [r for r in read_jsonl(JOURNAL) if r.get("kind") == "usage"]
+    if not rows:
+        print("no usage recorded")
+        return 0
+
+    by_role: dict[str, dict[str, int]] = {}
+    by_model: dict[str, dict[str, int]] = {}
+    for row in rows:
+        role = row.get("role", "?")
+        model = row.get("model", "?")
+        prompt = int(row.get("prompt_tokens", 0))
+        completion = int(row.get("completion_tokens", 0))
+        reasoning = int(row.get("reasoning_tokens", 0))
+        total = prompt + completion + reasoning
+        for key, bucket in ((role, by_role), (model, by_model)):
+            entry = bucket.setdefault(
+                key, {"calls": 0, "prompt": 0, "completion": 0,
+                      "reasoning": 0, "total": 0})
+            entry["calls"] += 1
+            entry["prompt"] += prompt
+            entry["completion"] += completion
+            entry["reasoning"] += reasoning
+            entry["total"] += total
+
+    total_calls = len(rows)
+    total_prompt = sum(int(r.get("prompt_tokens", 0)) for r in rows)
+    total_completion = sum(int(r.get("completion_tokens", 0)) for r in rows)
+    total_reasoning = sum(int(r.get("reasoning_tokens", 0)) for r in rows)
+    total_tokens = total_prompt + total_completion + total_reasoning
+
+    print(f"total calls    : {total_calls}")
+    print(f"total tokens   : {total_tokens} "
+          f"(prompt {total_prompt}, completion {total_completion}, "
+          f"reasoning {total_reasoning})")
+
+    def _table(title: str, bucket: dict) -> None:
+        print(f"\n{title}")
+        print(f"{'name':24s} {'calls':>6s} {'prompt':>8s} "
+              f"{'compl':>8s} {'reason':>8s} {'total':>8s}")
+        print(f"{'----':24s} {'-----':>6s} {'------':>8s} "
+              f"{'-----':>8s} {'------':>8s} {'-----':>8s}")
+        for name in sorted(bucket):
+            e = bucket[name]
+            print(f"{name:24s} {e['calls']:6d} {e['prompt']:8d} "
+                  f"{e['completion']:8d} {e['reasoning']:8d} {e['total']:8d}")
+
+    _table("By role", by_role)
+    _table("By model", by_model)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -308,6 +366,9 @@ def main(argv=None) -> int:
 
     if args.command == "body":
         return print_body()
+
+    if args.command == "spend":
+        return print_spend()
 
     if args.command == "status":
         rows = read_jsonl(JOURNAL)

@@ -419,5 +419,114 @@ class TestBodyCommand(unittest.TestCase):
                 manifest_path.write_text(original_content, encoding="utf-8")
 
 
+class TestSpendCommand(unittest.TestCase):
+    def test_spend_command_groups_by_role_and_model(self):
+        """The spend command reads only state/journal.jsonl and prints
+        total calls and tokens grouped by role and by model."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "usage", "role": "mutate", "model": "glm-5.2",
+             "prompt_tokens": 1000, "completion_tokens": 500,
+             "reasoning_tokens": 200},
+            {"kind": "usage", "role": "review", "model": "deepseek-v4-flash",
+             "prompt_tokens": 800, "completion_tokens": 300,
+             "reasoning_tokens": 0},
+            {"kind": "usage", "role": "mutate", "model": "glm-5.2",
+             "prompt_tokens": 2000, "completion_tokens": 1000,
+             "reasoning_tokens": 400},
+            {"kind": "usage", "role": "review",
+             "model": "sensenova-6.8-flash-lite",
+             "prompt_tokens": 600, "completion_tokens": 200,
+             "reasoning_tokens": 0},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            buf = io.StringIO()
+            with patch("meristem.loop.JOURNAL", tmp_path):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["spend"])
+            output = buf.getvalue()
+            self.assertEqual(rc, 0)
+            # Total calls
+            self.assertIn("4", output)
+            # Role grouping: mutate appears with 2 calls
+            self.assertIn("mutate", output)
+            self.assertIn("review", output)
+            # Model grouping
+            self.assertIn("glm-5.2", output)
+            self.assertIn("deepseek-v4-flash", output)
+            self.assertIn("sensenova-6.8-flash-lite", output)
+            # Total prompt tokens: 1000+800+2000+600 = 4400
+            self.assertIn("4400", output)
+            # Total tokens: 4400+500+300+1000+200+200+400+0 = 7000
+            self.assertIn("7000", output)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_spend_command_on_empty_journal(self):
+        """When no usage is recorded, the command handles it gracefully."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        tmp.write("")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            buf = io.StringIO()
+            with patch("meristem.loop.JOURNAL", tmp_path):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["spend"])
+            self.assertEqual(rc, 0)
+            self.assertIn("no usage", buf.getvalue().lower())
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_spend_command_ignores_non_usage_rows(self):
+        """The spend command must filter to kind=='usage' and not count
+        cycle, fault, or organ_call records."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "cycle", "cycle": 1, "outcome": "rejected"},
+            {"kind": "usage", "role": "mutate", "model": "glm-5.2",
+             "prompt_tokens": 100, "completion_tokens": 50,
+             "reasoning_tokens": 0},
+            {"kind": "organ_call", "caller": "kernel", "callee": "x"},
+            {"kind": "fault", "cycle": 2, "error": "boom"},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            buf = io.StringIO()
+            with patch("meristem.loop.JOURNAL", tmp_path):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["spend"])
+            output = buf.getvalue()
+            self.assertEqual(rc, 0)
+            # Only 1 usage row, so total calls = 1
+            self.assertIn("1", output)
+            self.assertIn("mutate", output)
+            self.assertIn("glm-5.2", output)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     unittest.main()
