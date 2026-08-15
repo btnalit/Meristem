@@ -14,6 +14,8 @@ recovery machinery -- at seed scale, branch isolation dissolves the problem.
 Every accepted mutation answers six questions, by construction (the journal
 entry schema below): why, what, which probe proves it better, which old
 capabilities are shown not to have regressed, what it cost, who approved.
+The rationale summary travels with the journal entry so the six questions can
+be answered from the journal alone, without opening decisions.jsonl.
 """
 
 from __future__ import annotations
@@ -67,6 +69,7 @@ class CycleResult:
     usd: float = 0.0
     votes: list = field(default_factory=list)
     probe_runs: list = field(default_factory=list)
+    rationale: str = ""
 
 
 def next_cycle() -> int:
@@ -196,6 +199,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
     keep = False
     try:
         mutation = engine_mod.propose(task, config=models)
+        result.rationale = mutation.rationale
         result.usd += ledger_mod.record(cycle, "mutate", mutation.completion, models)
         ledger_mod.check(cycle)
 
@@ -245,11 +249,14 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
         return result
     finally:
         # The six questions, by construction -- not aspiration, schema.
+        # The rationale summary travels here so a reviewer can answer all
+        # six from the journal alone, without opening decisions.jsonl.
         append_jsonl(JOURNAL, {
             "kind": "cycle",
             "cycle": cycle,
             "outcome": result.outcome,
             "why": task,
+            "rationale": result.rationale,
             "what": result.changed,
             "proved_better_by": [r["probe_id"] for r in result.probe_runs
                                  if r.get("score", 0) > 0],
