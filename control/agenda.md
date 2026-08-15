@@ -106,7 +106,7 @@ organ's own modules agree with each other. Splitting a task into small pieces
 buys nothing if the seams between the pieces go unverified.
 
 - [ ] Make body/organs/memory-graph/main.py call the function edges.py actually defines. Read edges.py, use its real function name, and verify by running: echo the JSON {"op":"build","args":{"workdir":"."}} into main.py from the repository root and confirm it prints ok true with node and edge counts. Fix only what is needed to make the three modules agree. Change nothing outside body/organs/memory-graph/.
-- [ ] Add a self-check to the memory-graph organ: a new op "selfcheck" in main.py that imports extract, edges and decay, calls each one's main entry with tiny in-memory fixtures, and returns {"ok": true, "result": {"modules": [...]}} — or ok false naming the module that failed. This is the organ proving its own seams hold, so a mismatch between its parts is caught by the organ rather than by whoever calls it. Change nothing outside body/organs/memory-graph/.
+- [ ] Add a self-check to the memory-graph organ: a new op "selfcheck" in main.py that imports extract, edges and decay, calls each one's main entry with tiny in-memory fixtures, and returns {"ok": true, "result": {"modules": [...]}} — or ok false naming the module that failed. ADD ONLY. Your previous attempt was rejected 0/2 for deleting the top-level try/except around handler execution, dropping the JSONDecodeError handler, and turning an unknown op from exit 1 into a silent exit 0 — converting hard failures into silent successes while adding a feature meant to catch failures. Keep every existing error path, every structured JSON error return, and every non-zero exit code exactly as they are; the new op is additional, never a rewrite of what surrounds it. Change nothing outside body/organs/memory-graph/.
 
 ## Give the brain a sense of time
 
@@ -120,6 +120,25 @@ forgetting is the entire point.
 
 - [ ] Make body/organs/memory-graph/extract.py date its pattern and gap nodes from evidence rather than a default. For each P-NNN or G-NNN node, find the highest cycle number among journal cycle records whose "why" text mentions that id, and use it as last_seen_cycle; when no cycle mentions it, fall back to the cycle in which the file containing it was last changed, found from journal records whose changed-file list includes state/patterns.md or state/gaps.md. Only when neither exists, use 0. Change nothing outside body/organs/memory-graph/.
 - [ ] Add an op "explain" to body/organs/memory-graph/main.py taking args {"id": "..."} and returning that node's activation together with the inputs that produced it: its last_seen_cycle, the current cycle, how many cycles have elapsed, and the list of inbound edges with the last_seen_cycle of each source. A score nobody can decompose is a score nobody can trust — and this is the organ's own instrument for showing why it ranked something the way it did. Change nothing outside body/organs/memory-graph/.
+
+## The brain lost its edges — repair the data contract
+
+Measured now: extract returns 85 nodes and edges.derive returns **0**. It was
+46 before the dating change. Two causes, both in extract.py:
+
+1. Nodes carry only `id`, `kind`, `title`, `last_seen_cycle`. The four edge
+   rules match on a pattern's body text and on a cycle's changed-file list —
+   neither of which survives extraction any more, so every rule misses.
+2. `last_seen_cycle` is 0 on every pattern node, so the dating work did not
+   actually take effect either.
+
+This is P-018 again: each module is defensible alone, and the assembly is
+broken. selfcheck passed, because it exercises each module with its own
+fixtures and never asserts that what one produces is what the next consumes.
+
+- [ ] Make body/organs/memory-graph/extract.py carry the fields the edge rules need. Every node keeps id, kind, title and last_seen_cycle, and additionally: pattern and gap nodes carry "text" holding the body of their entry; cycle nodes carry "changed" holding the list of files that cycle changed and "why" holding its task text. Verify by running the build op and confirming the edge count is greater than zero. Change nothing outside body/organs/memory-graph/.
+- [ ] Make the dating in body/organs/memory-graph/extract.py actually take effect: every pattern and gap node currently gets last_seen_cycle 0. Find the highest cycle number among journal records whose "why" text contains that node's id, and use it; when none mentions it, use the highest cycle whose changed-file list includes the register file that holds it. Verify by building and confirming that P-018 has a higher last_seen_cycle than P-001. Change nothing outside body/organs/memory-graph/.
+- [ ] Strengthen the memory-graph selfcheck so it would have caught this. In addition to exercising each module alone, it must run extract then edges then decay in sequence over the real workdir and fail when edges returns an empty list while extract returned more than ten nodes, or when every pattern node has last_seen_cycle 0. A self-check that only tests parts in isolation cannot see a broken contract between them. Change nothing outside body/organs/memory-graph/. ADD ONLY — keep every existing error path, structured error return and non-zero exit code exactly as it is.
 
 ## Self-detection — the metric that matters most
 
