@@ -19,6 +19,7 @@ from meristem import REPO as KERNEL_REPO, VAULT, append_jsonl, read_jsonl  # noq
 from meristem import engine, germline, ledger, llm  # noqa: E402
 from meristem.gates import closure, deterministic, germline_validate, probes, review  # noqa: E402
 from meristem import loop  # noqa: E402
+from meristem import breaker  # noqa: E402
 
 
 class TestBudgets(unittest.TestCase):
@@ -663,6 +664,96 @@ class TestAppends(unittest.TestCase):
             with self.assertRaises(MeristemError) as ctx:
                 engine.propose("test task")
             self.assertIn("protected", str(ctx.exception).lower())
+
+
+class TestCircuitBreaker(unittest.TestCase):
+    def test_rejections_for_counts_rejected_cycles(self):
+        """rejections_for must count only cycle records whose 'why' matches
+        the task and whose outcome is 'rejected'."""
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "cycle", "cycle": 1, "why": "task A", "outcome": "rejected"},
+            {"kind": "cycle", "cycle": 2, "why": "task A", "outcome": "rejected"},
+            {"kind": "cycle", "cycle": 3, "why": "task A", "outcome": "candidate"},
+            {"kind": "cycle", "cycle": 4, "why": "task B", "outcome": "rejected"},
+            {"kind": "usage", "role": "mutate", "model": "x"},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            with patch("meristem.breaker.JOURNAL", tmp_path):
+                self.assertEqual(breaker.rejections_for("task A"), 2)
+                self.assertEqual(breaker.rejections_for("task B"), 1)
+                self.assertEqual(breaker.rejections_for("task C"), 0)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_should_park_returns_true_at_limit(self):
+        """should_park returns True when rejections reach the limit."""
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "cycle", "cycle": 1, "why": "task X", "outcome": "rejected"},
+            {"kind": "cycle", "cycle": 2, "why": "task X", "outcome": "rejected"},
+            {"kind": "cycle", "cycle": 3, "why": "task X", "outcome": "rejected"},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            with patch("meristem.breaker.JOURNAL", tmp_path):
+                self.assertTrue(breaker.should_park("task X", limit=3))
+                self.assertFalse(breaker.should_park("task X", limit=4))
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_should_park_returns_false_below_limit(self):
+        """should_park returns False when rejections are below the limit."""
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "cycle", "cycle": 1, "why": "task Y", "outcome": "rejected"},
+            {"kind": "cycle", "cycle": 2, "why": "task Y", "outcome": "candidate"},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            with patch("meristem.breaker.JOURNAL", tmp_path):
+                self.assertFalse(breaker.should_park("task Y", limit=3))
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_should_park_default_limit_is_three(self):
+        """The default limit is 3, matching the agenda's specification."""
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "cycle", "cycle": i, "why": "task Z", "outcome": "rejected"}
+            for i in range(3)
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            with patch("meristem.breaker.JOURNAL", tmp_path):
+                self.assertTrue(breaker.should_park("task Z"))
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
