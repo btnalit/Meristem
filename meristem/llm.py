@@ -22,7 +22,7 @@ from . import CONTROL, MeristemError
 #: correctness, not politeness. Module-level so every role shares one throttle.
 _last_call = 0.0
 MIN_INTERVAL = 3.0
-RATE_LIMIT_BACKOFF = (15.0, 30.0, 60.0)
+RATE_LIMIT_BACKOFF = (15.0, 45.0, 90.0, 180.0)
 
 
 @dataclass
@@ -78,10 +78,33 @@ def complete(
     slot: dict | None = None,
     config: dict | None = None,
     max_tokens: int | None = None,
-    attempts: int = 3,
+    attempts: int = 4,
 ) -> Completion:
-    """One structured model call. Raises MeristemError on exhausted retries."""
-    slot = slot or slots_for(role, config)[0]
+    """One structured model call, falling back across a role's slots.
+
+    A quota is a property of one model, not of the capability. When the
+    preferred slot is exhausted the role is still available through another --
+    so a rate limit should cost a slower cycle, never a lost one. Explicit
+    slots (a named reviewer) never fall back: that would silently collapse the
+    panel's independence into whichever model answered.
+    """
+    candidates = [slot] if slot else slots_for(role, config)
+    last: Exception | None = None
+    for candidate in candidates:
+        try:
+            return _complete_one(role, messages, candidate, max_tokens, attempts)
+        except MeristemError as exc:
+            last = exc
+    raise last or MeristemError(f"role {role} has no configured slot")
+
+
+def _complete_one(
+    role: str,
+    messages: list[dict],
+    slot: dict,
+    max_tokens: int | None,
+    attempts: int,
+) -> Completion:
     base = slot["base_url"].rstrip("/")
     key = os.environ.get(slot.get("api_key_env", ""), "")
     if slot.get("api_key_env") and not key:
@@ -135,4 +158,4 @@ def complete(
             last = exc
             if attempt + 1 < attempts:
                 time.sleep(2**attempt)
-    raise MeristemError(f"role {role} failed after {attempts} attempts: {last}")
+    raise MeristemError(f"{slot['id']} failed after {attempts} attempts: {last}")
