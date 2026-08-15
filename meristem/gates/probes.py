@@ -66,6 +66,24 @@ def catalogue(kind: str = "internal") -> list[dict]:
     return out
 
 
+def probe_exists(probe_id: str) -> bool:
+    """Is this probe id present in the vault?
+
+    An organ may not reach register/active while naming probes that do not
+    exist -- otherwise "it has probes" is satisfied by a string, and growth
+    without a measuring stick passes as growth with one.
+    """
+    return any(
+        manifest.get("id") == probe_id
+        for kind in ("internal", "anchor")
+        for manifest in catalogue(kind)
+    )
+
+
+def missing_probes(names) -> list[str]:
+    return sorted({name for name in (names or []) if not probe_exists(name)})
+
+
 def run_probe(manifest: dict, workdir: str) -> ProbeRun:
     """Score one probe. An executable check.py is authoritative when present."""
     import pathlib

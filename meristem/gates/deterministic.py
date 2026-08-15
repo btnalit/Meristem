@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from .. import REPO, VAULT, read_json, read_text
 from . import closure as closure_mod
 from . import germline_validate
+from . import probes as probes_mod
 
 #: The kernel. Grows only by human decision (raising the cap is a layer-3 act).
 KERNEL_LOC_CAP = 3000
@@ -158,6 +159,16 @@ def organ_manifests(root: pathlib.Path = REPO) -> list[str]:
             f"organ '{entry.name}': {p}"
             for p in germline_validate.validate(manifest, entry.name)
         ]
+        # "It declares probes" must mean the probes exist. Otherwise the
+        # requirement is satisfied by a string, and growth without a measuring
+        # stick passes as growth with one.
+        if manifest.get("lifecycle") in ("register", "active"):
+            absent = probes_mod.missing_probes(manifest.get("probes"))
+            if absent:
+                problems.append(
+                    f"organ '{entry.name}': names probes that do not exist in the "
+                    f"vault {absent}"
+                )
     return problems
 
 

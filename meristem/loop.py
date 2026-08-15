@@ -41,6 +41,7 @@ from . import (
     write_json,
 )
 from . import engine as engine_mod
+from . import germline
 from . import ledger as ledger_mod
 from . import llm as llm_mod
 from .gates import closure as closure_mod
@@ -70,6 +71,7 @@ class CycleResult:
     votes: list = field(default_factory=list)
     probe_runs: list = field(default_factory=list)
     rationale: str = ""
+    tier: str = "A"
 
 
 def next_cycle() -> int:
@@ -273,6 +275,15 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
                  "reasons": [str(r)[:200] for r in (v.get("reasons") or [])[:3]]}
                 for v in result.votes if v.get("verdict") != "approve"
             ],
+            # MCR (mutation compression ratio): which tier resolved this task.
+            # Recorded explicitly even while only Tier A exists, so the ratio
+            # is measurable the moment Tier B appears. A falling Tier-A share
+            # with flat kernel LOC means the kernel is getting harder to
+            # understand without getting bigger.
+            "tier": result.tier,
+            # Per-slot agreement: the instrument for testing whether cheap
+            # heterogeneous reviewers actually beat one strong reviewer.
+            "slot_votes": {v.get("slot"): v.get("verdict") for v in result.votes},
             "reason": result.reason,
             "branch": branch if keep else "",
         })
@@ -281,7 +292,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -292,12 +303,39 @@ def main(argv=None) -> int:
         print("immune self-test:", "FAILED" if failures else "ok")
         return 1 if failures else 0
 
+    if args.command == "gaps":
+        for line in read_text(REPO / "state" / "gaps.md").splitlines():
+            if line.startswith("## "):
+                print(f"  {line[3:]}")
+        return 0
+
     if args.command == "status":
-        cycles = [r for r in read_jsonl(JOURNAL) if r.get("kind") == "cycle"]
-        print(f"cycles run     : {len(cycles)}")
-        print(f"candidates      : {sum(1 for c in cycles if c['outcome'] == 'candidate')}")
+        rows = read_jsonl(JOURNAL)
+        cycles = [r for r in rows if r.get("kind") == "cycle"]
+        accepted = [c for c in cycles if c.get("outcome") == "candidate"]
+        tiers = {}
+        for c in accepted:
+            tiers[c.get("tier", "A")] = tiers.get(c.get("tier", "A"), 0) + 1
+        slot_stats: dict[str, dict[str, int]] = {}
+        for c in cycles:
+            for slot, verdict in (c.get("slot_votes") or {}).items():
+                tally = slot_stats.setdefault(slot, {"approve": 0, "reject": 0})
+                tally["approve" if verdict == "approve" else "reject"] += 1
+        organs = germline.registry()
+        ahead = git("rev-list", "--count", "origin/main..HEAD", check=False) or "?"
+
+        print(f"cycles run      : {len(cycles)}")
+        print(f"  accepted      : {len(accepted)}")
+        print(f"  rejected      : {sum(1 for c in cycles if c.get('outcome') == 'rejected')}")
+        print(f"  faults        : {sum(1 for r in rows if r.get('kind') == 'fault')}")
         print(f"kernel LOC      : {deterministic.kernel_loc()} / {deterministic.KERNEL_LOC_CAP}")
-        print(f"spent (USD)     : {ledger_mod.spent():.4f}")
+        print(f"organs (body)   : {len(organs)}"
+              + (f"  [{', '.join(f'{o.id}:{o.lifecycle}' for o in organs)}]" if organs else ""))
+        print(f"MCR by tier     : {tiers or '(none accepted yet)'}")
+        for slot, tally in sorted(slot_stats.items()):
+            print(f"  reviewer {slot:20s} approve={tally['approve']} reject={tally['reject']}")
+        print(f"spent (USD)     : {ledger_mod.spent():.4f}  calls: {ledger_mod.calls()}")
+        print(f"unpublished     : {ahead} commit(s) ahead of origin/main")
         print(f"open agenda item: {take_task() or '(none)'}")
         return 0
 
