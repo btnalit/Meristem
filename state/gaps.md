@@ -51,3 +51,30 @@ pointed out — that ratio is the self-detection metric.
   anchors prevent self-deception. Until P3 the divergence alarm is the main
   defence, and it is thin with one anchor.
 - **Blocked on:** P3.
+
+## G-006 — No circuit breaker for repeated review rejections
+
+**What is missing.** The loop retries a rejected task on the next cycle because
+`done_tasks()` only marks a task complete when the outcome is `candidate`, and
+`take_task()` returns the first open item. There is no aggregation of rejection
+reasons across cycles, no retry counter, and no escalation path when the same
+task fails review repeatedly for the same reason. The journal records each
+rejection's reasons, but nothing reads those records back to detect "this task
+has been rejected N times for the same failure class."
+
+**Why it matters.** A task that the engine cannot complete through Tier A
+whole-file replacement will burn model calls every cycle — up to the
+`cycle_calls` cap of 40 — producing the same rejection each time. This wastes
+quota, generates noise in the journal, and masks the real signal: the task is
+underspecified for Tier A and needs Tier B, or the kernel has grown hard to
+modify, or the task itself is malformed. Principle 2 says discipline is not a
+fix: adding a retry limit to a prompt is training, not growth. The structural
+fix is a circuit breaker that counts consecutive rejections per task, and when
+a threshold is crossed, either escalates the tier, surfaces the pattern to
+`state/patterns.md`, or marks the task as blocked for human attention.
+
+**Blocked on.** A mechanism to aggregate journal entries by task text across
+cycles (the journal stores `why` as the task string, so this is queryable but
+nothing does it yet), and a policy for what happens when the threshold is
+crossed — escalate tier, block, or notify. Both are kernel-level changes that
+belong in `meristem/loop.py` and should be gated normally.
