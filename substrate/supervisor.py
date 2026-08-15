@@ -207,7 +207,17 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             print("PANIC latch engaged; heartbeat stopping", file=sys.stderr)
             return 3
         print(f"--- beat {beat}/{beats} @ {time.strftime('%H:%M:%S')}", flush=True)
-        argv = ["cycle"] if pending_task() else ["reflect"]
+        # v3.1 wrote "Core Pressure >=0.9 主动触发 externalize, 不等确定性闸撞墙"
+        # and nothing ever acted on it. 0.85 is the early-warning rung, below
+        # the gate: pressure pre-empts ordinary work, because a kernel that
+        # keeps growing while nothing watches ends at a wall no cycle can pass.
+        pressure = core_pressure()
+        if pressure >= PRESSURE_MANDATE:
+            print(f"    core pressure {pressure:.2f} >= {PRESSURE_MANDATE}"
+                  " -- reflecting under pressure mandate", flush=True)
+            argv = ["reflect", "--pressure"]
+        else:
+            argv = ["cycle"] if pending_task() else ["reflect"]
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
                                 cwd=str(REPO),
                                 **({} if os.name == "nt" else {"start_new_session": True}))
@@ -218,6 +228,31 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             print(f"    next beat in {delay // 60}m {delay % 60}s", flush=True)
             time.sleep(delay)
     return 0
+
+
+#: Early-warning rung. The design's gate is 0.90; acting only there means
+#: acting once the wall is already in reach. 0.85 buys a campaign's worth of
+#: room to externalize, prune or make a case before anything is blocked.
+PRESSURE_MANDATE = 0.85
+
+
+def core_pressure() -> float:
+    """Kernel LOC over its cap, read the same way the gate reads it.
+
+    The soil measures; it does not decide what to do about the number. What
+    the seed proposes in response is the seed's, and the ranked menu
+    (externalize > prune > compress > raise the cap) lives in the
+    constitution, not here.
+    """
+    result = subprocess.run([sys.executable, "-m", "meristem.loop", "status"],
+                            cwd=str(REPO), capture_output=True, text=True)
+    for line in result.stdout.splitlines():
+        if "core pressure" in line:
+            try:
+                return float(line.split(":")[1].split()[0])
+            except (IndexError, ValueError):
+                return 0.0
+    return 0.0
 
 
 def pending_task() -> bool:

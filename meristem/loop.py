@@ -211,6 +211,16 @@ def golden_fixtures() -> list[str]:
         failures.append("proposal guard held an ordinary proposal")
     if route_proposal("Grow an organ at body/organs/summarise/") != "agenda":
         failures.append("proposal guard held an ordinary proposal")
+    # 7. A cap change must arrive argued. This fixture outlives every
+    #    demotion of the approval seat, because what it enforces is
+    #    monotonicity -- a budget may not move on an unexamined say-so -- and
+    #    not the question of whose hand signs it. An argued, approved change
+    #    stays possible at every rung; a silent one never does.
+    silent = "raise KERNEL_LOC_CAP to 6000"
+    if not cap_case_missing(silent):
+        failures.append("cap-case check accepted an unargued budget change")
+    if route_proposal(silent) != "mailbox":
+        failures.append("a cap-change proposal escaped human review")
 
     return failures
 
@@ -418,10 +428,55 @@ PROPOSAL_GUARDED = (
     "control/constitution.md", "control/checklists.md",
 )
 
+#: Changing the kernel's budget -- in EITHER direction -- is a contract-tier
+#: act while the approval seat sits at rung 1. Raising it loosens what
+#: reviewers must be able to see. Shrinking it can be a weakening wearing the
+#: costume of metabolism: lines removed by deleting a check are not lines
+#: saved. Both directions therefore need a complete case and an approval;
+#: neither may ride in as an ordinary layer-1 mutation.
+#:
+#: The SEAT is a ladder position, not a permanent feature (v3.1 6.1): it
+#: demotes on evidence like any other prosthetic, and the criteria are written
+#: into decisions.jsonl alongside this. What never demotes is the requirement
+#: that the change be argued -- that is monotonicity, not the human.
+CAP_PROPOSAL_MARKERS = (
+    "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
+    "raise the cap", "increase the cap", "lower the cap", "内核上限", "扩容",
+)
+
+#: A cap case is incomplete without every one of these. Deterministic, so an
+#: unargued proposal costs nothing to refuse.
+CAP_CASE_REQUIRED = (
+    "per-file", "core pressure", "closure pressure",
+    "already externalized", "proposed", "expected",
+)
+
+
+def mentions_cap_change(text: str) -> bool:
+    return any(marker in text for marker in CAP_PROPOSAL_MARKERS)
+
+
+def cap_case_missing(text: str) -> list[str]:
+    """Which mandatory elements a cap-change case fails to supply.
+
+    Empty means the case is complete enough to be judged -- not that it is
+    right. Judging is the reviewer's job; this only refuses to spend a
+    reviewer on a proposal that has not done its homework.
+    """
+    lowered = text.lower()
+    return [item for item in CAP_CASE_REQUIRED if item.lower() not in lowered]
+
 
 def route_proposal(text: str) -> str:
-    """'agenda' for an ordinary proposal, 'mailbox' when it names guarded ground."""
-    return "mailbox" if any(p in text for p in PROPOSAL_GUARDED) else "agenda"
+    """'agenda' for an ordinary proposal, 'mailbox' when it needs a human.
+
+    Guarded ground routes to the mailbox. So does any proposal to change the
+    kernel budget, in either direction, for as long as that seat sits at rung
+    1 -- the seed may make the case; it may not also grant it.
+    """
+    if any(p in text for p in PROPOSAL_GUARDED) or mentions_cap_change(text):
+        return "mailbox"
+    return "agenda"
 
 
 def print_probe_proposals() -> int:

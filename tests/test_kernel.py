@@ -209,6 +209,40 @@ class TestProposalGuard(unittest.TestCase):
             "agenda")
 
 
+class TestCapGovernance(unittest.TestCase):
+    """The budget may move; it may not move unargued.
+
+    v3.1 6.1: every human gate carries demotion criteria, so the APPROVAL SEAT
+    on a cap change is a ladder position and will demote on evidence. What does
+    not demote is the requirement that the change be argued -- that enforces
+    monotonicity, not the human.
+    """
+
+    def test_unargued_cap_change_is_incomplete(self):
+        self.assertTrue(loop.cap_case_missing("raise KERNEL_LOC_CAP to 6000"))
+
+    def test_complete_case_passes_the_format_check(self):
+        case = (
+            "Per-file LOC: loop.py 757, gates 500. Core pressure 0.88, "
+            "closure pressure 0.65. Already externalized the view commands and "
+            "pruned two helpers; insufficient because the loop machinery itself "
+            "is irreducible. Proposed new cap 3400. Expected closure impact: "
+            "none, closure stays at 0.65."
+        )
+        self.assertEqual(loop.cap_case_missing(case), [])
+
+    def test_cap_change_always_routes_to_human_at_rung_one(self):
+        for text in ("raise the cap to 4000",
+                     "lower the cap after externalizing",
+                     "adjust KERNEL_LOC_CAP"):
+            self.assertEqual(loop.route_proposal(text), "mailbox", text)
+
+    def test_shrinking_is_argued_too(self):
+        """Lines removed by deleting a check are not lines saved -- a shrink
+        can be a weakening in the costume of metabolism."""
+        self.assertTrue(loop.mentions_cap_change("lower the cap to 2000"))
+
+
 class TestGermline(unittest.TestCase):
     def test_incomplete_manifest_rejected(self):
         self.assertTrue(germline_validate.validate({"id": "x"}, "x"))
