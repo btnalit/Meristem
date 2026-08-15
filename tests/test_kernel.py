@@ -947,7 +947,7 @@ class TestProbeProposalsCommand(unittest.TestCase):
             self.assertIn("probe-complete", output)
             self.assertIn("probe-incomplete", output)
             # The complete proposal should show yes for statement, rubric, complete
-            # The incomplete should show no for rubric and complete
+            # The incomplete should show no for rubric and no for complete
             lines = output.strip().splitlines()
             for line in lines:
                 if "probe-complete" in line:
@@ -955,6 +955,120 @@ class TestProbeProposalsCommand(unittest.TestCase):
                 if "probe-incomplete" in line:
                     # Should show no for rubric and no for complete
                     self.assertIn("no", line.lower())
+
+
+class TestReflectCommand(unittest.TestCase):
+    def test_reflect_command_exists_and_refuses_agenda(self):
+        """The reflect command must exist in argparse choices and must never
+        write to control/agenda.md -- a human promotes a proposal into the
+        agenda.
+
+        If 'reflect' is not in the choices, argparse calls sys.exit(2),
+        which raises SystemExit and fails this test. So reaching the
+        assertions below proves the command is accepted.
+        """
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        fake_completion = llm.Completion(
+            text=json.dumps({"proposals": ["task A", "task B"]}),
+            model="test",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            state = tmpdir / "state"
+            state.mkdir(parents=True)
+            (state / "gaps.md").write_text("## G-001 — test gap\n",
+                                            encoding="utf-8")
+            (state / "patterns.md").write_text("## P-001 — test pattern\n",
+                                                encoding="utf-8")
+            (state / "proposals.md").write_text("", encoding="utf-8")
+
+            control = tmpdir / "control"
+            control.mkdir(parents=True)
+            agenda = control / "agenda.md"
+            agenda_content = "# Agenda\n\n- [ ] existing task\n"
+            agenda.write_text(agenda_content, encoding="utf-8")
+
+            journal = state / "journal.jsonl"
+
+            buf = io.StringIO()
+            with patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.JOURNAL", journal), \
+                 patch("meristem.loop.llm_mod.complete",
+                       return_value=fake_completion), \
+                 patch("meristem.loop.germline.invoke",
+                       return_value={"ok": True,
+                                     "result": {"stale": ["P-001"]}}), \
+                 patch("meristem.loop.ledger_mod.record",
+                       return_value=0.0), \
+                 patch("meristem.loop.ledger_mod.check"), \
+                 patch("meristem.loop.ledger_mod.drain_attempts",
+                       return_value=0), \
+                 patch("meristem.loop.llm_mod.load_models",
+                       return_value={}):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["reflect"])
+
+            self.assertEqual(rc, 0)
+            # agenda.md must be unchanged -- reflect never writes to it
+            self.assertEqual(agenda.read_text(encoding="utf-8"),
+                             agenda_content)
+            # proposals.md should have the proposals appended
+            proposals = (state / "proposals.md").read_text(encoding="utf-8")
+            self.assertIn("- [ ] task A", proposals)
+            self.assertIn("- [ ] task B", proposals)
+            # The output should report how many were appended
+            self.assertIn("2", buf.getvalue())
+
+    def test_reflect_appends_at_most_three(self):
+        """reflect must cap proposals at three, even if the model returns more."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        fake_completion = llm.Completion(
+            text=json.dumps({"proposals": ["a", "b", "c", "d", "e"]}),
+            model="test",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            state = tmpdir / "state"
+            state.mkdir(parents=True)
+            (state / "proposals.md").write_text("", encoding="utf-8")
+
+            control = tmpdir / "control"
+            control.mkdir(parents=True)
+            (control / "agenda.md").write_text("# Agenda\n",
+                                                 encoding="utf-8")
+
+            journal = state / "journal.jsonl"
+
+            with patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.JOURNAL", journal), \
+                 patch("meristem.loop.llm_mod.complete",
+                       return_value=fake_completion), \
+                 patch("meristem.loop.germline.invoke",
+                       return_value={"ok": True, "result": {"stale": []}}), \
+                 patch("meristem.loop.ledger_mod.record",
+                       return_value=0.0), \
+                 patch("meristem.loop.ledger_mod.check"), \
+                 patch("meristem.loop.ledger_mod.drain_attempts",
+                       return_value=0), \
+                 patch("meristem.loop.llm_mod.load_models",
+                       return_value={}):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = loop.main(["reflect"])
+
+            self.assertEqual(rc, 0)
+            proposals = (state / "proposals.md").read_text(encoding="utf-8")
+            lines = [l for l in proposals.splitlines() if l.startswith("- [ ] ")]
+            self.assertEqual(len(lines), 3)
 
 
 if __name__ == "__main__":

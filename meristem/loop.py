@@ -415,9 +415,104 @@ def print_probe_proposals() -> int:
     return 0
 
 
+def run_reflect(*, config=None) -> int:
+    """Reflect: compose the memory-graph organ with one model call to
+    propose up to three concrete next tasks.
+
+    Invokes the memory-graph organ (op "stale", threshold 0.5) for
+    low-activation node ids; reads state/gaps.md and state/patterns.md;
+    makes exactly ONE model call with the "score" role; appends proposals
+    to state/proposals.md. Never writes to control/agenda.md -- a human
+    promotes a proposal into the agenda.
+    """
+    models = config or llm_mod.load_models()
+    cycle = next_cycle()
+
+    # 1. Invoke the memory-graph organ for stale (low-activation) node ids.
+    #    The organ may not exist or may not be active yet; reflect still
+    #    works with gaps and patterns alone.
+    stale_ids: list = []
+    try:
+        result = germline.invoke(
+            "memory-graph",
+            {"op": "stale", "args": {"threshold": 0.5}},
+        )
+        if result.get("ok"):
+            stale_ids = result.get("result", {}).get("stale", [])
+    except Exception:
+        pass
+
+    # 2. Read the registers that hold what is known to be wrong or recurring.
+    gaps_text = read_text(REPO / "state" / "gaps.md")
+    patterns_text = read_text(REPO / "state" / "patterns.md")
+
+    # 3. Build a digest and make exactly ONE model call with the score role.
+    digest = (
+        "# Reflection digest\n\n"
+        "## Stale knowledge (low-activation node ids)\n"
+        f"{', '.join(stale_ids) if stale_ids else '(none)'}\n\n"
+        "## Gaps\n"
+        f"{gaps_text}\n\n"
+        "## Patterns\n"
+        f"{patterns_text}\n\n"
+        "Propose up to three concrete, actionable next tasks for Meristem. "
+        "Each should be specific enough to be taken from the agenda and "
+        "executed as a single mutation. Reply with ONLY a JSON object:\n"
+        '{"proposals": ["task 1", "task 2", "task 3"]}'
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are the reflection step of Meristem, a self-modifying "
+                "kernel. You are given a digest of stale knowledge, known "
+                "gaps, and recurring patterns. Propose up to three concrete "
+                "next tasks. Reply with ONLY a JSON object: "
+                '{"proposals": ["...", "...", "..."]}'
+            ),
+        },
+        {"role": "user", "content": digest},
+    ]
+
+    completion = llm_mod.complete("score", messages, config=models)
+    ledger_mod.record(cycle, "score", completion, models)
+    try:
+        ledger_mod.drain_attempts(cycle, models)
+    except Exception:
+        pass
+    ledger_mod.check(cycle)
+
+    # 4. Parse proposals from the model reply. Unparseable is zero
+    #    proposals -- the call was still recorded through the ledger.
+    proposals: list = []
+    try:
+        data = engine_mod._parse(completion.text)
+        raw = data.get("proposals", [])
+        if isinstance(raw, list):
+            proposals = raw
+    except Exception:
+        pass
+
+    # 5. Append to state/proposals.md -- never to control/agenda.md.
+    #    A human promotes a proposal into the agenda; the seed proposes but
+    #    does not self-schedule.
+    proposals_path = REPO / "state" / "proposals.md"
+    proposals_path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with proposals_path.open("a", encoding="utf-8") as handle:
+        for proposal in proposals[:3]:
+            text = str(proposal).strip()
+            if text:
+                handle.write(f"- [ ] {text}\n")
+                count += 1
+
+    print(f"appended {count} proposal(s) to state/proposals.md")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend", "probe-proposals", "agenda"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend", "probe-proposals", "agenda", "reflect"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -479,6 +574,9 @@ def main(argv=None) -> int:
 
     if args.command == "probe-proposals":
         return print_probe_proposals()
+
+    if args.command == "reflect":
+        return run_reflect()
 
     if args.command == "status":
         rows = read_jsonl(JOURNAL)
