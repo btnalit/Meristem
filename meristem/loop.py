@@ -386,6 +386,23 @@ def print_spend() -> int:
     return 0
 
 
+#: A proposal naming any of these is a proposal to change something the seed
+#: may not change, or may change only under human review. It is routed to the
+#: mailbox instead of the agenda queue. Data from a model passes through the
+#: same protected-path scanning as a mutation from a model -- the reflect step
+#: is a new way for model output to reach the work queue, so it needs the
+#: same fence the mutation path already has.
+PROPOSAL_GUARDED = (
+    "root/", "substrate/", "meristem/gates/",
+    "control/constitution.md", "control/checklists.md",
+)
+
+
+def route_proposal(text: str) -> str:
+    """'agenda' for an ordinary proposal, 'mailbox' when it names guarded ground."""
+    return "mailbox" if any(p in text for p in PROPOSAL_GUARDED) else "agenda"
+
+
 def print_probe_proposals() -> int:
     """List every probe proposal under state/probe-proposals/ with its id
     and whether it carries both a statement/ and a rubric/.
@@ -497,16 +514,30 @@ def run_reflect(*, config=None) -> int:
     #    A human promotes a proposal into the agenda; the seed proposes but
     #    does not self-schedule.
     proposals_path = REPO / "state" / "proposals.md"
+    mailbox_path = REPO / "state" / "mailbox.md"
     proposals_path.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    with proposals_path.open("a", encoding="utf-8") as handle:
-        for proposal in proposals[:3]:
-            text = str(proposal).strip()
-            if text:
+    queued = held = 0
+    for proposal in proposals[:3]:
+        text = str(proposal).strip()
+        if not text:
+            continue
+        # A proposal naming guarded ground never reaches the work queue. The
+        # first real reflect produced exactly such a proposal -- a sound one,
+        # about substrate/ -- which is precisely why the fence exists: the
+        # seed may notice something about the soil and say so, but saying so
+        # must not be a route to changing it.
+        if route_proposal(text) == "mailbox":
+            with mailbox_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"- PROPOSAL (needs human review, names guarded "
+                             f"ground): {text}\n")
+            held += 1
+        else:
+            with proposals_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"- [ ] {text}\n")
-                count += 1
+            queued += 1
 
-    print(f"appended {count} proposal(s) to state/proposals.md")
+    print(f"appended {queued} proposal(s) to state/proposals.md; "
+          f"{held} held for human review in state/mailbox.md")
     return 0
 
 

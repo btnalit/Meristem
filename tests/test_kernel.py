@@ -187,6 +187,28 @@ class TestBreakerDistinguishesFaults(unittest.TestCase):
         self.assertTrue(breaker.should_park(task))
 
 
+class TestProposalGuard(unittest.TestCase):
+    """Reflect is a new way for model output to reach the work queue, so it
+    needs the fence the mutation path already has. The very first real reflect
+    proposed a change to substrate/ -- a sound observation, and exactly the
+    thing that must not become a route to acting on it."""
+
+    def test_guarded_ground_routes_to_mailbox(self):
+        for path in ("substrate/supervisor.py", "root/panic.py",
+                     "meristem/gates/review.py", "control/constitution.md"):
+            self.assertEqual(
+                loop.route_proposal(f"Fix the thing in {path} so it behaves"),
+                "mailbox", f"{path} was not held for review")
+
+    def test_ordinary_proposal_reaches_the_queue(self):
+        self.assertEqual(
+            loop.route_proposal("Add a utility command to meristem/loop.py"),
+            "agenda")
+        self.assertEqual(
+            loop.route_proposal("Grow an organ at body/organs/summarise/"),
+            "agenda")
+
+
 class TestGermline(unittest.TestCase):
     def test_incomplete_manifest_rejected(self):
         self.assertTrue(germline_validate.validate({"id": "x"}, "x"))

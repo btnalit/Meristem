@@ -42,6 +42,32 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-019 — A capability shipped ahead of its own fence
+
+- **Count:** 1 (the first real reflect, cycle 77)
+- **Class:** A new pathway for model output to reach the work queue is enabled
+  before the check that constrains it. The window is small and the failure is
+  quiet: nothing crashes, nothing is refused, and the unconstrained output
+  simply lands where it should not have.
+- **Instance:** The reflect step and its protected-path guard were written as
+  two separate agenda tasks, in that order. Reflect landed first and ran, and
+  its very first output included a proposal to change `substrate/supervisor.py`
+  -- a *correct* observation (it had found the open item recorded in P-010,
+  unaided) that went straight into the work queue, which is the one place a
+  proposal about the soil must never reach.
+- **Whose fault:** the sequencing was mine. The seed did exactly what it was
+  asked. Ordering a fence behind the thing it fences is a scheduling error, not
+  a model error.
+- **Structural fix:** `route_proposal` sends any proposal naming `root/`,
+  `substrate/`, `meristem/gates/`, the constitution or the checklists to the
+  mailbox for human review instead of the queue, with tests on both branches.
+  The seed may notice something about the soil and say so -- saying so must
+  not be a route to acting on it. `meristem/loop.py`.
+- **The rule:** a fence ships with the thing it fences, in the same change,
+  never in the next one. Splitting work into small tasks (P-014, P-017) makes
+  this easy to get wrong, because the fence looks like a separable increment.
+  It is not: it is part of the capability's definition.
+
 ## P-018 — Splitting a task without verifying the seams
 
 - **Count:** 1 (memory-graph organ, cycles 38-51)
