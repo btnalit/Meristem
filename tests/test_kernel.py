@@ -590,5 +590,50 @@ class TestSpendCommand(unittest.TestCase):
             tmp_path.unlink(missing_ok=True)
 
 
+class TestAppends(unittest.TestCase):
+    def test_append_adds_without_erasing(self):
+        """Appends must add text at the end of a file without erasing
+        existing content. This is the structural fix for the class of
+        failure where whole-file replacement erases a register."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = pathlib.Path(tmp)
+            target = workdir / "state" / "gaps.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("## G-001 — first\n\n## G-002 — second\n",
+                              encoding="utf-8")
+            mutation = engine.Mutation(
+                rationale="test",
+                appends={"state/gaps.md": "\n## G-003 — third\n"},
+            )
+            # Appended paths must appear in changed so the closure
+            # calculator and deterministic gates see them.
+            self.assertIn("state/gaps.md", mutation.changed)
+            written = engine.apply(mutation, workdir)
+            self.assertIn("state/gaps.md", written)
+            content = target.read_text(encoding="utf-8")
+            self.assertIn("G-001", content)
+            self.assertIn("G-002", content)
+            self.assertIn("G-003", content)
+
+    def test_append_to_protected_path_refused(self):
+        """An append to root/ or substrate/ must be rejected exactly as
+        file writes are rejected."""
+        from unittest.mock import patch
+        from meristem import MeristemError
+
+        fake_completion = llm.Completion(
+            text=json.dumps({
+                "rationale": "test",
+                "files": {"meristem/dummy.py": "# test\n"},
+                "appends": {"root/panic.py": "malicious\n"},
+            }),
+            model="test",
+        )
+        with patch.object(llm, "complete", return_value=fake_completion):
+            with self.assertRaises(MeristemError) as ctx:
+                engine.propose("test task")
+            self.assertIn("protected", str(ctx.exception).lower())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -46,9 +46,16 @@ Hard rules:
   change smaller or externalise capability into an organ instead.
 - Record why, not just what.
 
+Appends: to add an entry to an append-only register under state/ (such as
+state/gaps.md, state/backlog.md, state/patterns.md), use "appends" instead
+of "files". Whole-file replacement erases existing entries; appends add
+text at the end of the file without touching what is already there. Use
+appends whenever the task is to add to a register rather than rewrite it.
+
 Reply with ONLY a JSON object, no prose and no code fences:
 {"rationale": "why this change, at the level of the failure class",
  "files": {"relative/path.py": "<complete new file content>"},
+ "appends": {"relative/path.md": "<text to add at the end of that file>"},
  "notes": ["anything the reviewers should weigh"]}"""
 
 
@@ -56,13 +63,14 @@ Reply with ONLY a JSON object, no prose and no code fences:
 class Mutation:
     rationale: str = ""
     files: dict = field(default_factory=dict)
+    appends: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
     tier: str = "A"
     completion: object = None
 
     @property
     def changed(self) -> list[str]:
-        return sorted(self.files)
+        return sorted(set(self.files) | set(self.appends))
 
 
 def mutable_files() -> list[str]:
@@ -116,6 +124,20 @@ def _parse(text: str) -> dict:
     raise MeristemError("engine returned no parseable JSON object")
 
 
+def _validate_paths(paths: dict, label: str) -> None:
+    """Reject protected or unsafe paths in a mutation's files or appends.
+
+    The same protected-prefix and traversal checks apply to both whole-file
+    writes and appends: the soil is not the seed's to rewrite, and an append
+    to root/ or substrate/ is no less a boundary violation than a write.
+    """
+    for rel in paths:
+        if rel.startswith(EXCLUDED_PREFIXES):
+            raise MeristemError(f"engine tried to {label} protected path '{rel}'")
+        if ".." in rel or rel.startswith("/"):
+            raise MeristemError(f"engine returned unsafe {label} path '{rel}'")
+
+
 def propose(task: str, *, config=None, extra: str = "") -> Mutation:
     """Tier A: ask once, with everything, for complete replacement files."""
     constitution = read_text(CONTROL / "constitution.md")
@@ -137,17 +159,20 @@ def propose(task: str, *, config=None, extra: str = "") -> Mutation:
     data = _parse(completion.text)
 
     files = data.get("files") or {}
-    if not isinstance(files, dict) or not files:
-        raise MeristemError("engine proposed no files")
-    for rel in files:
-        if rel.startswith(EXCLUDED_PREFIXES):
-            raise MeristemError(f"engine tried to write protected path '{rel}'")
-        if ".." in rel or rel.startswith("/"):
-            raise MeristemError(f"engine returned unsafe path '{rel}'")
+    appends = data.get("appends") or {}
+    if not isinstance(files, dict):
+        raise MeristemError("engine returned non-object files")
+    if not isinstance(appends, dict):
+        raise MeristemError("engine returned non-object appends")
+    if not files and not appends:
+        raise MeristemError("engine proposed no files and no appends")
+    _validate_paths(files, "write")
+    _validate_paths(appends, "append to")
 
     return Mutation(
         rationale=str(data.get("rationale", "")).strip(),
         files={k: str(v) for k, v in files.items()},
+        appends={k: str(v) for k, v in appends.items()},
         notes=list(data.get("notes", [])),
         completion=completion,
     )
@@ -155,11 +180,22 @@ def propose(task: str, *, config=None, extra: str = "") -> Mutation:
 
 def apply(mutation: Mutation, workdir) -> list[str]:
     """Write the proposed files into a worktree. The worktree is the
-    transaction boundary: a crash mid-mutation just discards the branch."""
+    transaction boundary: a crash mid-mutation just discards the branch.
+
+    Appended paths are opened in append mode so existing content is never
+    overwritten -- the structural fix for the class of failure where
+    whole-file replacement erases an append-only register.
+    """
     written = []
     for rel, content in mutation.files.items():
         target = workdir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+        written.append(rel)
+    for rel, content in mutation.appends.items():
+        target = workdir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(content)
         written.append(rel)
     return sorted(written)
