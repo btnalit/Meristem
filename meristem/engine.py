@@ -121,7 +121,15 @@ def _parse(text: str) -> dict:
         if isinstance(value, dict):
             return value
         start = text.find("{", start + 1)
-    raise MeristemError("engine returned no parseable JSON object")
+    # Keep the evidence. "No parseable JSON" names the symptom and destroys the
+    # only artefact that could explain it -- four identical faults on one task
+    # taught nothing because the reply was thrown away each time (P-017).
+    head = text[:300].replace("\n", "\\n")
+    tail = text[-300:].replace("\n", "\\n")
+    raise MeristemError(
+        f"engine returned no parseable JSON object (len={len(text)}); "
+        f"head={head!r}; tail={tail!r}"
+    )
 
 
 def _validate_paths(paths: dict, label: str) -> None:
