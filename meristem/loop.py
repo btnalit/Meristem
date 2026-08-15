@@ -20,6 +20,7 @@ from . import (
     read_json,
     read_jsonl,
     read_text,
+    utc_now,
     write_json,
 )
 from . import breaker as breaker_mod
@@ -737,11 +738,141 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     return 0
 
 
+def generate_report() -> int:
+    """Write REPORT.md at the repo root from state records.
+
+    Summarises: cycles since the last report with outcomes, both pressures
+    with a direction arrow, AGR (accepted-self-proposed over accepted-total),
+    open proposal count, parked tasks, and mailbox items. Prints the path.
+
+    A 'report' record is journaled so the next report knows which cycles
+    are new and can show pressure direction.
+    """
+    rows = read_jsonl(JOURNAL)
+    cycles = [r for r in rows if r.get("kind") == "cycle"]
+
+    last_report_cycle = max(
+        (r.get("cycle", 0) for r in rows if r.get("kind") == "report"),
+        default=0,
+    )
+    recent_cycles = [c for c in cycles if c.get("cycle", 0) > last_report_cycle]
+
+    outcomes: dict[str, int] = {}
+    for c in recent_cycles:
+        outcome = c.get("outcome", "unknown")
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+
+    loc = deterministic.kernel_loc()
+    core_pressure = loc / deterministic.KERNEL_LOC_CAP
+    closure_now = closure_mod.compute([]).tokens
+    closure_pressure = closure_now / deterministic.CLOSURE_TOKEN_CAP
+
+    last_report = None
+    for r in rows:
+        if r.get("kind") == "report":
+            last_report = r
+    if last_report:
+        prev_core = last_report.get("core_pressure", core_pressure)
+        prev_closure = last_report.get("closure_pressure", closure_pressure)
+        core_arrow = "\u2191" if core_pressure > prev_core else (
+            "\u2193" if core_pressure < prev_core else "\u2192")
+        closure_arrow = "\u2191" if closure_pressure > prev_closure else (
+            "\u2193" if closure_pressure < prev_closure else "\u2192")
+    else:
+        core_arrow = "\u2192"
+        closure_arrow = "\u2192"
+
+    accepted = [c for c in cycles if c.get("outcome") == "candidate"]
+    proposals_text = read_text(REPO / "state" / "proposals.md")
+    proposal_tasks = {
+        line.strip()[6:].strip()
+        for line in proposals_text.splitlines()
+        if line.strip().startswith("- [ ] ")
+    }
+    self_proposed_accepted = sum(
+        1 for c in accepted if c.get("why", "") in proposal_tasks
+    )
+    agr = f"{self_proposed_accepted}/{len(accepted)}" if accepted else "0/0"
+
+    open_proposals = sum(
+        1 for line in proposals_text.splitlines()
+        if line.strip().startswith("- [ ] ")
+    )
+
+    parked = parked_tasks()
+
+    mailbox_text = read_text(REPO / "state" / "mailbox.md")
+    mailbox_items = [line.strip() for line in mailbox_text.splitlines() if line.strip()]
+
+    # Latest probe scores from the scoreboard.
+    score_rows = read_jsonl(SCOREBOARD)
+    latest_scores: dict[str, float] = {}
+    for row in score_rows:
+        if row.get("kind") == "probe":
+            latest_scores[row.get("probe_id", "?")] = float(row.get("score", 0.0))
+
+    lines = ["# Meristem Report", ""]
+    lines.append(f"Generated: {utc_now()}")
+    lines.append("")
+    lines.append("## Cycles since last report")
+    if recent_cycles:
+        lines.append(f"Total: {len(recent_cycles)}")
+        for outcome, count in sorted(outcomes.items()):
+            lines.append(f"  {outcome}: {count}")
+    else:
+        lines.append("(none)")
+    lines.append("")
+    lines.append("## Pressures")
+    lines.append(f"  core:    {core_pressure:.2f} {core_arrow}")
+    lines.append(f"  closure: {closure_pressure:.2f} {closure_arrow}")
+    lines.append("")
+    lines.append("## Acceptance")
+    lines.append(f"  AGR (self-proposed / total accepted): {agr}")
+    lines.append("")
+    lines.append("## Open proposals")
+    lines.append(f"  count: {open_proposals}")
+    lines.append("")
+    lines.append("## Parked tasks")
+    if parked:
+        for task in sorted(parked):
+            lines.append(f"  - {task[:80]}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append("## Mailbox")
+    if mailbox_items:
+        for item in mailbox_items:
+            lines.append(f"  - {item[:80]}")
+    else:
+        lines.append("  (empty)")
+    lines.append("")
+    lines.append("## Probe scores")
+    if latest_scores:
+        for probe_id in sorted(latest_scores):
+            lines.append(f"  {probe_id}: {latest_scores[probe_id]:.2f}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    report_path = REPO / "REPORT.md"
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+    append_jsonl(JOURNAL, {
+        "kind": "report",
+        "cycle": next_cycle(),
+        "core_pressure": round(core_pressure, 4),
+        "closure_pressure": round(closure_pressure, 4),
+    })
+
+    print(str(report_path))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
     parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body",
                                             "spend", "probe-proposals", "agenda", "reflect",
-                                            "utility"])
+                                            "utility", "report"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     parser.add_argument("--pressure", action="store_true",
                         help="reflect under a pressure mandate: propose ONE concrete "
@@ -812,6 +943,9 @@ def main(argv=None) -> int:
 
     if args.command == "reflect":
         return run_reflect(pressure=args.pressure)
+
+    if args.command == "report":
+        return generate_report()
 
     if args.command == "status":
         rows = read_jsonl(JOURNAL)

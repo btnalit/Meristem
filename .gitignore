@@ -23,3 +23,6 @@ state/*.jsonl
 
 .env
 *.tmp
+
+# Generated report
+REPORT.md
