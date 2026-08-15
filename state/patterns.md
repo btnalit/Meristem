@@ -42,6 +42,34 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-022 — A budget spent on what the constitution excludes from it
+
+- **Count:** 1 (three consecutive cycles blocked, 97-99)
+- **Class:** An implementation that measures more than its own rule says to
+  measure. The check is real, the threshold is real, and the refusals it emits
+  are honest -- about the wrong quantity. It looks exactly like a system
+  correctly reporting that it has run out of room.
+- **Instance:** v3.1 1.3 excludes `tests/` from the budget (transplanted from
+  ouroboros: tests are how we check the kernel, not the kernel itself, and
+  they carry their own separate cap). The closure calculator counted them
+  anyway. `tests/test_kernel.py` had grown to 1,280 lines -- 49,668 tokens on
+  its own against a 50,000 budget -- so ANY change that also touched a test
+  was refused, with a message about closure size that pointed nowhere near the
+  cause. Three externalization cycles died on it in a row.
+- **What made it look like something else:** the refusals arrived exactly when
+  core pressure was high and an externalization campaign was running, so the
+  obvious reading was "the system has grown too big to change itself" -- a
+  dramatic conclusion the evidence seemed to support. Measuring one file at a
+  time is what dissolved it: `breaker.py` alone was 34,308 of 50,000, with
+  room to spare. The wall was in the ruler.
+- **Structural fix:** the closure calculator skips `tests/` paths, matching
+  the constitution it implements. Closure for the blocked change fell from
+  49,668 to 34,428. Two tests pin the rule: touching a test must not grow the
+  closure, and a test-only change must fit. `meristem/gates/closure.py`.
+- **The rule:** when a gate refuses, check that it is measuring the thing its
+  own charter names. A correct threshold over a wrong quantity produces
+  truthful sentences about a fiction.
+
 ## P-021 — An urgency mechanism that starves the work it demands
 
 - **Count:** 1 (twelve consecutive wasted beats)

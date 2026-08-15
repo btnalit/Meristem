@@ -274,6 +274,23 @@ class TestPressureMandateSeam(unittest.TestCase):
             self.assertIn(element, ask)
 
 
+class TestClosureExcludesTests(unittest.TestCase):
+    """v3.1 1.3 excludes tests from the budget: they are how we CHECK the
+    kernel, not the kernel itself. Counting them made this very file -- 1,280
+    lines, 49,668 tokens alone -- eat almost the whole closure budget, so any
+    change that also touched a test was refused for a reason unrelated to the
+    change (P-022)."""
+
+    def test_touching_a_test_does_not_grow_the_closure(self):
+        base = closure.compute(["meristem/breaker.py"]).tokens
+        with_test = closure.compute(
+            ["meristem/breaker.py", "tests/test_kernel.py"]).tokens
+        self.assertEqual(base, with_test)
+
+    def test_a_test_only_change_stays_within_budget(self):
+        self.assertTrue(closure.compute(["tests/test_kernel.py"]).fits)
+
+
 class TestGermline(unittest.TestCase):
     def test_incomplete_manifest_rejected(self):
         self.assertTrue(germline_validate.validate({"id": "x"}, "x"))

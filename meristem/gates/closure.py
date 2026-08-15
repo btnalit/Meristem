@@ -153,6 +153,16 @@ def compute(
             closure.paths.add(candidate)
 
     for rel in changed:
+        # Tests are excluded by constitution (v3.1 1.3, transplanted from
+        # ouroboros): they are how we CHECK the kernel, not the kernel itself,
+        # and they carry their own separate budget. Counting them against the
+        # review closure made test_kernel.py -- at 1,280 lines, 49,668 tokens
+        # on its own -- consume almost the entire budget, so any change that
+        # also touched a test was refused for a reason that had nothing to do
+        # with the change (P-022). A reviewer does need to see a test being
+        # modified; that is the diff's job, not the closure's.
+        if rel.startswith("tests/") or "/tests/" in rel:
+            continue
         path = (root / rel).resolve()
         if path.is_file():
             closure.paths.add(path)
