@@ -175,7 +175,7 @@ class TestGermline(unittest.TestCase):
         )
 
     def test_body_manifests_are_admissible(self):
-        """Whatever the body currently holds must satisfy the germline.
+        """whatever the body currently holds must satisfy the germline.
 
         This asserted an EMPTY body originally -- true at birth, when body/
         shipped with zero scaffolding. Organs have since grown, so the
@@ -855,6 +855,63 @@ class TestParkedTaskSkipping(unittest.TestCase):
                  patch("meristem.loop.JOURNAL", journal):
                 task = loop.take_task()
             self.assertEqual(task, "open task")
+
+
+class TestProbeProposalsCommand(unittest.TestCase):
+    def test_probe_proposals_on_empty(self):
+        """When no proposals exist, the command handles it gracefully."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            buf = io.StringIO()
+            with patch("meristem.loop.REPO", tmpdir):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["probe-proposals"])
+            self.assertEqual(rc, 0)
+            self.assertIn("no probe proposals", buf.getvalue().lower())
+
+    def test_probe_proposals_lists_completeness(self):
+        """The command must list each proposal's id and whether it carries
+        both a statement/ and a rubric/ directory."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            proposals = tmpdir / "state" / "probe-proposals"
+            # Complete proposal
+            complete = proposals / "probe-complete"
+            (complete / "statement").mkdir(parents=True)
+            (complete / "rubric").mkdir(parents=True)
+            (complete / "probe.json").write_text(
+                '{"id": "probe-complete"}', encoding="utf-8")
+            # Incomplete: missing rubric
+            incomplete = proposals / "probe-incomplete"
+            (incomplete / "statement").mkdir(parents=True)
+            (incomplete / "probe.json").write_text(
+                '{"id": "probe-incomplete"}', encoding="utf-8")
+
+            buf = io.StringIO()
+            with patch("meristem.loop.REPO", tmpdir):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["probe-proposals"])
+            output = buf.getvalue()
+            self.assertEqual(rc, 0)
+            self.assertIn("probe-complete", output)
+            self.assertIn("probe-incomplete", output)
+            # The complete proposal should show yes for statement, rubric, complete
+            # The incomplete should show no for rubric and complete
+            lines = output.strip().splitlines()
+            for line in lines:
+                if "probe-complete" in line:
+                    self.assertIn("yes", line.lower())
+                if "probe-incomplete" in line:
+                    # Should show no for rubric and no for complete
+                    self.assertIn("no", line.lower())
 
 
 if __name__ == "__main__":

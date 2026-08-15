@@ -380,9 +380,38 @@ def print_spend() -> int:
     return 0
 
 
+def print_probe_proposals() -> int:
+    """List every probe proposal under state/probe-proposals/ with its id
+    and whether it carries both a statement/ and a rubric/.
+
+    A proposal is the staging form of a probe: the seed authors it, but the
+    gates promote a validated proposal into the vault. The seed never writes
+    to the vault directly (Principle 4: rubrics are physically invisible).
+    """
+    proposals_dir = REPO / "state" / "probe-proposals"
+    if not proposals_dir.is_dir():
+        print("no probe proposals")
+        return 0
+    entries = sorted(d for d in proposals_dir.iterdir() if d.is_dir())
+    if not entries:
+        print("no probe proposals")
+        return 0
+    print(f"{'id':40s} {'statement':10s} {'rubric':10s} {'complete':10s}")
+    print(f"{'--':40s} {'---------':10s} {'------':10s} {'--------':10s}")
+    for entry in entries:
+        has_statement = (entry / "statement").is_dir()
+        has_rubric = (entry / "rubric").is_dir()
+        complete = "yes" if (has_statement and has_rubric) else "no"
+        print(f"{entry.name:40s} "
+              f"{'yes' if has_statement else 'no':10s} "
+              f"{'yes' if has_rubric else 'no':10s} "
+              f"{complete:10s}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
-    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend"])
+    parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body", "spend", "probe-proposals"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
     args = parser.parse_args(argv)
 
@@ -404,6 +433,9 @@ def main(argv=None) -> int:
 
     if args.command == "spend":
         return print_spend()
+
+    if args.command == "probe-proposals":
+        return print_probe_proposals()
 
     if args.command == "status":
         rows = read_jsonl(JOURNAL)
