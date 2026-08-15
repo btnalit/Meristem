@@ -167,9 +167,31 @@ class TestConfig(unittest.TestCase):
         self.assertGreaterEqual(len(slots), 2, "review needs failure independence")
 
     def test_review_slots_are_heterogeneous(self):
+        """Independence is a property of model LINEAGE, not of endpoint.
+
+        One gateway can front many families, so comparing base_url would call
+        three siblings 'diverse'. What must differ is the training lineage --
+        that is what makes their failures independent.
+        """
         slots = llm.slots_for("review")
-        hosts = {s["base_url"] for s in slots}
-        self.assertGreater(len(hosts), 1, "reviewers from one provider may fail together")
+        lineages = {s.get("lineage") for s in slots}
+        self.assertNotIn(None, lineages, "every reviewer slot must declare a lineage")
+        self.assertGreater(
+            len(lineages), 1, "reviewers of one lineage may fail together"
+        )
+
+    def test_mutator_lineage_is_not_a_reviewer(self):
+        """The author's own family must not sit on the panel that judges it."""
+        mutate = llm.slots_for("mutate")[0]
+        reviewers = {s.get("lineage") for s in llm.slots_for("review")}
+        self.assertNotIn(mutate.get("lineage"), reviewers)
+
+    def test_call_budget_is_active(self):
+        """A USD cap over an unpriced model is an inert gate; the call cap is
+        what actually binds on a quota-limited endpoint."""
+        budget = ledger.load_budget()
+        self.assertGreater(budget.cycle_calls, 0)
+        self.assertGreater(budget.campaign_calls, budget.cycle_calls)
 
 
 if __name__ == "__main__":

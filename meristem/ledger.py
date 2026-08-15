@@ -17,6 +17,11 @@ from . import CONTROL, JOURNAL, MeristemError, append_jsonl, read_jsonl
 class Budget:
     cycle_usd: float = 1.0
     campaign_usd: float = 25.0
+    #: Call caps matter independently of money: a quota-limited endpoint is
+    #: rate-limited by REQUESTS, so a USD budget over an unpriced model is an
+    #: inert gate. A deterministic check that cannot fire is decoration.
+    cycle_calls: int = 40
+    campaign_calls: int = 1000
 
 
 def load_budget() -> Budget:
@@ -28,6 +33,8 @@ def load_budget() -> Budget:
     return Budget(
         cycle_usd=float(data.get("cycle_usd", 1.0)),
         campaign_usd=float(data.get("campaign_usd", 25.0)),
+        cycle_calls=int(data.get("cycle_calls", 40)),
+        campaign_calls=int(data.get("campaign_calls", 1000)),
     )
 
 
@@ -56,34 +63,49 @@ def record(cycle: int, role: str, completion, models: dict | None = None) -> flo
             "model": completion.model,
             "prompt_tokens": completion.prompt_tokens,
             "completion_tokens": completion.completion_tokens,
+            "reasoning_tokens": getattr(completion, "reasoning_tokens", 0),
             "usd": round(cost, 6),
         },
     )
     return cost
 
 
+def _rows(cycle: int | None = None) -> list[dict]:
+    return [
+        row
+        for row in read_jsonl(JOURNAL)
+        if row.get("kind") == "usage" and (cycle is None or row.get("cycle") == cycle)
+    ]
+
+
 def spent(cycle: int | None = None) -> float:
     """Total USD spent -- for one cycle when given, otherwise all time."""
-    total = 0.0
-    for row in read_jsonl(JOURNAL):
-        if row.get("kind") != "usage":
-            continue
-        if cycle is not None and row.get("cycle") != cycle:
-            continue
-        total += float(row.get("usd", 0.0))
-    return total
+    return sum(float(row.get("usd", 0.0)) for row in _rows(cycle))
+
+
+def calls(cycle: int | None = None) -> int:
+    """Model calls made -- the binding constraint on quota-limited endpoints."""
+    return len(_rows(cycle))
 
 
 def check(cycle: int, budget: Budget | None = None) -> None:
-    """Deterministic budget gate. Raises when a cap is exceeded."""
+    """Deterministic budget gate. Raises when any cap is exceeded."""
     budget = budget or load_budget()
-    this_cycle = spent(cycle)
+    this_cycle, total = spent(cycle), spent()
+    cycle_calls, total_calls = calls(cycle), calls()
     if this_cycle > budget.cycle_usd:
         raise MeristemError(
             f"cycle {cycle} spent ${this_cycle:.4f} > cap ${budget.cycle_usd:.4f}"
         )
-    total = spent()
     if total > budget.campaign_usd:
         raise MeristemError(
             f"campaign spent ${total:.4f} > cap ${budget.campaign_usd:.4f}"
+        )
+    if cycle_calls > budget.cycle_calls:
+        raise MeristemError(
+            f"cycle {cycle} made {cycle_calls} calls > cap {budget.cycle_calls}"
+        )
+    if total_calls > budget.campaign_calls:
+        raise MeristemError(
+            f"campaign made {total_calls} calls > cap {budget.campaign_calls}"
         )
