@@ -244,6 +244,36 @@ class TestCapGovernance(unittest.TestCase):
         self.assertTrue(loop.mentions_cap_change("lower the cap to 2000"))
 
 
+class TestPressureMandateSeam(unittest.TestCase):
+    """P-018 again, and mine this time: the soil invoked `reflect --pressure`
+    before the kernel accepted that flag, so the first firing of the pressure
+    trigger died on argparse. A seam between soil and seed is still a seam."""
+
+    def test_reflect_accepts_the_pressure_flag(self):
+        import inspect
+        self.assertIn("pressure", inspect.signature(loop.run_reflect).parameters)
+
+    def test_cli_parses_pressure_flag(self):
+        import contextlib, io
+        # argparse exits non-zero on an unknown flag; a clean parse is the test.
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+            try:
+                loop.main(["reflect", "--pressure", "--help"])
+            except SystemExit as exc:
+                self.assertEqual(exc.code, 0, buf.getvalue()[:200])
+
+    def test_mandate_ranks_the_cap_last(self):
+        """The ranked menu is constitutional, so the prompt must state it --
+        and must place the cap last, not merely mention it."""
+        ask = loop.PRESSURE_MANDATE_ASK
+        self.assertLess(ask.index("externalize"), ask.index("change the cap"))
+        # A cap proposal must be told what a complete case requires, or the
+        # deterministic format check refuses it before anyone reads it.
+        for element in ("per-file LOC", "closure pressure", "expected closure"):
+            self.assertIn(element, ask)
+
+
 class TestGermline(unittest.TestCase):
     def test_incomplete_manifest_rejected(self):
         self.assertTrue(germline_validate.validate({"id": "x"}, "x"))

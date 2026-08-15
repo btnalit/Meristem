@@ -42,6 +42,32 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-020 — The soil called a seed interface that did not exist yet
+
+- **Count:** 1 (heartbeat beat 10, the pressure trigger's first firing)
+- **Class:** P-018 across the soil/seed boundary. I wrote the substrate to
+  invoke `reflect --pressure` and left the flag itself as an agenda task for
+  the seed. The trigger fired correctly, read the pressure correctly, chose
+  correctly -- and died on argparse. A capability that calls an interface it
+  does not own must ship with that interface, exactly as a fence must ship
+  with what it fences (P-019).
+- **Instance:** `core pressure 0.85 >= 0.85 -- reflecting under pressure
+  mandate` followed immediately by `unrecognized arguments: --pressure`. The
+  whole mechanism worked apart from the one line that connects it, and the
+  beat was spent for nothing.
+- **Why the gates could not catch it:** the soil is outside the mutation
+  surface, so no gate reviews it, and the kernel's tests do not know what the
+  substrate calls. The seam between the two planes has no automatic reader --
+  which is the price of the separation that makes promotion authority safe.
+- **Structural fix:** the flag, the mandate text and the digest branch landed
+  in one change, plus a test asserting `run_reflect` accepts `pressure` and the
+  CLI parses it. That test is the only automatic reader that seam has.
+- **Third instance of one lesson:** P-018 (organ modules), P-019 (fence behind
+  capability), now P-020 (soil ahead of seed). Splitting work to fit an output
+  budget keeps producing seams, and seams keep being what nothing is looking
+  at. The rule has earned its generality: **whatever calls an interface ships
+  with it, and the seam gets a test in the same change.**
+
 ## P-019 — A capability shipped ahead of its own fence
 
 - **Count:** 1 (the first real reflect, cycle 77)

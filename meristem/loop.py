@@ -544,7 +544,30 @@ def print_probe_proposals() -> int:
     return 0
 
 
-def run_reflect(*, config=None) -> int:
+PRESSURE_MANDATE_ASK = """The kernel budget is running out. This is not a
+routine reflection: propose ONE concrete relief, and nothing else.
+
+The constitution ranks the options, and the order is not a preference:
+
+  1. externalize -- move a capability out of the kernel into an organ. Name
+     which capability leaves, and to which organ. This is first because it
+     lowers BOTH pressures at once.
+  2. prune -- delete something that has stopped earning its lines.
+  3. compress, or internalize with equal deletion -- budget-neutral only.
+  4. change the cap -- LAST. If you propose this you must supply the full
+     case: per-file LOC breakdown, core pressure, closure pressure, what was
+     already externalized or pruned and why it was insufficient, the proposed
+     new value, and the expected closure impact. An unargued cap proposal is
+     refused before it is read, and a cap proposal is always held for a human.
+
+Precedent from the constitution: if a review pack must cut modules to fit,
+that is a signal to refactor the repo, not to reduce scope. Growth pressure
+resolves by restructuring first; the budget moves last.
+
+Reply with ONLY: {"proposals": ["one concrete relief"]}"""
+
+
+def run_reflect(*, config=None, pressure: bool = False) -> int:
     """Reflect: compose the memory-graph organ with one model call to
     propose up to three concrete next tasks.
 
@@ -614,6 +637,24 @@ def run_reflect(*, config=None) -> int:
         "Reply with ONLY a JSON object:\n"
         '{"proposals": ["task 1", "task 2", "task 3"]}'
     )
+    if pressure:
+        # Under a mandate the generic ask is REPLACED, not appended to: a
+        # budget about to bind is not one consideration among three, and
+        # asking for a balanced spread would dilute the one answer needed.
+        # The per-file breakdown is supplied because a relief must name a
+        # specific capability to move, not a direction to move in.
+        breakdown = "\n".join(
+            f"  {q.relative_to(REPO).as_posix()}: "
+            f"{len(q.read_text(encoding='utf-8').splitlines())} lines"
+            for q in sorted((REPO / "meristem").rglob("*.py"))
+        )
+        digest = (
+            f"## Kernel LOC by file\n{breakdown}\n\n"
+            f"## Pressures\ncore {deterministic.kernel_loc()}/"
+            f"{deterministic.KERNEL_LOC_CAP}; closure "
+            f"{closure_mod.compute([]).tokens}/{deterministic.CLOSURE_TOKEN_CAP}\n\n"
+            f"## Gaps\n{gaps_text}\n\n{PRESSURE_MANDATE_ASK}"
+        )
     messages = [
         {
             "role": "system",
@@ -692,6 +733,9 @@ def main(argv=None) -> int:
                                             "spend", "probe-proposals", "agenda", "reflect",
                                             "utility"])
     parser.add_argument("--task", help="override the task instead of taking one from the agenda")
+    parser.add_argument("--pressure", action="store_true",
+                        help="reflect under a pressure mandate: propose ONE concrete "
+                             "relief for a kernel budget that is running out")
     args = parser.parse_args(argv)
 
     if args.command == "selftest":
@@ -757,7 +801,7 @@ def main(argv=None) -> int:
         return print_probe_proposals()
 
     if args.command == "reflect":
-        return run_reflect()
+        return run_reflect(pressure=args.pressure)
 
     if args.command == "status":
         rows = read_jsonl(JOURNAL)
