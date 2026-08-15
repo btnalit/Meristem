@@ -49,3 +49,32 @@ reading the final file content from the worktree. It should be gated by a test
 that verifies the final content of changed files appears in the prompt, and by
 a golden fixture that confirms a subtle weakening (e.g., >= to >) is visible in
 the prompt even when the diff is maximally noisy.
+
+## BL-003 — text-stats does not subsume word-count (dependency prevents pruning)
+
+**Judgement:** text-stats does NOT subsume word-count. Pruning word-count is
+not safe at this time.
+
+**Evidence:**
+- text-stats declares `dependencies: ["word-count"]` in its organ.json,
+  meaning it calls word-count over the germline ABI to obtain the word count
+  rather than implementing its own word-counting logic.
+- A dependent organ cannot subsume the organ it depends on: pruning
+  word-count would break text-stats's dependency chain, and the germline
+  validator would reject text-stats's manifest for referencing a non-active
+  (archived) dependency.
+- The utility figures confirm word-count has active utility: it is called by
+  text-stats (transitively), so it is not idle.
+- text-stats's output schema (words, chars, lines) is a superset of
+  word-count's (words), but functional superset ≠ architectural subsumption.
+  Subsumption requires that the subsuming organ can stand alone without the
+  one it replaces.
+
+**What would close this:** text-stats would need to implement its own
+word-counting logic (or inline the same algorithm), remove `word-count` from
+its dependencies list, and then word-count could be pruned through the
+deprecating → archive lifecycle. Until then, word-count is load-bearing.
+
+**Principle invoked:** Principle 3 (Growth requires metabolism) — every organ
+carries a retirement path, but retirement must rest on evidence that nothing
+depends on what is being retired.
