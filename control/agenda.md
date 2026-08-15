@@ -140,6 +140,27 @@ fixtures and never asserts that what one produces is what the next consumes.
 - [ ] Make the dating in body/organs/memory-graph/extract.py actually take effect: every pattern and gap node currently gets last_seen_cycle 0. Find the highest cycle number among journal records whose "why" text contains that node's id, and use it; when none mentions it, use the highest cycle whose changed-file list includes the register file that holds it. Verify by building and confirming that P-018 has a higher last_seen_cycle than P-001. Change nothing outside body/organs/memory-graph/.
 - [ ] Add ONE function to body/organs/memory-graph/main.py named pipeline_check(workdir) that calls extract, then edges, then decay in sequence and returns a list of problem strings: "no edges from N nodes" when edges is empty while extract returned more than ten nodes, and "all pattern nodes undated" when every pattern node has last_seen_cycle 0. Then call it from the existing selfcheck op and merge its problems into the result. ADD ONLY — keep every existing error path, structured error return and non-zero exit code exactly as it is. Keep the new function under 25 lines. Change nothing outside body/organs/memory-graph/.
 
+## The audit tier has no instrument — build it first
+
+Layer-1 merges were demoted to rung 2 (post-hoc audit) on 30 cycles of
+evidence, and the heartbeat now turns unattended. But there is nothing to
+audit FROM: v3.1 section 9 makes REPORT.md part of the P1 milestone ("早上读
+REPORT.md — 且 REPORT 里有 AGR 曲线"), and it has never existed. A demotion
+whose revert window has no instrument quietly weakens the tier it moved to.
+
+- [ ] Add a `report` command to meristem/loop.py that writes REPORT.md at the repository root, generated from state/journal.jsonl, state/scoreboard.jsonl, state/proposals.md and state/mailbox.md. It must show: cycles since the previous report and their outcomes (accepted / rejected / parked / fault); core pressure and closure pressure with an arrow showing the direction since the previous report; AGR as accepted-self-proposed over accepted-total; the count of open proposals awaiting human promotion; parked tasks; and mailbox items needing a decision. Print the path when done. REPORT.md is a generated artifact — add it to .gitignore alongside state/*.jsonl. Add a unit test that the command writes the file and names every section. Weaken no existing check.
+
+## Complete the germline lifecycle, then metabolise for real
+
+Birth criterion 7 is the last one open. word-count sits at calibrate, its
+probe exists in the vault and scores 100, so both remaining stages are
+performable now. Completing it also gives `prune` its first firing — and on a
+real utility judgement rather than a ceremony.
+
+- [ ] Advance body/organs/word-count/organ.json from "calibrate" to "register", then to "active". Both stages are performable: probe-word-count-basic exists in the vault and scores 100. Change nothing outside body/organs/word-count/.
+- [ ] Add a `utility` command to meristem/loop.py that reads state/journal.jsonl and prints, per organ: total invocations, successful invocations, and the cycle it was last used, drawn from the "organ_call" records germline.invoke already writes. An organ nobody calls is a pruning candidate, and until this exists no pruning decision can rest on evidence. Add a unit test. Weaken no existing check.
+- [ ] Using the utility figures, judge whether body/organs/text-stats/ subsumes body/organs/word-count/ — text-stats returns a word count among its outputs. If it does, prune word-count: advance its organ.json to "deprecating", then to "archive", and append one entry to state/patterns.md recording the judgement and its evidence. If it does not subsume it, append that finding to state/backlog.md with the reason instead. Use the appends mechanism for the register. Change nothing outside body/organs/word-count/ and the register you append to.
+
 ## Initiative — stop waiting to be told
 
 Measured after 67 cycles: **AGR = 0.00**. Not one task has ever been proposed
