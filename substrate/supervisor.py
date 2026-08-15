@@ -236,7 +236,13 @@ def heartbeat(beats: int, dry: bool = False) -> int:
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
                                 cwd=str(REPO),
                                 **({} if os.name == "nt" else {"start_new_session": True}))
-        if result.returncode == 0 and argv[0] == "cycle":
+        # Promote whenever a candidate EXISTS, not only when the beat's exit
+        # code was clean. Cycle 120 passed both reviewers, was left unpromoted
+        # because its beat returned non-zero, and cycle 121 then branched from
+        # the unchanged HEAD and overwrote it -- a unanimously approved change
+        # discarded in silence (P-024). A candidate is the gates' verdict; it
+        # is not the exit status of the process that produced it.
+        if resolve(CANDIDATE_REF):
             promote()
         if beat < beats and not dry:
             delay = random.randint(BEAT_MIN, BEAT_MAX)

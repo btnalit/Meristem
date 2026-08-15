@@ -42,6 +42,36 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-024 — An approved candidate discarded by an unrelated failure
+
+- **Count:** 1 (cycle 120, silently)
+- **Class:** A verdict is conditioned on something that did not produce it. The
+  gates approved a change; the substrate then declined to promote it because
+  the *process* that emitted it exited non-zero for an unrelated reason. The
+  next cycle branched from the unchanged HEAD and overwrote it. Nothing failed
+  loudly; the work simply stopped existing.
+- **Instance:** The heartbeat promoted only when `returncode == 0 and
+  argv[0] == "cycle"`. Cycle 120 -- the compression that would have made the
+  first real externalization possible -- passed both reviewers unanimously,
+  and its beat returned non-zero because of an earlier fault in the same beat.
+  It was never promoted. Cycle 121 then branched from the same HEAD, added a
+  `report` command to the old loop.py, and was promoted over it. Core pressure
+  went up (0.88 -> 0.92) during the campaign whose entire purpose was to bring
+  it down.
+- **Structural fix:** promote whenever a candidate REF exists, not when the
+  beat's exit code was clean. A candidate is the gates' verdict; it is not the
+  exit status of the process that happened to produce it.
+  `substrate/supervisor.py`.
+- **Recovery attempted and refused, on evidence:** merging the orphaned branch
+  back was textually clean and semantically broken -- 13 test failures, because
+  both branches had evolved the same file independently. Reverted. Git merges
+  text; it does not merge meaning. The work is better redone from the current
+  HEAD than reconstructed from a fork that has drifted.
+- **The rule:** never gate an outcome on a signal from outside the thing being
+  judged. And when two lines of work touch one file, the second one landing
+  first does not make the first one wrong -- it makes it lost, which is worse,
+  because nothing reports it.
+
 ## P-023 — The prompt accumulated what the constitution had already excluded
 
 - **Count:** 2 faults (cycles 107, 108), plus every cycle paying for it silently
