@@ -1,0 +1,12 @@
+{
+  "id": "text-stats",
+  "version": "1",
+  "capability": "Returns word count, character count, and line count for a given text.",
+  "entrypoint": ["python3", "main.py"],
+  "input_schema": {"text": "string"},
+  "output_schema": {"words": "integer", "chars": "integer", "lines": "integer"},
+  "dependencies": ["word-count"],
+  "probes": ["probe-text-stats-basic"],
+  "metrics": ["usage", "success_rate"],
+  "lifecycle": "candidate"
+}
