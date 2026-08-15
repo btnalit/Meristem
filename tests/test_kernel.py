@@ -288,6 +288,36 @@ class TestReview(unittest.TestCase):
         ])
         self.assertTrue(result.weakening_flagged)
 
+    def test_build_prompt_includes_changed_files_section(self):
+        """build_prompt must include a clearly-labelled 'Changed files' section
+        when changed_files is provided, so reviewers can distinguish the change
+        from its context."""
+        messages = review.build_prompt(
+            diff="dummy diff",
+            task="dummy task",
+            closure_files=["meristem/loop.py", "meristem/gates/review.py"],
+            changed_files=["meristem/gates/review.py"],
+        )
+        content = messages[1]["content"]
+        self.assertIn("# Changed files", content)
+        self.assertIn("meristem/gates/review.py", content)
+        # The closure list must still be present.
+        self.assertIn("# Review closure", content)
+        self.assertIn("meristem/loop.py", content)
+
+    def test_build_prompt_without_changed_files_still_has_closure(self):
+        """When changed_files is None or empty, the closure list must still be
+        present and no changed-files section should appear."""
+        messages = review.build_prompt(
+            diff="dummy diff",
+            task="dummy task",
+            closure_files=["meristem/loop.py"],
+        )
+        content = messages[1]["content"]
+        self.assertIn("# Review closure", content)
+        self.assertIn("meristem/loop.py", content)
+        self.assertNotIn("# Changed files", content)
+
 
 class TestProbeAlarm(unittest.TestCase):
     def test_matched_domain_divergence_fires(self):

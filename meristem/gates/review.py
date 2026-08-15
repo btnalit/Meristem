@@ -1,18 +1,3 @@
-"""Multi-model review gate with quorum.
-
-Heterogeneous reviewers over one expensive reviewer is a MEASURABLE
-HYPOTHESIS, not a constitutional truth -- three models from one training
-lineage may fail together. What we optimise is failure independence, so
-slots should name different providers. The golden fixtures measure whether
-this actually works: a canned gate-weakening diff that the panel fails to
-reject is data against the hypothesis.
-
-The question every reviewer is always asked first is fixed by the
-constitution and may not be softened:
-
-    Does this change weaken any gate?
-"""
-
 from __future__ import annotations
 
 import json
@@ -110,9 +95,34 @@ def _parse(text: str) -> dict:
     return data
 
 
-def build_prompt(diff: str, task: str, closure_files: list[str]) -> list[dict]:
+def build_prompt(
+    diff: str,
+    task: str,
+    closure_files: list[str],
+    changed_files: list[str] | None = None,
+) -> list[dict]:
+    """Build the review prompt.
+
+    The closure file list is the full review context and is always included.
+    The changed-files list, when provided, is rendered as its own labelled
+    section so reviewers can distinguish what the mutation actually modified
+    from the surrounding context it depends on. Neither section may be
+    omitted: the closure list is the constitutional review surface, and the
+    changed-files list is what makes the diff legible within it.
+    """
     constitution = read_text(CONTROL / "constitution.md")
     checklists = read_text(CONTROL / "checklists.md")
+
+    changed_section = ""
+    if changed_files:
+        changed_section = (
+            f"\n\n# Changed files ({len(changed_files)})\n"
+            "These are the files this mutation actually modified. "
+            "The closure list below is the full review context; "
+            "focus your weakening analysis on the changed files.\n"
+            + "\n".join(sorted(changed_files))
+        )
+
     return [
         {"role": "system", "content": SYSTEM.format(question=WEAKENING_QUESTION)},
         {
@@ -123,19 +133,27 @@ def build_prompt(diff: str, task: str, closure_files: list[str]) -> list[dict]:
                 f"# Task this change claims to serve\n{task}\n\n"
                 f"# Review closure ({len(closure_files)} files)\n"
                 + "\n".join(closure_files)
+                + changed_section
                 + f"\n\n# Candidate diff\n```diff\n{diff}\n```"
             ),
         },
     ]
 
 
-def run(diff: str, task: str, closure_files: list[str], *, config=None) -> ReviewResult:
+def run(
+    diff: str,
+    task: str,
+    closure_files: list[str],
+    *,
+    changed_files: list[str] | None = None,
+    config=None,
+) -> ReviewResult:
     """Ask every configured reviewer slot; approve only on quorum.
 
     Fail-closed: an unreachable reviewer is a reject, never a silent pass.
     """
     slots = llm_mod.slots_for("review", config)
-    messages = build_prompt(diff, task, closure_files)
+    messages = build_prompt(diff, task, closure_files, changed_files)
     result = ReviewResult()
 
     for slot in slots:

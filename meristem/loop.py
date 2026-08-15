@@ -208,7 +208,10 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
 
         diff = git("diff", "HEAD~1", "HEAD", cwd=workdir)
         computed = closure_mod.compute(result.changed, root=workdir)
-        review_result = review.run(diff, task, computed.files, config=models)
+        review_result = review.run(
+            diff, task, computed.files,
+            changed_files=result.changed, config=models,
+        )
         result.votes = review_result.votes
         for completion in review_result.completions:
             result.usd += ledger_mod.record(cycle, "review", completion, models)
