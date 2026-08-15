@@ -165,7 +165,21 @@ def propose(task: str, *, config=None, extra: str = "") -> Mutation:
     if not isinstance(appends, dict):
         raise MeristemError("engine returned non-object appends")
     if not files and not appends:
-        raise MeristemError("engine proposed no files and no appends")
+        # Tier A's second scale limit (P-014). The reply is well-formed and the
+        # model is healthy -- it simply had no room left to write the file. On
+        # this endpoint the thinking trace is billed against the same budget as
+        # the answer, so a large repo context plus a long chain of thought can
+        # leave too few tokens to emit a 400-line file, and the model returns
+        # an empty but valid structure rather than a truncated one.
+        #
+        # Report the budget, not just the symptom: "proposed nothing" sends you
+        # looking at the prompt, while the numbers send you to the real cause.
+        raise MeristemError(
+            "engine proposed no files and no appends -- output budget exhausted "
+            f"(in={completion.prompt_tokens}, out={completion.completion_tokens}, "
+            f"of which reasoning={completion.reasoning_tokens}); the task likely "
+            "requires rewriting more than one large file at once"
+        )
     _validate_paths(files, "write")
     _validate_paths(appends, "append to")
 

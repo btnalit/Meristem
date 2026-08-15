@@ -49,7 +49,16 @@ time is not the same as making it impossible. Change the mechanism.
 You wrote G-006 after burning eleven of thirty cycles on one task that Tier A
 could not do. The diagnosis was right and the fix is yours.
 
-- [ ] Add a circuit breaker to meristem/loop.py so a task cannot burn cycles indefinitely. Count, from state/journal.jsonl, how many times the current task has already been rejected. When that count reaches 3, do not run the mutation at all: append an entry to state/mailbox.md naming the task, the repeated rejection reasons, and the cycle numbers; journal a cycle record with outcome "parked"; and move on to the next open agenda item. A parked task must not be retried until a human clears it from the mailbox. Use the appends mechanism for mailbox.md. Add unit tests covering: a task with fewer than 3 rejections still runs, and a task at 3 rejections is parked without a model call. Weaken no existing check.
+Split deliberately small. Tier A must rewrite each file it touches in full, and
+on this endpoint the thinking trace shares the answer's token budget — so a
+task that requires reproducing several hundred lines at once exhausts the
+output budget and the model returns an empty, valid, useless structure
+(P-014). Task granularity is not a style preference; it must match what the
+mechanism can physically emit.
+
+- [ ] Create meristem/breaker.py, a new small module. It exposes rejections_for(task: str) -> int, which reads state/journal.jsonl and counts cycle records whose "why" equals that task and whose outcome is "rejected"; and should_park(task: str, limit: int = 3) -> bool, returning True when the count has reached the limit. Import only from meristem's existing helpers. Do not modify any other file except adding tests for these two functions in tests/test_kernel.py.
+- [ ] Wire the circuit breaker into meristem/loop.py. In main(), after a task is taken and before run_cycle is called, use meristem.breaker.should_park: when it returns True, append an entry to state/mailbox.md naming the task and the cycle numbers of its rejections, journal a record with kind "cycle" and outcome "parked", print that the task was parked, and return 0 without making any model call. Change only meristem/loop.py. Weaken no existing check.
+- [ ] Make take_task in meristem/loop.py skip parked tasks, so parking actually advances the agenda instead of stalling on it. A task is parked when a journal cycle record has outcome "parked" and its "why" equals that task; a human clears it by removing its entry from state/mailbox.md, so treat a task as unparked once no mailbox line contains it. Change only meristem/loop.py, and add a unit test. Weaken no existing check.
 
 ## Grow the measuring stick — the loop that never ran
 

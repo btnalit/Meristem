@@ -42,6 +42,31 @@ permanent sentinel, then fix the structure.
 - **Structural fix:** The scanner never derives control flow from path shape;
   labels degrade to the absolute path. `meristem/gates/deterministic.py`.
 
+## P-014 — A valid, empty answer from an exhausted output budget
+
+- **Count:** 2 (live cycles 30-31, same task)
+- **Class:** The model is healthy, the reply is well-formed, and the structure
+  is empty -- because there was no room left to fill it. Sibling of P-004,
+  where a tight budget produced empty *content*; here it produces an empty but
+  schema-valid *payload*, which is worse, because nothing looks wrong.
+- **Instance:** Asked to add a circuit breaker to `meristem/loop.py`, the
+  engine returned `{"files": {}, "appends": {}}`. The numbers tell the story:
+  36,339 tokens in, 2,413 out, of which 1,598 were reasoning -- roughly 800
+  left to emit a 400-line file. Tier A must rewrite every file it touches in
+  full, and on this endpoint the thinking trace is billed against the same
+  budget as the answer.
+- **Structural fix, two parts.** The error now reports the budget rather than
+  the symptom: "proposed nothing" sends you to the prompt, while in/out/
+  reasoning counts send you to the real cause. And the task was split into
+  three, each touching one file of modest size.
+- **The general rule this yields:** *task granularity must match what the
+  mechanism can physically emit.* That is not a style preference. Under
+  whole-file replacement, the unit of work is bounded by output tokens, and a
+  task exceeding that bound cannot be retried into success -- it must be
+  divided. The honest long-term answer is Tier B, whose read/write loop edits
+  in place and is bounded by nothing so crude; escalation is now a measured
+  need rather than a hypothesis.
+
 ## P-013 — A check whose reference point has already moved
 
 - **Count:** 1 (live cycles 18–20, the same task rejected three times)
