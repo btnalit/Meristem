@@ -139,6 +139,25 @@ fixtures and never asserts that what one produces is what the next consumes.
 - [x] Make body/organs/memory-graph/extract.py carry the fields the edge rules need. Every node keeps id, kind, title and last_seen_cycle, and additionally: pattern and gap nodes carry "text" holding the body of their entry; cycle nodes carry "changed" holding the list of files that cycle changed and "why" holding its task text. Verify by running the build op and confirming the edge count is greater than zero. Change nothing outside body/organs/memory-graph/.
 - [x] Make the dating in body/organs/memory-graph/extract.py actually take effect: every pattern and gap node currently gets last_seen_cycle 0. Find the highest cycle number among journal records whose "why" text contains that node's id, and use it; when none mentions it, use the highest cycle whose changed-file list includes the register file that holds it. Verify by building and confirming that P-018 has a higher last_seen_cycle than P-001. Change nothing outside body/organs/memory-graph/.
 
+## Externalize under pressure — the seed's own proposal,落点修正
+
+Core pressure 0.87. The pressure mandate fired and the seed chose rank 1 —
+externalize, not a cap change — and its diagnosis was exact: loop.py at 898
+lines is 35% of the kernel and the primary driver. Adopted.
+
+One correction to its plan: `meristem/breaker.py` is *inside* the kernel, so
+moving code there relieves nothing. Real relief means leaving the kernel
+entirely — an organ under body/organs/, called over the germline ABI. That is
+what "externalize" means in the constitution's menu, and it is why the option
+is ranked above compress.
+
+Split small (P-014), and each part names its interface (P-018/P-019/P-020).
+
+- [ ] Grow an organ at body/organs/journal-query/ that answers questions about state/journal.jsonl over the germline ABI. organ.json: id "journal-query", version "1", lifecycle "candidate", entrypoint ["python3", "main.py"], input_schema {"op": "string", "args": "object"}, output_schema {"ok": "boolean", "result": "object"}, dependencies [], probes ["probe-journal-query-basic"], metrics ["usage", "success_rate"]. main.py supports op "rejections_for" with args {"task": "..."} returning the count of cycle records whose why equals that task and whose outcome is "rejected" with no matching fault record, and op "faults_for" with the same args returning the count that do have one. Take the workdir from args, defaulting to the current directory. Change nothing outside body/organs/journal-query/.
+- [ ] Write a probe proposal at state/probe-proposals/probe-journal-query-basic/ for that organ: probe.json (id, capability_domain "self-knowledge", organ "journal-query") and statement/task.md. Write no rubric in this task. Change nothing else.
+- [ ] Write state/probe-proposals/probe-journal-query-basic/rubric/check.py only. It reads {"workdir": "..."} from stdin, prints {"score": float, "detail": "..."}, and scores by INVOKING body/organs/journal-query/main.py over its ABI — never by reading its source. Build fixture journal lines with a small helper rather than long embedded literals. Include one discriminating case: a cycle that is both "rejected" and has a fault record must count toward faults_for and NOT toward rejections_for — an implementation that ignores fault records gets that case wrong. Change nothing else.
+- [ ] Make meristem/breaker.py delegate to the journal-query organ when it is active, falling back to its own inline counting when the organ is absent or not yet active. Use meristem.germline.invoke. The fallback is not optional: the kernel must keep working when the body does not. Add a unit test for both paths. Change only meristem/breaker.py and tests/test_kernel.py.
+
 ## The audit tier has no instrument — build it first
 
 Layer-1 merges were demoted to rung 2 (post-hoc audit) on 30 cycles of
