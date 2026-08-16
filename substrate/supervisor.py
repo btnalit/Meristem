@@ -21,6 +21,8 @@ down. A silent rollback that loses the lesson violates the rationale rule.
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import os
 import random
 import pathlib
@@ -37,6 +39,16 @@ CANDIDATE_REF = "refs/meristem/candidate"
 LAST_GOOD = "refs/meristem/last-good"
 PROTECTED = ("root/", "substrate/")
 HEALTH_FAIL_LIMIT = 3
+JOURNAL = REPO / "state" / "journal.jsonl"
+
+
+def _journal(record: dict) -> None:
+    """Append one record to the journal. The substrate writes its own records
+    without importing kernel code -- the structural separation is load-bearing."""
+    record = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), **record}
+    JOURNAL.parent.mkdir(parents=True, exist_ok=True)
+    with JOURNAL.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def git(*args, check=True, cwd=None) -> str:
@@ -111,11 +123,15 @@ def promote() -> int:
     ok, output = canary(candidate)
     if not ok:
         print(f"REFUSED: canary boot failed\n{output}", file=sys.stderr)
+        _journal({"kind": "canary_reject", "commit": candidate[:12],
+                  "reason": output[-400:]})
+        git("update-ref", "-d", CANDIDATE_REF, check=False)
         return 5
 
     git("merge", "--ff-only", candidate)
     git("update-ref", LAST_GOOD, candidate)
     git("update-ref", "-d", CANDIDATE_REF, check=False)
+    _journal({"kind": "promoted", "commit": candidate[:12]})
     print(f"promoted {candidate[:12]} -> main; last-good updated")
     publish()
     return 0
