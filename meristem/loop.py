@@ -253,6 +253,10 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
                                       "probe_id": run.probe_id, "score": run.score,
                                       "domain": run.domain, "probe_kind": run.kind})
         return result
+    except Exception as exc:
+        if not result.reason:
+            result.reason = str(exc)[:300]
+        return result
     finally:
         # Bill every attempt this cycle made, including the ones that
         # failed -- their tokens were spent all the same (P-015).
