@@ -20,5 +20,4 @@ boundary is enforced rather than merely stated.
 
 ## Open
 
-- [ ] Move the journal-reading helpers out of meristem/loop.py into a new module meristem/journal.py: next_cycle(), done_tasks(), parked_tasks(), and any other function whose entire job is to read state/journal.jsonl and answer a question about it. loop.py imports them from there and keeps no copy. This is compression: it does not lower core pressure by itself, it isolates what leaves next. Change only meristem/loop.py and meristem/journal.py. Weaken no check.
-- [ ] Move the report and utility command bodies out of meristem/loop.py into a new module meristem/views.py, leaving only the argparse dispatch in loop.py. Views are read-only presentations of state, not loop machinery; they are the clearest thing in the kernel that is capability rather than mechanism. Change only meristem/loop.py and meristem/views.py. Weaken no check.
+- [ ] COMPRESSION: Extract the status-view functions from loop.py into meristem/views.py. Move cmd_status, cmd_spend, cmd_utility, cmd_body, cmd_report, and cmd_gaps -- every function that prints a read-only view and never mutates state. loop.py imports and dispatches to them. Touch only meristem/loop.py and meristem/views.py. Weaken no gate.
