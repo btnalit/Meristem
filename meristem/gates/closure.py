@@ -161,7 +161,13 @@ def compute(
         # also touched a test was refused for a reason that had nothing to do
         # with the change (P-022). A reviewer does need to see a test being
         # modified; that is the diff's job, not the closure's.
-        if rel.startswith("tests/") or "/tests/" in rel:
+        #
+        # The '/tests/' substring check excludes only the KERNEL test suite
+        # (tests/ at the repo root). Organ-internal test paths like
+        # body/organs/foo/tests/test_foo.py are part of the organ under
+        # review and must remain in the closure -- excluding them would hide
+        # files the reviewer needs to see, which is a gate weakening.
+        if rel.startswith("tests/") or ("/tests/" in rel and not rel.startswith("body/")):
             continue
         path = (root / rel).resolve()
         if path.is_file():
