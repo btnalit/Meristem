@@ -1122,6 +1122,78 @@ class TestParkedTaskSkipping(unittest.TestCase):
             self.assertEqual(task, "open task")
 
 
+class TestDoneTasksCanaryReject(unittest.TestCase):
+    def test_canary_reject_reopens_task(self):
+        """A task that produced a candidate but was canary-rejected is NOT
+        done -- it must be retried on the next beat."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            control = tmpdir / "control"
+            control.mkdir()
+            (control / "agenda.md").write_text(
+                "- [ ] externalize task\n",
+                encoding="utf-8",
+            )
+            state = tmpdir / "state"
+            state.mkdir()
+            (state / "mailbox.md").write_text("", encoding="utf-8")
+            journal = state / "journal.jsonl"
+            with journal.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "cycle", "cycle": 1,
+                                    "why": "externalize task",
+                                    "outcome": "candidate"}) + "\n")
+                f.write(json.dumps({"kind": "canary_reject",
+                                    "commit": "abc123",
+                                    "why": "externalize task",
+                                    "reason": "test failed"}) + "\n")
+
+            with patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.JOURNAL", journal):
+                task = loop.take_task()
+            self.assertEqual(task, "externalize task")
+
+    def test_promoted_task_stays_done(self):
+        """A task that was promoted is done even if it was also
+        canary-rejected on a prior attempt."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            control = tmpdir / "control"
+            control.mkdir()
+            (control / "agenda.md").write_text(
+                "- [ ] externalize task\n- [ ] other task\n",
+                encoding="utf-8",
+            )
+            state = tmpdir / "state"
+            state.mkdir()
+            (state / "mailbox.md").write_text("", encoding="utf-8")
+            journal = state / "journal.jsonl"
+            with journal.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "cycle", "cycle": 1,
+                                    "why": "externalize task",
+                                    "outcome": "candidate"}) + "\n")
+                f.write(json.dumps({"kind": "canary_reject",
+                                    "commit": "abc123",
+                                    "why": "externalize task",
+                                    "reason": "test failed"}) + "\n")
+                f.write(json.dumps({"kind": "cycle", "cycle": 2,
+                                    "why": "externalize task",
+                                    "outcome": "candidate"}) + "\n")
+                f.write(json.dumps({"kind": "promoted",
+                                    "commit": "def456",
+                                    "why": "externalize task"}) + "\n")
+
+            with patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.JOURNAL", journal):
+                task = loop.take_task()
+            self.assertEqual(task, "other task")
+
+
 class TestProbeProposalsCommand(unittest.TestCase):
     def test_probe_proposals_on_empty(self):
         """When no proposals exist, the command handles it gracefully."""

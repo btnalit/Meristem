@@ -18,18 +18,26 @@ def next_cycle(journal_path) -> int:
 
 
 def done_tasks(journal_path) -> set[str]:
-    """Tasks that already produced a candidate, read from the journal.
+    """Tasks whose candidate was actually promoted (or never canary-rejected).
 
-    Completion is a RECORD, not an edit. Marking the agenda file in place made
-    the loop dirty its own checkout every cycle without ever committing --
-    which blocked git operations and left the tree in a state no transaction
-    owned. The journal already knows what succeeded; ask it.
+    A candidate that the canary rejects is NOT done -- the task must be
+    retried. Set algebra: (candidates - canary_rejects) | promoted.
+    Backward-compatible: old candidates with no matching canary_reject
+    record stay done.
     """
-    return {
-        row.get("why", "")
-        for row in read_jsonl(journal_path)
-        if row.get("kind") == "cycle" and row.get("outcome") == "candidate"
-    }
+    candidates: set[str] = set()
+    canary_rejects: set[str] = set()
+    promoted: set[str] = set()
+    for row in read_jsonl(journal_path):
+        kind = row.get("kind", "")
+        why = row.get("why", "")
+        if kind == "cycle" and row.get("outcome") == "candidate":
+            candidates.add(why)
+        elif kind == "canary_reject" and why:
+            canary_rejects.add(why)
+        elif kind == "promoted" and why:
+            promoted.add(why)
+    return (candidates - canary_rejects) | promoted
 
 
 def parked_tasks(journal_path, repo_path) -> set[str]:

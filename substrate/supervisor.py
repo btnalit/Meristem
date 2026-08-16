@@ -120,18 +120,23 @@ def promote() -> int:
         print(f"REFUSED: candidate touches protected paths: {offenders}", file=sys.stderr)
         return 4
 
+    subject = git("log", "-1", "--format=%s", candidate)
+    import re
+    m = re.match(r"cycle\s+\d+:\s*", subject)
+    why = subject[m.end():] if m else ""
+
     ok, output = canary(candidate)
     if not ok:
         print(f"REFUSED: canary boot failed\n{output}", file=sys.stderr)
         _journal({"kind": "canary_reject", "commit": candidate[:12],
-                  "reason": output[-400:]})
+                  "why": why, "reason": output[-400:]})
         git("update-ref", "-d", CANDIDATE_REF, check=False)
         return 5
 
     git("merge", "--ff-only", candidate)
     git("update-ref", LAST_GOOD, candidate)
     git("update-ref", "-d", CANDIDATE_REF, check=False)
-    _journal({"kind": "promoted", "commit": candidate[:12]})
+    _journal({"kind": "promoted", "commit": candidate[:12], "why": why})
     print(f"promoted {candidate[:12]} -> main; last-good updated")
     publish()
     return 0
