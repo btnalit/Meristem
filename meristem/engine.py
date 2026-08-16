@@ -100,7 +100,7 @@ def build_context(task: str = "") -> str:
     that must edit tests still sees them.
     """
     chunks = []
-    wants_tests = "test" in task.lower()
+    wants_tests = bool(re.search(r'\btest', task, re.IGNORECASE))
     for rel in mutable_files():
         if rel.startswith("tests/") and not wants_tests:
             chunks.append(f"=== FILE: {rel} === (omitted: {len(read_text(REPO / rel))}"
@@ -121,7 +121,7 @@ def _parse(text: str) -> dict:
     """
     text = text.strip()
     if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", text).strip()
+        text = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', text).strip()
 
     decoder = json.JSONDecoder()
     start = text.find("{")
