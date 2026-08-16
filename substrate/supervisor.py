@@ -205,7 +205,7 @@ def run_loop(cycles: int) -> int:
 
 def _pressure_reflected_today() -> bool:
     """Check if a pressure reflect already ran today (survives restarts)."""
-    today = datetime.date.today().isoformat()
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
     if not JOURNAL.exists():
         return False
     for line in JOURNAL.read_text(encoding="utf-8").splitlines():
