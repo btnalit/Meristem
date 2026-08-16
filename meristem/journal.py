@@ -40,6 +40,51 @@ def done_tasks(journal_path) -> set[str]:
     return (candidates - canary_rejects) | promoted
 
 
+def failure_history(journal_path, task: str, limit: int = 3) -> str:
+    """Past rejection reasons for the same task, most recent first.
+
+    Returns a formatted string suitable for engine.propose(extra=...).
+    Empty string when no prior failures exist for this task.
+    """
+    entries: list[tuple[str, list[str]]] = []
+    for row in read_jsonl(journal_path):
+        kind = row.get("kind", "")
+        why = row.get("why", "")
+        if why != task:
+            continue
+
+        if kind == "cycle" and row.get("outcome") == "rejected":
+            reasons: list[str] = []
+            reason_text = row.get("reason", "")
+            if reason_text and not reason_text.startswith("review rejected"):
+                reasons.append(reason_text[:200])
+            for rej in row.get("rejected_by") or []:
+                slot = rej.get("slot", "unknown")
+                for r in rej.get("reasons") or []:
+                    reasons.append(f"{slot}: {r[:200]}")
+            if reasons:
+                entries.append((str(row.get("cycle", "?")), reasons))
+
+        elif kind == "canary_reject":
+            reason_text = row.get("reason", "")
+            if reason_text:
+                entries.append(("canary", [reason_text[:200]]))
+
+    if not entries:
+        return ""
+
+    recent = entries[-limit:]
+    lines = ["Previous attempts at this exact task were rejected:"]
+    for cyc, reasons in recent:
+        for r in reasons:
+            lines.append(f"- cycle {cyc}: {r}")
+    lines.append("")
+    lines.append("Study these objections carefully. Do NOT repeat these mistakes.")
+
+    text = "\n".join(lines)
+    return text[:4000] + "\n[truncated]" if len(text) > 4000 else text
+
+
 def parked_tasks(journal_path, repo_path) -> set[str]:
     """Tasks that are parked: have a 'parked' journal cycle record AND still
     appear in state/mailbox.md.

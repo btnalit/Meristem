@@ -17,7 +17,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from meristem import REPO as KERNEL_REPO, VAULT, append_jsonl, read_jsonl  # noqa: E402
-from meristem import engine, germline, ledger, llm  # noqa: E402
+from meristem import engine, germline, journal as journal_mod, ledger, llm  # noqa: E402
 from meristem.gates import closure, deterministic, germline_validate, probes, review  # noqa: E402
 from meristem import loop  # noqa: E402
 from meristem import breaker  # noqa: E402
@@ -1192,6 +1192,87 @@ class TestDoneTasksCanaryReject(unittest.TestCase):
                  patch("meristem.loop.JOURNAL", journal):
                 task = loop.take_task()
             self.assertEqual(task, "other task")
+
+
+class TestFailureHistory(unittest.TestCase):
+    def test_no_failures_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            j.write_text(
+                json.dumps({"kind": "cycle", "cycle": 1,
+                            "outcome": "candidate", "why": "task A"}) + "\n",
+                encoding="utf-8",
+            )
+            result = journal_mod.failure_history(j, "task A")
+            self.assertEqual(result, "")
+
+    def test_review_rejection_captured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            j.write_text(
+                json.dumps({"kind": "cycle", "cycle": 5, "outcome": "rejected",
+                            "why": "task B", "reason": "review rejected (1/2 (need 2))",
+                            "rejected_by": [{"slot": "review:deepseek",
+                                             "reasons": ["removes critical gate"]}]}) + "\n",
+                encoding="utf-8",
+            )
+            result = journal_mod.failure_history(j, "task B")
+            self.assertIn("review:deepseek: removes critical gate", result)
+            self.assertIn("cycle 5", result)
+
+    def test_deterministic_rejection_captured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            j.write_text(
+                json.dumps({"kind": "cycle", "cycle": 99, "outcome": "rejected",
+                            "why": "task C",
+                            "reason": "deterministic: closure over budget",
+                            "rejected_by": []}) + "\n",
+                encoding="utf-8",
+            )
+            result = journal_mod.failure_history(j, "task C")
+            self.assertIn("deterministic: closure over budget", result)
+
+    def test_canary_reject_captured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            j.write_text(
+                json.dumps({"kind": "canary_reject", "commit": "abc123",
+                            "why": "task D", "reason": "tests failed"}) + "\n",
+                encoding="utf-8",
+            )
+            result = journal_mod.failure_history(j, "task D")
+            self.assertIn("canary", result)
+            self.assertIn("tests failed", result)
+
+    def test_limit_restricts_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            lines = []
+            for i in range(5):
+                lines.append(json.dumps({"kind": "cycle", "cycle": i,
+                                         "outcome": "rejected", "why": "task E",
+                                         "reason": f"gate fail {i}",
+                                         "rejected_by": []}))
+            j.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            result = journal_mod.failure_history(j, "task E", limit=2)
+            self.assertNotIn("cycle 0", result)
+            self.assertNotIn("cycle 1", result)
+            self.assertNotIn("cycle 2", result)
+            self.assertIn("cycle 3", result)
+            self.assertIn("cycle 4", result)
+
+    def test_different_task_not_included(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            j.write_text(
+                json.dumps({"kind": "cycle", "cycle": 1, "outcome": "rejected",
+                            "why": "other task", "reason": "gate fail",
+                            "rejected_by": []}) + "\n",
+                encoding="utf-8",
+            )
+            result = journal_mod.failure_history(j, "my task")
+            self.assertEqual(result, "")
 
 
 class TestProbeProposalsCommand(unittest.TestCase):

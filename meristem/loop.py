@@ -198,7 +198,8 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
     result.branch = branch
     keep = False
     try:
-        mutation = engine_mod.propose(task, config=models)
+        history = journal.failure_history(JOURNAL, task)
+        mutation = engine_mod.propose(task, config=models, extra=history)
         result.rationale = mutation.rationale
         result.usd += ledger_mod.record(cycle, "mutate", mutation.completion, models)
         ledger_mod.check(cycle)
