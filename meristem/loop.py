@@ -26,6 +26,7 @@ from . import (
 from . import breaker as breaker_mod
 from . import engine as engine_mod
 from . import germline
+from . import journal
 from . import ledger as ledger_mod
 from . import llm as llm_mod
 from .gates import closure as closure_mod
@@ -58,52 +59,6 @@ class CycleResult:
     tier: str = "A"
 
 
-def next_cycle() -> int:
-    return 1 + max(
-        (row.get("cycle", 0) for row in read_jsonl(JOURNAL) if row.get("kind") == "cycle"),
-        default=0,
-    )
-
-
-def done_tasks() -> set[str]:
-    """Tasks that already produced a candidate, read from the journal.
-
-    Completion is a RECORD, not an edit. Marking the agenda file in place made
-    the loop dirty its own checkout every cycle without ever committing --
-    which blocked git operations and left the tree in a state no transaction
-    owned. The journal already knows what succeeded; ask it.
-    """
-    return {
-        row.get("why", "")
-        for row in read_jsonl(JOURNAL)
-        if row.get("kind") == "cycle" and row.get("outcome") == "candidate"
-    }
-
-
-def parked_tasks() -> set[str]:
-    """Tasks that are parked: have a 'parked' journal cycle record AND still
-    appear in state/mailbox.md.
-
-    A human clears parking by removing the mailbox entry. The journal record
-    persists (append-only, never rewritten) but the task is then unparked and
-    can be retried. Without this check, take_task would re-take a parked task
-    every cycle, so parking would stall the agenda instead of advancing it.
-    """
-    parked_in_journal = {
-        row.get("why", "")
-        for row in read_jsonl(JOURNAL)
-        if row.get("kind") == "cycle" and row.get("outcome") == "parked"
-    }
-    if not parked_in_journal:
-        return set()
-    mailbox_text = read_text(REPO / "state" / "mailbox.md")
-    return {
-        task
-        for task in parked_in_journal
-        if any(task in line for line in mailbox_text.splitlines())
-    }
-
-
 def take_task() -> str | None:
     """P0: the human is the first reflect. Tasks come from control/agenda.md,
     which stays pure human-authored source -- the loop never writes to it.
@@ -113,8 +68,8 @@ def take_task() -> str | None:
     A rejected task stays open, so it is retried. A parked task is skipped
     until a human clears it from state/mailbox.md.
     """
-    done = done_tasks()
-    parked = parked_tasks()
+    done = journal.done_tasks(JOURNAL)
+    parked = journal.parked_tasks(JOURNAL, REPO)
     for line in read_text(CONTROL / "agenda.md").splitlines():
         line = line.strip()
         if line.startswith("- [ ] "):
@@ -592,7 +547,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     # calls against a cap of 12 and every one of them faulted (P-021). A
     # reflection is its own accounting unit; it records that fact so the next
     # one gets a fresh number.
-    cycle = next_cycle()
+    cycle = journal.next_cycle(JOURNAL)
     append_jsonl(JOURNAL, {"kind": "cycle", "cycle": cycle,
                            "outcome": "reflection",
                            "why": "reflect" + (" --pressure" if pressure else ""),
@@ -799,7 +754,7 @@ def generate_report() -> int:
         if line.strip().startswith("- [ ] ")
     )
 
-    parked = parked_tasks()
+    parked = journal.parked_tasks(JOURNAL, REPO)
 
     mailbox_text = read_text(REPO / "state" / "mailbox.md")
     mailbox_items = [line.strip() for line in mailbox_text.splitlines() if line.strip()]
@@ -859,7 +814,7 @@ def generate_report() -> int:
 
     append_jsonl(JOURNAL, {
         "kind": "report",
-        "cycle": next_cycle(),
+        "cycle": journal.next_cycle(JOURNAL),
         "core_pressure": round(core_pressure, 4),
         "closure_pressure": round(closure_pressure, 4),
     })
@@ -1006,7 +961,7 @@ def main(argv=None) -> int:
             and row.get("why") == task
             and row.get("outcome") == "rejected"
         ]
-        cycle = next_cycle()
+        cycle = journal.next_cycle(JOURNAL)
         cycles_str = ", ".join(str(c) for c in rejection_cycles)
         mailbox = REPO / "state" / "mailbox.md"
         mailbox.parent.mkdir(parents=True, exist_ok=True)
@@ -1021,7 +976,7 @@ def main(argv=None) -> int:
         print(f"task parked: {task} (rejected in cycles: {cycles_str})")
         return 0
 
-    cycle = next_cycle()
+    cycle = journal.next_cycle(JOURNAL)
     try:
         result = run_cycle(task, cycle)
     except Exception as exc:
