@@ -35,6 +35,22 @@ from .gates import deterministic, probes, review
 CANDIDATE_REF = "meristem/candidate"
 
 
+def _notify_park(task: str, cycles: str) -> None:
+    import os, urllib.request
+    url = os.environ.get("MERISTEM_WEBHOOK_URL", "")
+    if not url:
+        return
+    body = json.dumps({"msgtype": "text", "text": {
+        "content": f"[meristem:park] Task parked: {task[:80]} (cycles: {cycles})"
+    }}).encode()
+    try:
+        req = urllib.request.Request(url, data=body,
+                                    headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
 def git(*args, cwd=None, check=True) -> str:
     result = subprocess.run(
         ["git", *args], cwd=str(cwd or REPO), capture_output=True, text=True
@@ -264,6 +280,8 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
     except Exception as exc:
         if not result.reason:
             result.reason = str(exc)[:300]
+        append_jsonl(JOURNAL, {"kind": "fault", "cycle": cycle, "task": task,
+                               "error": f"{type(exc).__name__}: {exc}"[:400]})
         return result
     finally:
         # Bill every attempt this cycle made, including the ones that
@@ -1001,6 +1019,7 @@ def main(argv=None) -> int:
             "why": task,
         })
         print(f"task parked: {task} (rejected in cycles: {cycles_str})")
+        _notify_park(task, cycles_str)
         return 0
 
     cycle = journal.next_cycle(JOURNAL)

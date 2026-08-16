@@ -98,5 +98,54 @@ class TestPressureReflectedToday(unittest.TestCase):
                 sv.JOURNAL = orig
 
 
+class TestFaultRecordWrittenOnException(unittest.TestCase):
+    """P-029c: when run_cycle catches an exception, a fault record must be
+    written so the breaker (P-016) can distinguish mechanism failures from
+    judged rejections. Without this, 429/timeout errors count as review
+    rejections and park tasks prematurely."""
+
+    def test_exception_produces_fault_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            with patch("meristem.loop.JOURNAL", journal), \
+                 patch("meristem.loop.golden_fixtures", return_value=[]), \
+                 patch("meristem.loop.make_worktree", return_value=("b", pathlib.Path(tmp))), \
+                 patch("meristem.loop.engine_mod") as mock_engine, \
+                 patch("meristem.loop.llm_mod") as mock_llm, \
+                 patch("meristem.loop.drop_worktree"):
+                mock_llm.attempts_log = []
+                mock_llm.load_models.return_value = {}
+                mock_engine.propose.side_effect = RuntimeError("HTTP Error 429")
+                result = run_cycle("test-task", cycle=8888)
+            rows = read_jsonl(journal)
+            fault_rows = [r for r in rows if r.get("kind") == "fault"
+                          and r.get("cycle") == 8888]
+            self.assertEqual(len(fault_rows), 1, "must write exactly one fault record")
+            self.assertIn("429", fault_rows[0].get("error", ""))
+            cycle_rows = [r for r in rows if r.get("kind") == "cycle"
+                          and r.get("cycle") == 8888]
+            self.assertTrue(len(cycle_rows) >= 1, "cycle record must also exist")
+
+    def test_breaker_excludes_faulted_cycle(self):
+        """A cycle with a fault record must not count as a judged rejection."""
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            from meristem import breaker
+            for c in (1, 2, 3):
+                append_jsonl(journal, {"kind": "cycle", "cycle": c,
+                                       "outcome": "rejected", "why": "T"})
+            append_jsonl(journal, {"kind": "fault", "cycle": 2, "task": "T",
+                                   "error": "429"})
+            append_jsonl(journal, {"kind": "fault", "cycle": 3, "task": "T",
+                                   "error": "429"})
+            orig = breaker.JOURNAL
+            try:
+                breaker.JOURNAL = journal
+                self.assertEqual(breaker.rejections_for("T"), 1)
+                self.assertFalse(breaker.should_park("T"))
+            finally:
+                breaker.JOURNAL = orig
+
+
 if __name__ == "__main__":
     unittest.main()

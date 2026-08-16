@@ -40,6 +40,36 @@ LAST_GOOD = "refs/meristem/last-good"
 PROTECTED = ("root/", "substrate/")
 HEALTH_FAIL_LIMIT = 3
 JOURNAL = REPO / "state" / "journal.jsonl"
+PROPOSALS = REPO / "state" / "proposals.md"
+
+
+def _has_unactioned_proposals() -> bool:
+    """True if proposals.md has any lines that look like proposals."""
+    if not PROPOSALS.exists():
+        return False
+    for line in PROPOSALS.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("- ") or line.strip().startswith("## "):
+            return True
+    return False
+
+
+def notify(event: str, message: str) -> None:
+    """Send a notification via configured webhook. Opt-in, like publish."""
+    url = os.environ.get("MERISTEM_WEBHOOK_URL", "")
+    if not url:
+        return
+    payload = json.dumps({
+        "msgtype": "text",
+        "text": {"content": f"[meristem:{event}] {message}"},
+    }).encode("utf-8")
+    import urllib.request
+    req = urllib.request.Request(url, data=payload,
+                                headers={"Content-Type": "application/json"},
+                                method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as exc:
+        print(f"notify failed ({event}): {exc}", file=sys.stderr)
 
 
 def _journal(record: dict) -> None:
@@ -180,6 +210,7 @@ def rollback(reason: str) -> int:
         "-c", "user.email=substrate@localhost",
         "commit", "-q", "-m", f"revert: auto-rollback to last-good\n\nreason: {reason}")
     print(f"rolled back to {last_good[:12]}; reason recorded")
+    notify("rollback", f"Auto-rollback to {last_good[:12]}: {reason}")
     return 0
 
 
@@ -263,12 +294,20 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             pressure_raised = True
         elif pending_task():
             argv = ["cycle"]
-        elif pressure >= PRESSURE_MANDATE:
-            # Still under pressure with an empty agenda: the last mandate
-            # produced nothing actionable, so ask again rather than idle.
-            print(f"    core pressure {pressure:.2f}, agenda empty"
+        elif pressure >= PRESSURE_MANDATE and not _has_unactioned_proposals():
+            # Still under pressure with an empty agenda AND no proposals
+            # waiting: the last mandate produced nothing, so ask again.
+            # But if proposals exist the seed already has an answer that
+            # nobody consumed -- re-asking is the livelock (P-021).
+            print(f"    core pressure {pressure:.2f}, agenda empty, no proposals"
                   " -- re-issuing the mandate", flush=True)
             argv = ["reflect", "--pressure"]
+        elif pressure >= PRESSURE_MANDATE:
+            print(f"    core pressure {pressure:.2f}, agenda empty, proposals pending"
+                  " -- skipping (proposals await human review)", flush=True)
+            notify("pressure_proposals",
+                   f"Core pressure {pressure:.2f}, proposals pending in proposals.md")
+            argv = ["reflect"]
         else:
             argv = ["reflect"]
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
@@ -292,6 +331,9 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             delay = random.randint(BEAT_MIN, BEAT_MAX)
             print(f"    next beat in {delay // 60}m {delay % 60}s", flush=True)
             time.sleep(delay)
+    pressure = core_pressure()
+    notify("heartbeat_done",
+           f"Heartbeat finished ({beats} beats). Pressure: {pressure:.2f}")
     return 0
 
 
