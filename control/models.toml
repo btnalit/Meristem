@@ -58,17 +58,9 @@ timeout = 900
 usd_in = 0.0
 usd_out = 0.0
 
-[[roles.mutate.slots]]
-id = "mutate:deepseek"
-lineage = "deepseek"
-base_url = "https://token.sensenova.cn/v1"
-model = "deepseek-v4-flash"
-api_key_env = "SENSENOVA_API_KEY"
-temperature = 0.2
-max_tokens = 32000
-timeout = 900
-usd_in = 0.0
-usd_out = 0.0
+# Removed: deepseek fallback for mutate. DeepSeek is on the review panel --
+# falling back here would make the same model author AND judge a change,
+# collapsing the panel's independence into a single lineage (P-029).
 
 # Reviewers optimise FAILURE INDEPENDENCE, not model count.
 #

@@ -203,6 +203,22 @@ def run_loop(cycles: int) -> int:
     return 0
 
 
+def _pressure_reflected_today() -> bool:
+    """Check if a pressure reflect already ran today (survives restarts)."""
+    today = datetime.date.today().isoformat()
+    if not JOURNAL.exists():
+        return False
+    for line in JOURNAL.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts = row.get("ts", "")
+        if ts.startswith(today) and row.get("why") == "reflect --pressure":
+            return True
+    return False
+
+
 #: Heartbeat bounds, in seconds. Jitter is not decoration: a fixed cadence
 #: synchronises with the provider's rate-limit windows and turns every retry
 #: into a thundering herd against the same boundary. A uniform interval
@@ -223,7 +239,8 @@ def heartbeat(beats: int, dry: bool = False) -> int:
     seed sleeps must stop it at the next wake, not at the next convenient
     moment.
     """
-    pressure_raised = False
+    pressure_raised = _pressure_reflected_today()
+    failures = 0
     for beat in range(1, beats + 1):
         if panic.engaged():
             print("PANIC latch engaged; heartbeat stopping", file=sys.stderr)
@@ -257,6 +274,12 @@ def heartbeat(beats: int, dry: bool = False) -> int:
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
                                 cwd=str(REPO),
                                 **({} if os.name == "nt" else {"start_new_session": True}))
+        if result.returncode != 0:
+            failures += 1
+            if failures >= HEALTH_FAIL_LIMIT:
+                return rollback(f"{failures} consecutive heartbeat failures")
+        else:
+            failures = 0
         # Promote whenever a candidate EXISTS, not only when the beat's exit
         # code was clean. Cycle 120 passed both reviewers, was left unpromoted
         # because its beat returned non-zero, and cycle 121 then branched from

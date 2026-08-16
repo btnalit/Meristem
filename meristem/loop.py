@@ -201,7 +201,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
         history = journal.failure_history(JOURNAL, task)
         mutation = engine_mod.propose(task, config=models, extra=history)
         result.rationale = mutation.rationale
-        result.usd += ledger_mod.record(cycle, "mutate", mutation.completion, models)
+        result.usd += ledger_mod.drain_attempts(cycle, models)
         ledger_mod.check(cycle)
 
         result.changed = engine_mod.apply(mutation, workdir)
@@ -235,8 +235,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
             changed_files=result.changed, config=models,
         )
         result.votes = review_result.votes
-        for completion in review_result.completions:
-            result.usd += ledger_mod.record(cycle, "review", completion, models)
+        result.usd += ledger_mod.drain_attempts(cycle, models)
         if not review_result.approved:
             result.reason = f"review rejected ({review_result.quorum})"
             return result
@@ -645,7 +644,6 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     ]
 
     completion = llm_mod.complete("score", messages, config=models)
-    ledger_mod.record(cycle, "score", completion, models)
     try:
         ledger_mod.drain_attempts(cycle, models)
     except Exception:

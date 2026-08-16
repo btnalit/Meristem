@@ -90,7 +90,7 @@ def calls(cycle: int | None = None) -> int:
     return len(_rows(cycle))
 
 
-def drain_attempts(cycle: int, models: dict | None = None) -> int:
+def drain_attempts(cycle: int, models: dict | None = None) -> float:
     """Bill every model attempt made since the last drain, successful or not.
 
     P-015: usage was recorded only where a caller succeeded, so the two cycles
@@ -98,16 +98,19 @@ def drain_attempts(cycle: int, models: dict | None = None) -> int:
     cost is simply unknown. A budget gate that cannot see failures is blind to
     precisely the runaway it exists to stop, and a retry storm is the cheapest
     way to burn a quota.
+
+    Returns accumulated USD cost of all drained attempts.  Callers must use
+    this as the SOLE billing path -- calling record() separately double-bills
+    (P-029).
     """
     from . import llm as llm_mod
 
-    drained = 0
+    cost = 0.0
     for attempt in llm_mod.attempts_log:
-        record(cycle, attempt["role"], attempt["completion"], models or {},
-               ok=attempt["ok"])
-        drained += 1
+        cost += record(cycle, attempt["role"], attempt["completion"],
+                       models or {}, ok=attempt["ok"])
     llm_mod.attempts_log.clear()
-    return drained
+    return cost
 
 
 def check(cycle: int, budget: Budget | None = None) -> None:
