@@ -159,6 +159,14 @@ def golden_fixtures() -> list[str]:
         failures.append("proposal guard let a guarded path reach the queue")
     if route_proposal("Fix the bug in root/panic.py") != "mailbox":
         failures.append("proposal guard let a guarded path reach the queue")
+    # 7b. Case-variant guarded paths must also be caught. The original
+    #     check was case-sensitive substring matching, so 'Substrate/' or
+    #     'ROOT/' bypassed the fence entirely. Normalising to lowercase
+    #     closes the class for all case paraphrases.
+    if route_proposal("Fix the bug in Substrate/supervisor.py") != "mailbox":
+        failures.append("proposal guard let a case-variant guarded path reach the queue")
+    if route_proposal("Fix the bug in ROOT/panic.py") != "mailbox":
+        failures.append("proposal guard let a case-variant guarded path reach the queue")
     if route_proposal("Rewrite meristem/gates/review.py") != "mailbox":
         failures.append("proposal guard let a guarded path reach the queue")
     if route_proposal("Update control/constitution.md") != "mailbox":
@@ -449,7 +457,11 @@ CAP_CASE_REQUIRED = (
 
 
 def mentions_cap_change(text: str) -> bool:
-    return any(marker in text for marker in CAP_PROPOSAL_MARKERS)
+    """Case-insensitive: a paraphrase like 'Raise The Cap' must not bypass
+    the fence. Normalising both text and markers to lowercase closes the
+    class for all case variants, not just the ones enumerated above."""
+    lowered = text.lower()
+    return any(marker.lower() in lowered for marker in CAP_PROPOSAL_MARKERS)
 
 
 def cap_case_missing(text: str) -> list[str]:
@@ -469,8 +481,15 @@ def route_proposal(text: str) -> str:
     Guarded ground routes to the mailbox. So does any proposal to change the
     kernel budget, in either direction, for as long as that seat sits at rung
     1 -- the seed may make the case; it may not also grant it.
+
+    Path matching is case-insensitive: 'Substrate/supervisor.py' and
+    'ROOT/panic.py' are caught just as their lowercase forms are. The
+    original case-sensitive substring check could be bypassed by any case
+    paraphrase, which is the same class of failure as naming a guarded path
+    with different casing to dodge the fence.
     """
-    if any(p in text for p in PROPOSAL_GUARDED) or mentions_cap_change(text):
+    lowered = text.lower()
+    if any(p in lowered for p in PROPOSAL_GUARDED) or mentions_cap_change(text):
         return "mailbox"
     return "agenda"
 
@@ -602,7 +621,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         "measuring stick would prove it works?\n\n"
         "The constitution says 'Spiral, not circular': a loop that only "
         "ever repairs converges on a fixed point and stops. A loop that "
-        "only ever grows without repairing accumulates debt. Both kinds "
+        "only grows without repairing accumulates debt. Both kinds "
         "are required every pass.\n\n"
         "Reply with ONLY a JSON object:\n"
         '{"proposals": ["task 1", "task 2", "task 3"]}'
