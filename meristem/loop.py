@@ -849,15 +849,20 @@ def main(argv=None) -> int:
         # human-authored source (P-011) -- marking it in place dirtied the
         # checkout every cycle and blocked git twice. State is derived from
         # the journal, which already knows it.
+        #
+        # `done` uses journal.done_tasks() -- the same function take_task()
+        # uses -- so the agenda view and the task selector agree on what is
+        # finished. A candidate that the canary rejected is NOT done: the
+        # task must be retried. The old inline check (outcome=='candidate')
+        # missed canary rejections and showed such tasks as done.
         rows = read_jsonl(JOURNAL)
-        done, parked, rejects = set(), set(), {}
+        done = journal.done_tasks(JOURNAL)
+        parked, rejects = set(), {}
         for row in rows:
             if row.get("kind") != "cycle":
                 continue
             why, outcome = row.get("why", ""), row.get("outcome")
-            if outcome == "candidate":
-                done.add(why)
-            elif outcome == "parked":
+            if outcome == "parked":
                 parked.add(why)
             elif outcome == "rejected":
                 rejects[why] = rejects.get(why, 0) + 1
