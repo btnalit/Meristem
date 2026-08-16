@@ -220,6 +220,12 @@ def apply(mutation: Mutation, workdir) -> list[str]:
     Appended paths are opened in append mode so existing content is never
     overwritten -- the structural fix for the class of failure where
     whole-file replacement erases an append-only register.
+
+    If a path appears in both `files` and `appends`, the `files` entry is
+    authoritative: the whole-file replacement is written and the append is
+    skipped. Writing both would produce file_content + append_text -- a
+    result neither the engine nor a reviewer intended. The `files` version
+    is the definitive content for that path.
     """
     written = []
     for rel, content in mutation.files.items():
@@ -228,6 +234,8 @@ def apply(mutation: Mutation, workdir) -> list[str]:
         target.write_text(content, encoding="utf-8")
         written.append(rel)
     for rel, content in mutation.appends.items():
+        if rel in mutation.files:
+            continue
         target = workdir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
