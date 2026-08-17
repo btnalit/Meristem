@@ -447,11 +447,25 @@ def publish() -> None:
     if os.environ.get("MERISTEM_PUBLISH", "").lower() not in ("1", "true", "yes"):
         print("publish: disabled (set MERISTEM_PUBLISH=1 to push promotions)")
         return
-    result = subprocess.run(["git", "push", "origin", "main"], cwd=str(REPO),
-                            capture_output=True, text=True, timeout=120)
+    # "Never fatal" has to include the exception, not just the exit code. Only
+    # the returncode branch was guarded, so a slow network raised
+    # TimeoutExpired straight through publish -> promote -> heartbeat: the
+    # beat died with exit 1, the keeper stopped the whole run, and the
+    # promotion this was supposed to merely ANNOUNCE had already succeeded.
+    # One push that took over 120s cost a fourteen-beat night.
+    try:
+        result = subprocess.run(["git", "push", "origin", "main"], cwd=str(REPO),
+                                capture_output=True, text=True, timeout=120)
+    except (subprocess.SubprocessError, OSError) as exc:
+        _journal({"kind": "publish_failed", "reason": f"{type(exc).__name__}: {exc}"[:300]})
+        print(f"publish FAILED (promotion stands): {type(exc).__name__}",
+              file=sys.stderr)
+        return
     if result.returncode == 0:
         print(f"published main -> origin ({resolve('HEAD')[:12]})")
     else:
+        _journal({"kind": "publish_failed",
+                  "reason": result.stderr.strip()[:300]})
         print(f"publish FAILED (promotion stands): {result.stderr.strip()[:200]}",
               file=sys.stderr)
 

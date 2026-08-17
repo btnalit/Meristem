@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -146,6 +147,59 @@ class TestFaultRecordWrittenOnException(unittest.TestCase):
                 self.assertFalse(breaker.should_park("T"))
             finally:
                 breaker.JOURNAL = orig
+
+
+class TestPublishIsNeverFatal(unittest.TestCase):
+    """publish()'s own docstring: "failing to publish must not undo a
+    promotion that already succeeded." Only the returncode branch honoured
+    that. A push that ran past its 120s timeout raised TimeoutExpired
+    through publish -> promote -> heartbeat, the beat exited 1, and the
+    keeper stopped a fourteen-beat run -- over an announcement, after the
+    promotion had already landed.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _publish_with(self, side_effect=None, returncode=0, stderr=""):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            orig = sv.JOURNAL
+            kwargs = ({"side_effect": side_effect} if side_effect else
+                      {"return_value": types.SimpleNamespace(
+                          returncode=returncode, stdout="", stderr=stderr)})
+            try:
+                sv.JOURNAL = journal
+                with patch.dict(os.environ, {"MERISTEM_PUBLISH": "1"}), \
+                     patch.object(sv.subprocess, "run", **kwargs), \
+                     patch.object(sv, "resolve", return_value="a" * 40):
+                    sv.publish()          # must not raise
+            finally:
+                sv.JOURNAL = orig
+            return read_jsonl(journal)
+
+    def test_timeout_does_not_propagate(self):
+        import subprocess as sp
+        rows = self._publish_with(
+            side_effect=sp.TimeoutExpired(cmd="git push", timeout=120))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "publish_failed")
+        self.assertIn("TimeoutExpired", rows[0]["reason"])
+
+    def test_exec_failure_does_not_propagate(self):
+        rows = self._publish_with(side_effect=OSError("git missing"))
+        self.assertEqual(rows[0]["kind"], "publish_failed")
+
+    def test_nonzero_exit_is_journalled_not_just_printed(self):
+        rows = self._publish_with(returncode=1, stderr="non-fast-forward")
+        self.assertEqual(rows[0]["kind"], "publish_failed")
+        self.assertIn("non-fast-forward", rows[0]["reason"])
+
+    def test_success_journals_nothing(self):
+        self.assertEqual(self._publish_with(returncode=0), [])
 
 
 class TestProtectedRefusalIsNotSilent(unittest.TestCase):
