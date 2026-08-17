@@ -384,15 +384,34 @@ def promote() -> int:
         print("no candidate awaiting promotion")
         return 0
 
-    offenders = guard_protected("HEAD", candidate)
-    if offenders:
-        print(f"REFUSED: candidate touches protected paths: {offenders}", file=sys.stderr)
-        return 4
-
     subject = git("log", "-1", "--format=%s", candidate)
-    import re
     m = re.match(r"cycle\s+\d+:\s*", subject)
     why = subject[m.end():] if m else ""
+
+    offenders = guard_protected("HEAD", candidate)
+    if offenders:
+        # Journal it and CLEAR the ref. Neither used to happen: the refusal
+        # printed to stderr and left CANDIDATE_REF standing, so every later
+        # beat re-resolved the same candidate, refused it the same way, and
+        # left no trace -- a permanent silent wedge with the loop stuck
+        # "ahead" on a commit it will never accept.
+        #
+        # Recorded as canary_reject ON PURPOSE, not as a new kind. The cycle
+        # record for this task says outcome=candidate, and done_tasks() is
+        # (candidates - canary_rejects) | promoted -- so clearing the ref
+        # under any OTHER kind would make the task read as done forever and
+        # the work would vanish (P-026's exact failure). Reusing this kind
+        # reopens the task, hands the seed the real reason through
+        # failure_history(), and lets the breaker park it after three tries.
+        reason = f"REFUSED: touches protected paths: {offenders}"
+        print(reason, file=sys.stderr)
+        _journal({"kind": "canary_reject", "commit": candidate[:12],
+                  "why": why, "reason": reason})
+        notify("protected_refusal",
+               f"Candidate refused, touches protected ground: {offenders}. "
+               f"Task reopened for retry. No action needed.")
+        git("update-ref", "-d", CANDIDATE_REF, check=False)
+        return 4
 
     ok, output = canary(candidate)
     if not ok:
@@ -600,12 +619,27 @@ def core_pressure() -> float:
     """
     result = subprocess.run([sys.executable, "-m", "meristem.loop", "status"],
                             cwd=str(REPO), capture_output=True, text=True)
+    # 0.0 is the DANGEROUS direction to fail in: unknown pressure reads as
+    # "no pressure", which suppresses the mandate at exactly the moment the
+    # kernel is against its cap. Leaving the return value alone for now --
+    # changing a heartbeat decision input is not something to ship into an
+    # unattended night -- but a silent 0.0 must at least leave a trace.
+    if result.returncode != 0:
+        _journal({"kind": "fault", "why": "core_pressure",
+                  "reason": f"status exited {result.returncode}: "
+                            f"{result.stderr.strip()[:200]}"})
+        print(f"core_pressure: status exited {result.returncode}", file=sys.stderr)
+        return 0.0
     for line in result.stdout.splitlines():
         if "core pressure" in line:
             try:
                 return float(line.split(":")[1].split()[0])
             except (IndexError, ValueError):
+                _journal({"kind": "fault", "why": "core_pressure",
+                          "reason": f"unparseable: {line[:120]}"})
                 return 0.0
+    _journal({"kind": "fault", "why": "core_pressure",
+              "reason": "no 'core pressure' line in status output"})
     return 0.0
 
 
@@ -613,6 +647,10 @@ def pending_task() -> bool:
     """Is there work already queued? Read-only, and failure means 'reflect'."""
     result = subprocess.run([sys.executable, "-m", "meristem.loop", "status"],
                             cwd=str(REPO), capture_output=True, text=True)
+    if result.returncode != 0:
+        _journal({"kind": "fault", "why": "pending_task",
+                  "reason": f"status exited {result.returncode}: "
+                            f"{result.stderr.strip()[:200]}"})
     for line in result.stdout.splitlines():
         if line.startswith("open agenda item"):
             return "(none)" not in line
