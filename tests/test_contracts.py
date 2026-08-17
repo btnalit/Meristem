@@ -148,6 +148,98 @@ class TestFaultRecordWrittenOnException(unittest.TestCase):
                 breaker.JOURNAL = orig
 
 
+class TestSoilCommitsItsBookkeeping(unittest.TestCase):
+    """reflect and _auto_promote write tracked files in the MAIN worktree.
+
+    Nothing committed them, so `git merge --ff-only <candidate>` refused with
+    'local changes would be overwritten' and the beat died with an approved
+    candidate stranded. It killed a 14-beat run at beat 5 and the keeper's
+    run at beat 1 -- the loop could not survive its own autonomy path.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _repo(self, tmp):
+        import subprocess as sp
+        d = pathlib.Path(tmp)
+        sp.run(["git", "init", "-q", str(d)], check=True)
+        for name in ("user.email", "user.name"):
+            sp.run(["git", "-C", str(d), "config", name, "t@t"], check=True)
+        (d / "control").mkdir()
+        (d / "state").mkdir()
+        (d / "control" / "agenda.md").write_text("# Agenda\n", encoding="utf-8")
+        (d / "state" / "proposals.md").write_text("# Proposals\n", encoding="utf-8")
+        sp.run(["git", "-C", str(d), "add", "-A"], check=True)
+        sp.run(["git", "-C", str(d), "commit", "-qm", "init"], check=True)
+        return d
+
+    def test_dirty_state_is_committed(self):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            d = self._repo(tmp)
+            (d / "control" / "agenda.md").write_text("# Agenda\n- [ ] t\n",
+                                                     encoding="utf-8")
+            orig = sv.REPO
+            try:
+                sv.REPO = d
+                sv._commit_state("test")
+                import subprocess as sp
+                dirty = sp.run(["git", "-C", str(d), "status", "--porcelain"],
+                               capture_output=True, text=True).stdout.strip()
+                self.assertEqual(dirty, "", "tree must be clean after commit")
+                log = sp.run(["git", "-C", str(d), "log", "--oneline", "-1"],
+                             capture_output=True, text=True).stdout
+                self.assertIn("soil: test", log)
+            finally:
+                sv.REPO = orig
+
+    def test_clean_tree_makes_no_commit(self):
+        """An empty commit every beat would bury the biography in noise."""
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            d = self._repo(tmp)
+            import subprocess as sp
+            before = sp.run(["git", "-C", str(d), "rev-parse", "HEAD"],
+                            capture_output=True, text=True).stdout.strip()
+            orig = sv.REPO
+            try:
+                sv.REPO = d
+                sv._commit_state("noop")
+            finally:
+                sv.REPO = orig
+            after = sp.run(["git", "-C", str(d), "rev-parse", "HEAD"],
+                           capture_output=True, text=True).stdout.strip()
+            self.assertEqual(before, after)
+
+    def test_missing_register_files_do_not_break_it(self):
+        """STATE_FILES names registers a young repo may not have yet."""
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            d = self._repo(tmp)  # has no gaps.md / patterns.md / backlog.md
+            (d / "state" / "proposals.md").write_text("x\n", encoding="utf-8")
+            orig = sv.REPO
+            try:
+                sv.REPO = d
+                sv._commit_state("partial")
+            finally:
+                sv.REPO = orig
+
+    def test_commit_happens_before_the_cycle_not_after(self):
+        """Ordering IS the fix: a commit after the cycle branched moves HEAD
+        out from under the candidate, and the ff-merge fails on ancestry
+        instead of on a dirty tree."""
+        source = (REPO / "substrate" / "supervisor.py").read_text(encoding="utf-8")
+        body = source[source.index("def heartbeat("):]
+        commit_at = body.index("_commit_state(f\"beat")
+        spawn_at = body.index("subprocess.run([sys.executable, \"-m\", \"meristem.loop\", *argv]")
+        promote_at = body.index("promote()", spawn_at)
+        self.assertLess(commit_at, spawn_at, "must commit before spawning work")
+        self.assertLess(spawn_at, promote_at, "promote comes after the work")
+
+
 class TestSubstrateCapEligibility(unittest.TestCase):
     """The soil keeps its own opinion of what may be auto-promoted.
 

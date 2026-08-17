@@ -61,6 +61,38 @@ CAP_WORD = re.compile(r"\bcaps?\b")
 CAP_HOME_SUBSTRATE = "meristem/gates/deterministic.py"
 
 
+#: Tracked files the loop writes in the MAIN worktree: reflect appends to
+#: proposals.md and mailbox.md, _auto_promote rewrites proposals.md and
+#: agenda.md, and a mutation may append to the registers.
+STATE_FILES = ("control/agenda.md", "state/proposals.md", "state/mailbox.md",
+               "state/gaps.md", "state/patterns.md", "state/backlog.md")
+
+
+def _commit_state(reason: str) -> None:
+    """Commit loop bookkeeping so the tree is clean before any merge.
+
+    None of those writes were ever committed, so `git merge --ff-only
+    <candidate>` refused -- "local changes would be overwritten" -- and the
+    beat died with an approved candidate stranded. That killed a 14-beat run
+    at beat 5 and then killed the keeper's run at beat 1.
+
+    Timing is the whole fix: this must run BEFORE a cycle is spawned, never
+    after. A commit made after the cycle branched moves HEAD out from under
+    the candidate, and an ff-merge of a commit that is no longer a descendant
+    fails just as hard -- trading a dirty tree for a broken ancestry.
+    """
+    # Only paths that exist: `git add` fails hard on a missing pathspec, and
+    # a young repo has no backlog.md. Filtering also means the soil can never
+    # commit a register's DELETION -- change is not delete (P6).
+    present = [f for f in STATE_FILES if (REPO / f).exists()]
+    if not present or not git("status", "--porcelain", "--", *present).strip():
+        return
+    git("add", "--", *present)
+    git("-c", "user.name=meristem-substrate",
+        "-c", "user.email=substrate@localhost",
+        "commit", "-q", "-m", f"soil: {reason}")
+
+
 def _has_unactioned_proposals() -> bool:
     """True if proposals.md has any lines that look like proposals."""
     if not PROPOSALS.exists():
@@ -513,6 +545,10 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             argv = ["cycle"]
         else:
             argv = ["reflect"]
+        # Clean the tree BEFORE the work starts, so a cycle branches from a
+        # commit that already carries the previous beat's bookkeeping and the
+        # ff-merge at promotion has nothing to collide with.
+        _commit_state(f"beat {beat} bookkeeping")
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
                                 cwd=str(REPO),
                                 **({} if os.name == "nt" else {"start_new_session": True}))
