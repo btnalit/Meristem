@@ -47,8 +47,8 @@ def _notify_park(task: str, cycles: str) -> None:
         req = urllib.request.Request(url, data=body,
                                     headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"notify_park failed: {exc}", file=sys.stderr)
 
 
 def git(*args, cwd=None, check=True) -> str:
@@ -280,8 +280,9 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
     except Exception as exc:
         if not result.reason:
             result.reason = str(exc)[:300]
-        append_jsonl(JOURNAL, {"kind": "fault", "cycle": cycle, "task": task,
-                               "error": f"{type(exc).__name__}: {exc}"[:400]})
+        if result.outcome != "candidate":
+            append_jsonl(JOURNAL, {"kind": "fault", "cycle": cycle, "task": task,
+                                   "error": f"{type(exc).__name__}: {exc}"[:400]})
         return result
     finally:
         # Bill every attempt this cycle made, including the ones that

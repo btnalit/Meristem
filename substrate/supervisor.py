@@ -48,7 +48,7 @@ def _has_unactioned_proposals() -> bool:
     if not PROPOSALS.exists():
         return False
     for line in PROPOSALS.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("- ") or line.strip().startswith("## "):
+        if line.strip().startswith("- [ ] "):
             return True
     return False
 
