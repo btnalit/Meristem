@@ -17,6 +17,7 @@ sys.path.insert(0, str(REPO))
 from meristem import append_jsonl, read_jsonl  # noqa: E402
 from meristem import ledger, llm  # noqa: E402
 from meristem.loop import run_cycle, CycleResult  # noqa: E402
+from meristem import loop  # noqa: E402
 
 
 class TestEngineFaultRecordsReason(unittest.TestCase):
@@ -145,6 +146,88 @@ class TestFaultRecordWrittenOnException(unittest.TestCase):
                 self.assertFalse(breaker.should_park("T"))
             finally:
                 breaker.JOURNAL = orig
+
+
+class TestSubstrateCapEligibility(unittest.TestCase):
+    """The soil keeps its own opinion of what may be auto-promoted.
+
+    It must not import the kernel's version: the seed can legally mutate
+    loop.py, so a fence imported from there could be relaxed by the very
+    party it fences. That means rung 2 has to be taught to BOTH copies --
+    changing only the kernel would leave complete cases stranded in
+    proposals.md forever, which is a stall dressed as a safety property.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    COMPLETE = ("Raise the cap. Per-file LOC: loop.py 757. Core pressure 0.98, "
+                "closure pressure 0.65. Already externalized the report "
+                "formatter; insufficient. Proposed new cap 3400. Expected "
+                "closure impact: none.")
+
+    def test_complete_cap_case_is_promotable(self):
+        sv = self._sv()
+        self.assertFalse(sv._is_guarded_proposal(self.COMPLETE),
+                         "a complete case must reach the panel")
+
+    def test_unargued_cap_change_is_not_promotable(self):
+        sv = self._sv()
+        for text in ("raise the cap to 4000", "adjust KERNEL_LOC_CAP",
+                     "提高上限到4000"):
+            self.assertTrue(sv._is_guarded_proposal(text), text)
+
+    def test_guarded_ground_outranks_a_complete_cap_case(self):
+        sv = self._sv()
+        self.assertTrue(
+            sv._is_guarded_proposal(self.COMPLETE + " Also edit root/panic.py."),
+            "six magic phrases must not buy passage past the root of trust")
+
+    def test_soil_grants_the_same_one_path_exemption(self):
+        """Both copies must agree, or a complete case strands in proposals.md."""
+        sv = self._sv()
+        naming_home = self.COMPLETE + " Change meristem/gates/deterministic.py."
+        self.assertFalse(sv._is_guarded_proposal(naming_home),
+                         "soil must allow the case to name the budget file")
+        self.assertEqual(loop.route_proposal(naming_home), "agenda",
+                         "kernel and soil must agree on the exemption")
+        also_review = naming_home + " And meristem/gates/review.py."
+        self.assertTrue(sv._is_guarded_proposal(also_review))
+        self.assertEqual(loop.route_proposal(also_review), "mailbox")
+
+    def test_substrate_does_not_import_the_kernel(self):
+        """Structural separation, asserted rather than trusted.
+
+        Statements only -- the docstring that EXPLAINS the rule says
+        'MUST NOT import from meristem.loop', and a naive substring search
+        fails on the prose describing the invariant it checks.
+        """
+        source = (REPO / "substrate" / "supervisor.py").read_text(encoding="utf-8")
+        for line in source.splitlines():
+            stripped = line.strip()
+            self.assertFalse(stripped.startswith(("from meristem", "import meristem")),
+                             f"substrate imports the kernel: {stripped}")
+
+    def test_the_two_cap_checks_do_not_drift(self):
+        """Both copies must recognise the same cap proposals.
+
+        Duplication is deliberate (the seed may mutate loop.py) and therefore
+        the copies CAN drift -- a marker the soil lacks is a hole in the very
+        check that exists to survive the kernel being wrong. Caught exactly
+        that: the kernel gained a bare '上限' marker and the soil did not, so
+        '提高上限到4000' read as ordinary work to the last line of defence.
+        """
+        sv = self._sv()
+        for text in ("raise the cap to 4000", "adjust KERNEL_LOC_CAP",
+                     "提高上限到4000", "扩容到 3400", "proposed new cap 3400"):
+            self.assertTrue(
+                sv._is_guarded_proposal(text) or not loop.mentions_cap_change(text),
+                f"soil misses a cap proposal the kernel catches: {text}")
+            self.assertTrue(
+                loop.mentions_cap_change(text),
+                f"kernel misses a cap proposal: {text}")
 
 
 class TestApprovalSeatRearm(unittest.TestCase):

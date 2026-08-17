@@ -232,11 +232,68 @@ class TestCapGovernance(unittest.TestCase):
         )
         self.assertEqual(loop.cap_case_missing(case), [])
 
-    def test_cap_change_always_routes_to_human_at_rung_one(self):
+    def test_unargued_cap_change_is_refused_not_queued(self):
+        """The invariant that never demotes: unargued means it never runs.
+
+        The seat moved to rung 2 on 2026-08-17, so a COMPLETE case now earns
+        the review panel instead of a human. An incomplete one is refused
+        deterministically and must never reach the work queue by any route.
+        """
         for text in ("raise the cap to 4000",
                      "lower the cap after externalizing",
-                     "adjust KERNEL_LOC_CAP"):
-            self.assertEqual(loop.route_proposal(text), "mailbox", text)
+                     "adjust KERNEL_LOC_CAP",
+                     "提高上限到4000"):
+            self.assertEqual(loop.route_proposal(text), "refused", text)
+
+    def test_complete_case_reaches_the_review_panel(self):
+        case = (
+            "Per-file LOC: loop.py 757, gates 500. Core pressure 0.88, "
+            "closure pressure 0.65. Already externalized the view commands and "
+            "pruned two helpers; insufficient because the loop machinery itself "
+            "is irreducible. Proposed new cap 3400. Expected closure impact: "
+            "none, closure stays at 0.65."
+        )
+        self.assertEqual(loop.route_proposal(case), "agenda")
+
+    def test_complete_case_may_name_the_file_holding_the_budget(self):
+        """Otherwise the rung-2 seat is decorative.
+
+        KERNEL_LOC_CAP lives in meristem/gates/deterministic.py, which is
+        guarded ground. A case must name it to say what it wants changed, so
+        without this exemption every realistic cap case routes to a human --
+        the exact outcome the seat was promoted to remove.
+        """
+        case = (
+            "Raise the cap. Per-file LOC: loop.py 850, gates 245. Core "
+            "pressure 0.98, closure pressure 0.65. Already externalized the "
+            "report formatter; insufficient. Proposed new cap 3300 in "
+            "meristem/gates/deterministic.py. Expected closure impact: none."
+        )
+        self.assertEqual(loop.route_proposal(case), "agenda")
+
+    def test_the_exemption_is_one_path_wide(self):
+        """Naming the budget file does not license naming another gate."""
+        case = (
+            "Raise the cap. Per-file LOC: loop.py 850. Core pressure 0.98, "
+            "closure pressure 0.65. Already externalized views; insufficient. "
+            "Proposed new cap 3300 in meristem/gates/deterministic.py. "
+            "Expected closure impact: none. Also relax meristem/gates/review.py."
+        )
+        self.assertEqual(loop.route_proposal(case), "mailbox")
+
+    def test_guarded_ground_still_outranks_a_cap_case(self):
+        """A complete case that also names guarded ground stays human-held.
+
+        Otherwise 'raise the cap and edit substrate/supervisor.py' would buy
+        its way past the root-of-trust fence with six magic phrases.
+        """
+        case = (
+            "Per-file LOC: loop.py 757. Core pressure 0.88, closure pressure "
+            "0.65. Already externalized views; insufficient. Proposed new cap "
+            "3400. Expected closure impact: none. Also edit "
+            "substrate/supervisor.py."
+        )
+        self.assertEqual(loop.route_proposal(case), "mailbox")
 
     def test_shrinking_is_argued_too(self):
         """Lines removed by deleting a check are not lines saved -- a shrink
@@ -1562,31 +1619,28 @@ class TestReflectCommand(unittest.TestCase):
         self.assertEqual(rc, 0)
         return mailbox.read_text(encoding="utf-8") if mailbox.exists() else ""
 
-    def test_unargued_cap_proposal_is_labelled_incomplete(self):
-        """An unargued cap change must reach the mailbox naming what it lacks.
+    def test_unargued_cap_proposal_is_refused_and_journalled(self):
+        """Refused, not mailboxed: nobody is asked, and the seed learns why.
 
-        The fence and the golden fixture were wired from the start; the
-        argument format was not. Without this, an unargued 'raise the cap' and
-        a complete six-element case land with the same label and the human
-        cannot tell them apart.
+        The refusal record rides the self-report back into reflect, so the
+        seed can resubmit a complete case without a human touching anything.
         """
         with tempfile.TemporaryDirectory() as tmp:
-            text = self._run_reflect_with_proposal(
-                pathlib.Path(tmp), "raise KERNEL_LOC_CAP to 6000")
-            self.assertIn("cap change", text)
-            self.assertIn("INCOMPLETE", text)
-            self.assertIn("per-file", text)
-            self.assertNotIn("names guarded ground", text)
-            # The dedup recovers a proposal by splitting on the first ': ',
-            # so a colon in the label would steal the split and every reflect
-            # would re-append the same case (the P-031 spam loop).
-            label = text.split("- PROPOSAL (", 1)[1].split(")", 1)[0]
-            self.assertNotIn(": ", label)
-            self.assertEqual(text.split(": ", 1)[1].strip(),
-                             "raise KERNEL_LOC_CAP to 6000")
+            tmpdir = pathlib.Path(tmp)
+            mailbox = self._run_reflect_with_proposal(
+                tmpdir, "raise KERNEL_LOC_CAP to 6000")
+            self.assertNotIn("PROPOSAL", mailbox, "nobody should be asked")
+            proposals = (tmpdir / "state" / "proposals.md").read_text(
+                encoding="utf-8")
+            self.assertNotIn("KERNEL_LOC_CAP", proposals,
+                             "an unargued cap change must never be queued")
+            rows = read_jsonl(tmpdir / "state" / "journal.jsonl")
+            refusals = [r for r in rows if r.get("kind") == "cap_case_refused"]
+            self.assertEqual(len(refusals), 1)
+            self.assertIn("per-file", refusals[0]["reason"])
 
-    def test_complete_cap_case_is_labelled_complete(self):
-        """A six-element case must be marked complete and awaiting a grant."""
+    def test_complete_cap_case_is_queued_for_the_panel(self):
+        """A six-element case joins the work queue like any other task."""
         case = (
             "Per-file LOC: loop.py 757, gates 500. Core pressure 0.88, "
             "closure pressure 0.65. Already externalized the view commands and "
@@ -1595,18 +1649,21 @@ class TestReflectCommand(unittest.TestCase):
             "none, closure stays at 0.65."
         )
         with tempfile.TemporaryDirectory() as tmp:
-            text = self._run_reflect_with_proposal(pathlib.Path(tmp), case)
-            self.assertIn("cap change", text)
-            self.assertIn("case complete", text)
-            self.assertNotIn("INCOMPLETE", text)
+            tmpdir = pathlib.Path(tmp)
+            mailbox = self._run_reflect_with_proposal(tmpdir, case)
+            self.assertNotIn("PROPOSAL", mailbox, "nobody should be asked")
+            proposals = (tmpdir / "state" / "proposals.md").read_text(
+                encoding="utf-8")
+            self.assertIn("Proposed new cap 3400", proposals)
 
-    def test_guarded_path_proposal_keeps_its_own_label(self):
-        """A non-cap guarded proposal must not be relabelled as a cap case."""
+    def test_guarded_path_proposal_still_reaches_a_human(self):
+        """Guarded ground is not on the ladder and still holds for a human."""
         with tempfile.TemporaryDirectory() as tmp:
             text = self._run_reflect_with_proposal(
                 pathlib.Path(tmp), "Fix the bug in substrate/supervisor.py")
             self.assertIn("names guarded ground", text)
-            self.assertNotIn("cap change", text)
+            label = text.split("- PROPOSAL (", 1)[1].split(")", 1)[0]
+            self.assertNotIn(": ", label, "a colon in the label breaks dedup")
 
     def test_reflect_appends_at_most_three(self):
         """reflect must cap proposals at three, even if the model returns more."""

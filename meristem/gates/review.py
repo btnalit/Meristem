@@ -35,6 +35,26 @@ even if the code looks cleaner, even if the stated intent is a refactor:
     or default-continue;
   - removes a "redundant" check whose redundancy was the defence-in-depth.
 
+## The one budget exception
+
+KERNEL_LOC_CAP and the closure cap are GOVERNED budgets. Changing those two
+constants is not an automatic weakening -- you are the grant, so judge it.
+Reject unless ALL hold:
+
+  - the case is complete: per-file LOC, both pressures, what was already
+    externalized or pruned and why that failed, proposed value, expected
+    closure impact;
+  - cheaper rungs (externalize > prune > compress) were genuinely tried;
+  - current pressure is already >= 0.90 -- raised when it binds, not before;
+  - the step is <= 10% of the current value and is the smallest that
+    relieves it. An unbounded ratchet approved one reasonable step at a
+    time is how "the core does not grow" dies;
+  - the diff touches the constant and its record, nothing else.
+
+Exactly two constants wide. Every other threshold, quorum and budget stays
+under the weakening rule, and a diff editing one while calling itself a cap
+change is a weakening in a governance costume.
+
 ## Refactor vs. quiet relaxation
 
 A strength-preserving refactor leaves the *checked property* semantically

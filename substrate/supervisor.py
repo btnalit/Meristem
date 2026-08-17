@@ -26,6 +26,7 @@ import json
 import os
 import random
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -47,10 +48,17 @@ PROPOSAL_GUARDED_SUBSTRATE = (
     "root/", "substrate/", "meristem/gates/",
     "control/constitution.md", "control/checklists.md",
 )
+#: Keep in sync with meristem.loop.CAP_PROPOSAL_MARKERS by hand. Duplicated
+#: on purpose (the seed may mutate loop.py) which means the two can DRIFT --
+#: and a marker the soil lacks is a hole in the very copy that exists to
+#: survive the kernel being wrong. A test asserts both recognise the same
+#: strings. The regex arm is duplicated too, for the same reason.
 CAP_MARKERS = (
     "kernel_loc_cap", "loc cap", "raise the cap", "increase the cap",
-    "lower the cap", "内核上限", "扩容",
+    "lower the cap", "内核上限", "扩容", "上限",
 )
+CAP_WORD = re.compile(r"\bcaps?\b")
+CAP_HOME_SUBSTRATE = "meristem/gates/deterministic.py"
 
 
 def _has_unactioned_proposals() -> bool:
@@ -63,6 +71,16 @@ def _has_unactioned_proposals() -> bool:
     return False
 
 
+#: Substrate's own copy of the mandatory cap-case elements, duplicated for
+#: the same reason as the path list below: the seed can legally mutate
+#: loop.py, so the soil must be able to tell an argued case from a bare
+#: demand without asking the kernel.
+CAP_CASE_REQUIRED_SUBSTRATE = (
+    "per-file", "core pressure", "closure pressure",
+    "already externalized", "proposed", "expected",
+)
+
+
 def _is_guarded_proposal(text: str) -> bool:
     """Substrate's own copy of the guarded-path check.
 
@@ -71,9 +89,20 @@ def _is_guarded_proposal(text: str) -> bool:
     fence in a way reviewers could miss.
     """
     lowered = text.lower()
-    if any(p in lowered for p in PROPOSAL_GUARDED_SUBSTRATE):
-        return True
-    return any(m in lowered for m in CAP_MARKERS)
+    if any(m in lowered for m in CAP_MARKERS) or CAP_WORD.search(lowered):
+        # The cap seat reached rung 2 on 2026-08-17: a COMPLETE case is
+        # ordinary work and may be promoted, because the panel grants it.
+        # An incomplete one stays held. The kernel refuses those before they
+        # ever reach proposals.md; this is the soil's independent second
+        # opinion, which is the whole point of not importing the first.
+        if any(e not in lowered for e in CAP_CASE_REQUIRED_SUBSTRATE):
+            return True
+        # The budgets live in guarded ground, so a case must name it to be
+        # actionable. Drop that one mention; anything guarded still standing
+        # holds the proposal.
+        rest = lowered.replace(CAP_HOME_SUBSTRATE, "")
+        return any(p in rest for p in PROPOSAL_GUARDED_SUBSTRATE)
+    return any(p in lowered for p in PROPOSAL_GUARDED_SUBSTRATE)
 
 
 SEAT_LOCK = REPO / "state" / "approval_seat.rung1.lock"
@@ -183,9 +212,10 @@ def _auto_promote() -> bool:
     """Move the top eligible proposal from proposals.md to agenda.md.
 
     Returns True if a proposal was promoted, False if none eligible.
-    Guarded-ground and cap-change proposals stay in proposals.md (or mailbox)
-    for human review — the code gate is untouched, only scheduling autonomy
-    is granted. The approval seat moved rung 1 → 2 per decisions.jsonl.
+    Guarded ground stays held for a human. A cap case does not: since
+    2026-08-17 the cap seat also sits at rung 2, so a COMPLETE budget case is
+    promoted like any other work and the panel grants it. The owner is
+    notified by name, not asked. An incomplete case never gets this far.
     """
     if _check_demotion():
         return False
@@ -213,9 +243,19 @@ def _auto_promote() -> bool:
         return False
     with AGENDA.open("a", encoding="utf-8") as f:
         f.write(marker)
+    is_cap = any(m in promoted_text.lower() for m in CAP_MARKERS)
     _journal({"kind": "auto_promote", "task": promoted_text[:200],
+              "cap_case": is_cap,
               "why": "approval seat rung 2: non-guarded proposal auto-promoted"})
-    notify("auto_promote", f"Self-promoted to agenda:\n  {promoted_text[:200]}")
+    if is_cap:
+        # A budget move is the one promotion the owner asked to hear about by
+        # name. It is still only a notice: the panel grants it, nobody is
+        # asked, and the loop does not wait for a reply.
+        notify("cap_case", "FYI, no action needed. The seed submitted a "
+                           "COMPLETE budget case and it is queued for the "
+                           f"review panel (2/2 + canary):\n  {promoted_text[:400]}")
+    else:
+        notify("auto_promote", f"Self-promoted to agenda:\n  {promoted_text[:200]}")
     print(f"    auto-promoted: {promoted_text[:120]}", flush=True)
     return True
 

@@ -192,20 +192,20 @@ def golden_fixtures() -> list[str]:
     silent = "raise KERNEL_LOC_CAP to 6000"
     if not cap_case_missing(silent):
         failures.append("cap-case check accepted an unargued budget change")
-    if route_proposal(silent) != "mailbox":
-        failures.append("a cap-change proposal escaped human review")
+    if route_proposal(silent) != "refused":
+        failures.append("an unargued cap change was not refused")
     # The fixture above builds its input from the marker list, so it could
-    # only ever pass -- P-001 inside the immune system itself. The case that
-    # actually slipped was the WELL-ARGUED one: every required element, no
-    # marker, routed to the agenda that rung 2 auto-promotes.
+    # only ever pass -- P-001 inside the immune system itself. If complete-case
+    # recognition broke, every real case would be refused as unargued and the
+    # ladder would lose its top rung.
     argued = ("Per-file LOC: loop.py 757. Core pressure 0.88, closure "
               "pressure 0.65. Already externalized the view commands; "
               "insufficient. Proposed new cap 3400. Expected closure "
               "impact: none.")
     if cap_case_missing(argued):
         failures.append("cap-case check called a complete case incomplete")
-    if route_proposal(argued) != "mailbox":
-        failures.append("a complete cap case escaped the fence to the agenda")
+    if route_proposal(argued) != "agenda":
+        failures.append("a complete cap case did not reach the review panel")
 
     return failures
 
@@ -383,6 +383,9 @@ PROPOSAL_GUARDED = (
 #: demotes on evidence like any other prosthetic, and the criteria are written
 #: into decisions.jsonl alongside this. What never demotes is the requirement
 #: that the change be argued -- that is monotonicity, not the human.
+#: Where the budgets live: guarded ground a cap case must be able to name.
+CAP_HOME = "meristem/gates/deterministic.py"
+
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
     "raise the cap", "increase the cap", "lower the cap", "\u5185\u6838\u4e0a\u9650", "\u6269\u5bb9",
@@ -405,10 +408,8 @@ def mentions_cap_change(text: str) -> bool:
     if any(marker.lower() in lowered for marker in CAP_PROPOSAL_MARKERS):
         return True
     # Markers match PHRASING, CAP_CASE_REQUIRED matches SUBSTANCE, and they
-    # were never aligned: a complete case ("Proposed new cap 3400.") names no
-    # marker, so the fence caught sloppy proposals and let polished ones reach
-    # the agenda -- which rung 2 auto-promotes. The word boundary catches
-    # phrasings nobody enumerated without matching 'capability'.
+    # were never aligned: a complete case names no marker. The word boundary
+    # catches phrasings nobody enumerated without matching 'capability'.
     return re.search(r"\bcaps?\b", lowered) is not None
 
 
@@ -442,22 +443,26 @@ def _is_duplicate_proposal(new_text: str, existing_lines: list) -> bool:
 
 
 def route_proposal(text: str) -> str:
-    """'agenda' for an ordinary proposal, 'mailbox' when it needs a human.
+    """'agenda' to queue it, 'mailbox' for a human, 'refused' to drop it.
 
-    Guarded ground routes to the mailbox. So does any proposal to change the
-    kernel budget, in either direction, at EVERY rung -- the seed may make the
-    case; it may not also grant it. The constitution is explicit ("raising
-    either cap is a human decision, never a mutation's own"), so this fence
-    does not lapse when the approval seat is promoted.
+    Guarded ground goes to the mailbox. A cap change no longer does: the cap
+    seat sits at rung 2, so the panel grants it (2/2 + canary + probes) and
+    nobody is asked. What did not move is that the case must be ARGUED --
+    an incomplete one is refused here, before a reviewer is spent.
 
-    Path matching is case-insensitive: 'Substrate/supervisor.py' and
-    'ROOT/panic.py' are caught just as their lowercase forms are. The
-    original case-sensitive substring check could be bypassed by any case
-    paraphrase, which is the same class of failure as naming a guarded path
-    with different casing to dodge the fence.
+    Matching is case-insensitive: a case paraphrase must not dodge the fence.
     """
     lowered = text.lower()
-    if any(p in lowered for p in PROPOSAL_GUARDED) or mentions_cap_change(text):
+    if mentions_cap_change(text):
+        if cap_case_missing(text):
+            return "refused"
+        # The budgets live in guarded ground, so a case must name it to be
+        # actionable; without this exemption every realistic case routes to a
+        # human and rung 2 is decorative. One path wide: drop that mention,
+        # and any guarded prefix still standing holds the proposal.
+        rest = lowered.replace(CAP_HOME, "")
+        return "mailbox" if any(p in rest for p in PROPOSAL_GUARDED) else "agenda"
+    if any(p in lowered for p in PROPOSAL_GUARDED):
         return "mailbox"
     return "agenda"
 
@@ -615,6 +620,15 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             "\n\n## Already proposed (DO NOT repeat these)\n"
             + "\n".join(f"- {p}" for p in open_proposals)
         )
+    # Refusals live only in the journal, and generate_report counts only
+    # kind=="cycle" -- so without this the seed never learns which element it
+    # left out and regenerates the same case every reflect (P-031's shape).
+    _ref = [r for r in read_jsonl(JOURNAL)
+            if r.get("kind") == "cap_case_refused"][-3:]
+    if _ref:
+        digest += ("\n\n## Cap cases refused as incomplete (fix, do not repeat)\n"
+                   + "\n".join(f"- {r.get('why','')[:100]} -- {r.get('reason','')}"
+                               for r in _ref))
     # Self-observation: the seed reads its own report. REPORT.md holds the
     # aggregate evidence no single cycle can see -- acceptance rate, pressure
     # trend, parked tasks, probe scores, organ lifecycle. Without it reflect
@@ -697,31 +711,30 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         f"- [ ] {line.split(': ', 1)[1]}" for line in mailbox_lines
         if line.strip().startswith("- PROPOSAL") and ": " in line
     ] + [line for line in agenda_lines if line.strip().startswith(("- [ ] ", "- [x] "))]
-    queued = held = skipped = 0
+    queued = held = skipped = refused = 0
     for proposal in proposals[:3]:
         text = str(proposal).strip()
         if not text:
             continue
+        route = route_proposal(text)
         if _is_duplicate_proposal(text, all_dedup_lines):
             skipped += 1
-        elif route_proposal(text) == "mailbox":
-            # cap_case_missing existed, was tested, and was never applied to a
-            # live proposal: an unargued "raise the cap" and a complete case
-            # both landed labelled "names guarded ground". The human could not
-            # tell them apart; the seed was never told what its case lacked.
-            # Labels must stay COLON-FREE: the dedup above recovers a proposal
-            # by splitting the line on its first ': ', so a colon inside the
-            # label steals the split and the key never matches -- every reflect
-            # would re-append the same case, the P-031 spam loop returning
-            # through the one guard that closed it.
-            if mentions_cap_change(text):
-                missing = cap_case_missing(text)
-                why = (f"cap change; case INCOMPLETE, missing {', '.join(missing)}"
-                       if missing else "cap change; case complete, awaiting human grant")
-            else:
-                why = "needs human review, names guarded ground"
+        elif route == "refused":
+            # Journalled, not mailboxed: nobody is asked, and the digest above
+            # feeds the reason back so the seed can resubmit a complete case.
+            append_jsonl(JOURNAL, {
+                "kind": "cap_case_refused", "cycle": cycle,
+                "why": text[:200],
+                "reason": "incomplete cap case, missing "
+                          + ", ".join(cap_case_missing(text))})
+            refused += 1
+        elif route == "mailbox":
+            # Mailbox now means exactly one thing: guarded ground. Labels stay
+            # COLON-FREE -- the dedup above splits on the first ': ', so a
+            # colon in the label steals the split (the P-031 spam loop).
             with mailbox_path.open("a", encoding="utf-8") as handle:
-                handle.write(f"- PROPOSAL ({why}): {text}\n")
+                handle.write("- PROPOSAL (needs human review, names guarded "
+                             f"ground): {text}\n")
             all_dedup_lines.append(f"- [ ] {text}")
             held += 1
         else:
@@ -732,7 +745,8 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
 
     print(f"appended {queued} proposal(s) to state/proposals.md; "
           f"{held} held for human review in state/mailbox.md"
-          + (f"; {skipped} duplicate(s) skipped" if skipped else ""))
+          + (f"; {skipped} duplicate(s) skipped" if skipped else "")
+          + (f"; {refused} unargued cap case(s) refused" if refused else ""))
     return 0
 
 

@@ -29,7 +29,19 @@ few millimetres across. That is the architecture, not a metaphor.
   - the **kernel line cap** (`meristem/`, currently 3000 lines), and
   - the **closure budget**: any single mutation's review closure must fit in
     one review context.
-- Raising either cap is a human decision, never a mutation's own.
+- Raising either cap requires a complete case and an approving panel — never
+  a mutation's own say-so. The case must carry a per-file LOC breakdown, both
+  pressures, what was already externalized or pruned and why that was
+  insufficient, the proposed value, and the expected closure impact; an
+  incomplete case is refused deterministically, before any reviewer is spent.
+  This clause read "is a human decision" until 2026-08-17. The human seat was
+  a PROSTHETIC under 6.1, and a prosthetic that never comes off is the
+  ossified layer this document exists to prevent: a person who approves every
+  well-argued case is a rubber stamp, and a person who is asked while asleep
+  is a stalled loop. The panel — two heterogeneous reviewers, then canary,
+  then probes — reads a budget argument more strictly than a rubber stamp
+  does. What did not change, and does not demote, is that the case must be
+  ARGUED. Decided by the human owner; recorded in `state/decisions.jsonl`.
 - Growing the core when an organ would do is the failure this document exists
   to prevent.
 
