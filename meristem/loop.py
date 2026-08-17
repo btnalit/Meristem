@@ -728,27 +728,28 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     mailbox_path = REPO / "state" / "mailbox.md"
     proposals_path.parent.mkdir(parents=True, exist_ok=True)
     existing_lines = proposals_path.read_text(encoding="utf-8").splitlines() if proposals_path.exists() else []
+    mailbox_lines = mailbox_path.read_text(encoding="utf-8").splitlines() if mailbox_path.exists() else []
+    all_dedup_lines = existing_lines + [
+        f"- [ ] {line.split(': ', 1)[1]}" for line in mailbox_lines
+        if line.strip().startswith("- PROPOSAL") and ": " in line
+    ]
     queued = held = skipped = 0
     for proposal in proposals[:3]:
         text = str(proposal).strip()
         if not text:
             continue
-        # A proposal naming guarded ground never reaches the work queue. The
-        # first real reflect produced exactly such a proposal -- a sound one,
-        # about substrate/ -- which is precisely why the fence exists: the
-        # seed may notice something about the soil and say so, but saying so
-        # must not be a route to changing it.
-        if route_proposal(text) == "mailbox":
+        if _is_duplicate_proposal(text, all_dedup_lines):
+            skipped += 1
+        elif route_proposal(text) == "mailbox":
             with mailbox_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"- PROPOSAL (needs human review, names guarded "
                              f"ground): {text}\n")
+            all_dedup_lines.append(f"- [ ] {text}")
             held += 1
-        elif _is_duplicate_proposal(text, existing_lines):
-            skipped += 1
         else:
             with proposals_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"- [ ] {text}\n")
-            existing_lines.append(f"- [ ] {text}")
+            all_dedup_lines.append(f"- [ ] {text}")
             queued += 1
 
     print(f"appended {queued} proposal(s) to state/proposals.md; "
