@@ -76,23 +76,8 @@ class CycleResult:
 
 
 def take_task() -> str | None:
-    """P0: the human is the first reflect. Tasks come from control/agenda.md,
-    which stays pure human-authored source -- the loop never writes to it.
-
-    P1 grows reflect, which proposes its own -- but the seed is not handed a
-    parts list; it is handed the capability gap and proposes the decomposition.
-    A rejected task stays open, so it is retried. A parked task is skipped
-    until a human clears it from state/mailbox.md.
-    """
-    done = journal.done_tasks(JOURNAL)
-    parked = journal.parked_tasks(JOURNAL, REPO)
-    for line in read_text(CONTROL / "agenda.md").splitlines():
-        line = line.strip()
-        if line.startswith("- [ ] "):
-            task = line[6:].strip()
-            if task not in done and task not in parked:
-                return task
-    return None
+    """Select the next open task from the agenda. Logic in journal.take_task."""
+    return journal.take_task(JOURNAL, REPO, CONTROL)
 
 
 def make_worktree(cycle: int):
@@ -332,37 +317,8 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
 
 
 def print_utility() -> int:
-    """Print per-organ utility: total invocations, successful invocations,
-    and the cycle it was last used.
-
-    Reads only state/journal.jsonl -- the same append-only record the ledger
-    and germline.invoke write to. An organ nobody calls is a pruning candidate,
-    and until this exists no pruning decision can rest on evidence.
-    """
-    rows = [r for r in read_jsonl(JOURNAL) if r.get("kind") == "organ_call"]
-    if not rows:
-        print("no organ calls recorded")
-        return 0
-
-    # Group by callee
-    by_organ: dict[str, dict] = {}
-    for row in rows:
-        callee = row.get("callee", "?")
-        if callee not in by_organ:
-            by_organ[callee] = {"total": 0, "success": 0, "last_cycle": 0}
-        by_organ[callee]["total"] += 1
-        if row.get("success"):
-            by_organ[callee]["success"] += 1
-        cycle = row.get("cycle", 0)
-        if cycle > by_organ[callee]["last_cycle"]:
-            by_organ[callee]["last_cycle"] = cycle
-
-    print(f"{'organ':20s} {'total calls':>12s} {'successful':>12s} {'last cycle':>12s}")
-    print(f"{'-----':20s} {'-----------':>12s} {'----------':>12s} {'----------':>12s}")
-    for organ in sorted(by_organ):
-        info = by_organ[organ]
-        print(f"{organ:20s} {info['total']:12d} {info['success']:12d} {info['last_cycle']:12d}")
-    return 0
+    """Per-organ utility report. Logic in journal.print_utility."""
+    return journal.print_utility(JOURNAL)
 
 
 def print_body() -> int:
@@ -383,61 +339,8 @@ def print_body() -> int:
 
 
 def print_spend() -> int:
-    """Print total calls and tokens grouped by role and by model.
-
-    Reads only state/journal.jsonl -- the same append-only record the ledger
-    writes to. No new state, no new files; the data was already collected,
-    it just was not queryable.
-    """
-    rows = [r for r in read_jsonl(JOURNAL) if r.get("kind") == "usage"]
-    if not rows:
-        print("no usage recorded")
-        return 0
-
-    by_role: dict[str, dict[str, int]] = {}
-    by_model: dict[str, dict[str, int]] = {}
-    for row in rows:
-        role = row.get("role", "?")
-        model = row.get("model", "?")
-        prompt = int(row.get("prompt_tokens", 0))
-        completion = int(row.get("completion_tokens", 0))
-        reasoning = int(row.get("reasoning_tokens", 0))
-        total = prompt + completion + reasoning
-        for key, bucket in ((role, by_role), (model, by_model)):
-            entry = bucket.setdefault(
-                key, {"calls": 0, "prompt": 0, "completion": 0,
-                      "reasoning": 0, "total": 0})
-            entry["calls"] += 1
-            entry["prompt"] += prompt
-            entry["completion"] += completion
-            entry["reasoning"] += reasoning
-            entry["total"] += total
-
-    total_calls = len(rows)
-    total_prompt = sum(int(r.get("prompt_tokens", 0)) for r in rows)
-    total_completion = sum(int(r.get("completion_tokens", 0)) for r in rows)
-    total_reasoning = sum(int(r.get("reasoning_tokens", 0)) for r in rows)
-    total_tokens = total_prompt + total_completion + total_reasoning
-
-    print(f"total calls    : {total_calls}")
-    print(f"total tokens   : {total_tokens} "
-          f"(prompt {total_prompt}, completion {total_completion}, "
-          f"reasoning {total_reasoning})")
-
-    def _table(title: str, bucket: dict) -> None:
-        print(f"\n{title}")
-        print(f"{'name':24s} {'calls':>6s} {'prompt':>8s} "
-              f"{'compl':>8s} {'reason':>8s} {'total':>8s}")
-        print(f"{'----':24s} {'-----':>6s} {'------':>8s} "
-              f"{'-----':>8s} {'------':>8s} {'-----':>8s}")
-        for name in sorted(bucket):
-            e = bucket[name]
-            print(f"{name:24s} {e['calls']:6d} {e['prompt']:8d} "
-                  f"{e['completion']:8d} {e['reasoning']:8d} {e['total']:8d}")
-
-    _table("By role", by_role)
-    _table("By model", by_model)
-    return 0
+    """Spend report. Logic in journal.print_spend."""
+    return journal.print_spend(JOURNAL)
 
 
 #: A proposal naming any of these is a proposal to change something the seed
@@ -597,7 +500,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     repair (something measurably wrong) and at least one growth proposal
     (a capability not yet possessed). The constitution's phrase is
     "Spiral, not circular": a loop that only ever repairs converges on a
-    fixed point and stops; a loop that only ever grows without repairing
+    fixed point and stops; a loop that only grows without repairing
     accumulates debt. Both directions are required every pass.
     """
     models = config or llm_mod.load_models()
@@ -776,7 +679,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         elif route_proposal(text) == "mailbox":
             with mailbox_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"- PROPOSAL (needs human review, names guarded "
-                             f"ground): {text}\n")
+                            f"ground): {text}\n")
             all_dedup_lines.append(f"- [ ] {text}")
             held += 1
         else:
@@ -843,46 +746,7 @@ def main(argv=None) -> int:
         return 1 if failures else 0
 
     if args.command == "agenda":
-        # Live status as a VIEW, never as an edit. agenda.md stays pure
-        # human-authored source (P-011) -- marking it in place dirtied the
-        # checkout every cycle and blocked git twice. State is derived from
-        # the journal, which already knows it.
-        #
-        # `done` uses journal.done_tasks() -- the same function take_task()
-        # uses -- so the agenda view and the task selector agree on what is
-        # finished. A candidate that the canary rejected is NOT done: the
-        # task must be retried. The old inline check (outcome=='candidate')
-        # missed canary rejections and showed such tasks as done.
-        rows = read_jsonl(JOURNAL)
-        done = journal.done_tasks(JOURNAL)
-        parked, rejects = set(), {}
-        for row in rows:
-            if row.get("kind") != "cycle":
-                continue
-            why, outcome = row.get("why", ""), row.get("outcome")
-            if outcome == "parked":
-                parked.add(why)
-            elif outcome == "rejected":
-                rejects[why] = rejects.get(why, 0) + 1
-        mailbox = read_text(REPO / "state" / "mailbox.md")
-        open_count = 0
-        for line in read_text(CONTROL / "agenda.md").splitlines():
-            line = line.strip()
-            if not line.startswith("- [ ] "):
-                continue
-            task = line[6:].strip()
-            n = rejects.get(task, 0)
-            if task in done:
-                mark = "done"
-            elif task in parked and task in mailbox:
-                mark = "PARKED (clear it from mailbox.md to retry)"
-            else:
-                open_count += 1
-                mark = "next" if open_count == 1 else "open"
-                if n:
-                    mark += f" ({n} rejection{'s' if n > 1 else ''})"
-            print(f"  [{mark:<12}] {task[:88]}")
-        return 0
+        return journal.print_agenda(JOURNAL, REPO, CONTROL)
 
     if args.command == "gaps":
         for line in read_text(REPO / "state" / "gaps.md").splitlines():
@@ -960,31 +824,7 @@ def main(argv=None) -> int:
     # before any model call is made. Unbounded retry on the same task is
     # not progress, it is a loop -- the breaker turns that loop into a stop.
     if breaker_mod.should_park(task):
-        rejection_cycles = [
-            row.get("cycle")
-            for row in read_jsonl(JOURNAL)
-            if row.get("kind") == "cycle"
-            and row.get("why") == task
-            and row.get("outcome") == "rejected"
-        ]
-        canary_count = breaker_mod.canary_rejects_for(task)
-        cycle = journal.next_cycle(JOURNAL)
-        parts = []
-        if rejection_cycles:
-            parts.append(f"rejected in cycles: {', '.join(str(c) for c in rejection_cycles)}")
-        if canary_count:
-            parts.append(f"canary rejects: {canary_count}")
-        reason_str = "; ".join(parts) or "breaker limit reached"
-        mailbox = REPO / "state" / "mailbox.md"
-        mailbox.parent.mkdir(parents=True, exist_ok=True)
-        with mailbox.open("a", encoding="utf-8") as handle:
-            handle.write(f"- PARKED: {task} ({reason_str})\n")
-        append_jsonl(JOURNAL, {
-            "kind": "cycle",
-            "cycle": cycle,
-            "outcome": "parked",
-            "why": task,
-        })
+        reason_str = journal.park_task(task, JOURNAL, REPO)
         print(f"task parked: {task} ({reason_str})")
         _notify_park(task, reason_str)
         return 0
