@@ -1,0 +1,7 @@
+{
+  "id": "probe-kernel-integrity-2",
+  "capability_domain": "kernel-integrity",
+  "kind": "anchor",
+  "frozen": true,
+  "statement": "The kernel's structural invariants hold: vault-reference isolation, closure conservatism, and protected-path enforcement."
+}
