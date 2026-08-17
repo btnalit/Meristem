@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import uuid
@@ -188,6 +189,18 @@ def golden_fixtures() -> list[str]:
         failures.append("cap-case check accepted an unargued budget change")
     if route_proposal(silent) != "mailbox":
         failures.append("a cap-change proposal escaped human review")
+    # The fixture above builds its input from the marker list, so it could
+    # only ever pass -- P-001 inside the immune system itself. The case that
+    # actually slipped was the WELL-ARGUED one: every required element, no
+    # marker, routed to the agenda that rung 2 auto-promotes.
+    argued = ("Per-file LOC: loop.py 757. Core pressure 0.88, closure "
+              "pressure 0.65. Already externalized the view commands; "
+              "insufficient. Proposed new cap 3400. Expected closure "
+              "impact: none.")
+    if cap_case_missing(argued):
+        failures.append("cap-case check called a complete case incomplete")
+    if route_proposal(argued) != "mailbox":
+        failures.append("a complete cap case escaped the fence to the agenda")
 
     return failures
 
@@ -383,7 +396,14 @@ def mentions_cap_change(text: str) -> bool:
     the fence. Normalising both text and markers to lowercase closes the
     class for all case variants, not just the ones enumerated above."""
     lowered = text.lower()
-    return any(marker.lower() in lowered for marker in CAP_PROPOSAL_MARKERS)
+    if any(marker.lower() in lowered for marker in CAP_PROPOSAL_MARKERS):
+        return True
+    # Markers match PHRASING, CAP_CASE_REQUIRED matches SUBSTANCE, and they
+    # were never aligned: a complete case ("Proposed new cap 3400.") names no
+    # marker, so the fence caught sloppy proposals and let polished ones reach
+    # the agenda -- which rung 2 auto-promotes. The word boundary catches
+    # phrasings nobody enumerated without matching 'capability'.
+    return re.search(r"\bcaps?\b", lowered) is not None
 
 
 def cap_case_missing(text: str) -> list[str]:
@@ -419,8 +439,10 @@ def route_proposal(text: str) -> str:
     """'agenda' for an ordinary proposal, 'mailbox' when it needs a human.
 
     Guarded ground routes to the mailbox. So does any proposal to change the
-    kernel budget, in either direction, for as long as that seat sits at rung
-    1 -- the seed may make the case; it may not also grant it.
+    kernel budget, in either direction, at EVERY rung -- the seed may make the
+    case; it may not also grant it. The constitution is explicit ("raising
+    either cap is a human decision, never a mutation's own"), so this fence
+    does not lapse when the approval seat is promoted.
 
     Path matching is case-insensitive: 'Substrate/supervisor.py' and
     'ROOT/panic.py' are caught just as their lowercase forms are. The
@@ -677,9 +699,18 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         if _is_duplicate_proposal(text, all_dedup_lines):
             skipped += 1
         elif route_proposal(text) == "mailbox":
+            # cap_case_missing existed, was tested, and was never applied to a
+            # live proposal: an unargued "raise the cap" and a complete case
+            # both landed labelled "names guarded ground". The human could not
+            # tell them apart; the seed was never told what its case lacked.
+            if mentions_cap_change(text):
+                missing = cap_case_missing(text)
+                why = (f"cap change; case INCOMPLETE, missing: {', '.join(missing)}"
+                       if missing else "cap change; case complete, awaiting human grant")
+            else:
+                why = "needs human review, names guarded ground"
             with mailbox_path.open("a", encoding="utf-8") as handle:
-                handle.write(f"- PROPOSAL (needs human review, names guarded "
-                            f"ground): {text}\n")
+                handle.write(f"- PROPOSAL ({why}): {text}\n")
             all_dedup_lines.append(f"- [ ] {text}")
             held += 1
         else:

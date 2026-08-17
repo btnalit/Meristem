@@ -1528,6 +1528,79 @@ class TestReflectCommand(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertNotIn("## Self-report", captured["digest"])
 
+    def _run_reflect_with_proposal(self, tmpdir, proposal):
+        """Drive one reflect that emits `proposal`; return mailbox text."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        state = tmpdir / "state"
+        state.mkdir(parents=True)
+        (state / "gaps.md").write_text("## G-001 gap\n", encoding="utf-8")
+        (state / "patterns.md").write_text("## P-001 pat\n", encoding="utf-8")
+        (state / "proposals.md").write_text("", encoding="utf-8")
+        mailbox = state / "mailbox.md"
+        control = tmpdir / "control"
+        control.mkdir(parents=True)
+        (control / "agenda.md").write_text("# Agenda\n", encoding="utf-8")
+
+        fake = llm.Completion(text=json.dumps({"proposals": [proposal]}),
+                              model="test")
+        buf = io.StringIO()
+        with patch("meristem.loop.REPO", tmpdir), \
+             patch("meristem.loop.CONTROL", control), \
+             patch("meristem.loop.JOURNAL", state / "journal.jsonl"), \
+             patch("meristem.loop.llm_mod.complete", return_value=fake), \
+             patch("meristem.loop.germline.invoke",
+                   return_value={"ok": True, "result": {"stale": []}}), \
+             patch("meristem.loop.ledger_mod.record", return_value=0.0), \
+             patch("meristem.loop.ledger_mod.check"), \
+             patch("meristem.loop.ledger_mod.drain_attempts", return_value=0), \
+             patch("meristem.loop.llm_mod.load_models", return_value={}):
+            with contextlib.redirect_stdout(buf):
+                rc = loop.main(["reflect"])
+        self.assertEqual(rc, 0)
+        return mailbox.read_text(encoding="utf-8") if mailbox.exists() else ""
+
+    def test_unargued_cap_proposal_is_labelled_incomplete(self):
+        """An unargued cap change must reach the mailbox naming what it lacks.
+
+        The fence and the golden fixture were wired from the start; the
+        argument format was not. Without this, an unargued 'raise the cap' and
+        a complete six-element case land with the same label and the human
+        cannot tell them apart.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            text = self._run_reflect_with_proposal(
+                pathlib.Path(tmp), "raise KERNEL_LOC_CAP to 6000")
+            self.assertIn("cap change", text)
+            self.assertIn("INCOMPLETE", text)
+            self.assertIn("per-file", text)
+            self.assertNotIn("names guarded ground", text)
+
+    def test_complete_cap_case_is_labelled_complete(self):
+        """A six-element case must be marked complete and awaiting a grant."""
+        case = (
+            "Per-file LOC: loop.py 757, gates 500. Core pressure 0.88, "
+            "closure pressure 0.65. Already externalized the view commands and "
+            "pruned two helpers; insufficient because the loop machinery itself "
+            "is irreducible. Proposed new cap 3400. Expected closure impact: "
+            "none, closure stays at 0.65."
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            text = self._run_reflect_with_proposal(pathlib.Path(tmp), case)
+            self.assertIn("cap change", text)
+            self.assertIn("case complete", text)
+            self.assertNotIn("INCOMPLETE", text)
+
+    def test_guarded_path_proposal_keeps_its_own_label(self):
+        """A non-cap guarded proposal must not be relabelled as a cap case."""
+        with tempfile.TemporaryDirectory() as tmp:
+            text = self._run_reflect_with_proposal(
+                pathlib.Path(tmp), "Fix the bug in substrate/supervisor.py")
+            self.assertIn("names guarded ground", text)
+            self.assertNotIn("cap change", text)
+
     def test_reflect_appends_at_most_three(self):
         """reflect must cap proposals at three, even if the model returns more."""
         import io
