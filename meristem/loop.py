@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 import uuid
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 from . import (
@@ -18,11 +17,9 @@ from . import (
     SCOREBOARD,
     MeristemError,
     append_jsonl,
-    read_json,
     read_jsonl,
     read_text,
     utc_now,
-    write_json,
 )
 from . import breaker as breaker_mod
 from . import engine as engine_mod
@@ -41,9 +38,6 @@ def _notify_park(task: str, cycles: str) -> None:
     url = os.environ.get("MERISTEM_WEBHOOK_URL", "")
     if not url:
         return
-    # FYI, not a request. The parked list rides the self-report into reflect,
-    # so the loop proposes alternatives and keeps running; clearing the
-    # mailbox line is only needed to retry THIS task.
     body = json.dumps({"msgtype": "text", "text": {
         "content": f"[meristem:park] Parked (loop continues, no action needed): "
                    f"{task[:80]} ({cycles}). To retry only this task, delete its "
@@ -101,21 +95,16 @@ def drop_worktree(path, branch: str, keep: bool) -> None:
 
 
 def golden_fixtures() -> list[str]:
-    """Immune self-test: canned bad diffs that MUST be rejected.
-
-    Nothing else proves the gates actually fire. If any fixture passes, the
-    immune system is not working and the loop stops rather than continuing
-    to trust it.
-    """
+    """Immune self-test: canned bad diffs that MUST be rejected."""
     from .gates import germline_validate
 
     failures = []
 
-    # 1. A manifest that skips required fields must not validate.
+    # 1. Incomplete manifest must not validate.
     if not germline_validate.validate({"id": "x"}, "x"):
         failures.append("germline validation accepted an incomplete manifest")
 
-    # 2. An organ may not reach active with no probes.
+    # 2. Active organ with no probes must not validate.
     bad = {f: "x" for f in germline_validate.REQUIRED}
     bad.update({"id": "x", "entrypoint": ["y"], "lifecycle": "active", "probes": [],
                 "dependencies": [], "input_schema": {}, "output_schema": {},
@@ -129,7 +118,7 @@ def golden_fixtures() -> list[str]:
     if deterministic.run(["substrate/supervisor.py"]).passed:
         failures.append("deterministic gate allowed a change to the substrate")
 
-    # 4. A secret must be caught.
+    # 4. Secrets must be caught.
     probe = REPO / "state" / ".fixture_secret.py"
     probe.write_text('KEY = "sk-' + "a" * 32 + '"\n', encoding="utf-8")
     try:
@@ -138,13 +127,11 @@ def golden_fixtures() -> list[str]:
     finally:
         probe.unlink(missing_ok=True)
 
-    # 5. Understating one's own closure must be refused.
+    # 5. Understated closure must be refused.
     if deterministic.run([], declared_closure=1).passed:
         failures.append("deterministic gate accepted an understated closure")
 
-    # 6. Erasing append-only memory must be refused. Tier A rewrites whole
-    #    files, so "add an entry to this register" fails naturally as "replace
-    #    the register with one entry" -- a real rejection, seen in cycle 4.
+    # 6. Erasing append-only memory must be refused.
     register = REPO / "state" / "patterns.md"
     original = read_text(register)
     if original.strip():
@@ -156,20 +143,12 @@ def golden_fixtures() -> list[str]:
         finally:
             register.write_text(original, encoding="utf-8")
 
-    # 7. Proposal guard: model output that names guarded ground must be held
-    #    for human review, not queued. Reflect is a new way for model output
-    #    to reach the work queue, so it needs the same fence the mutation path
-    #    already has. If route_proposal ever stops catching guarded ground,
-    #    the immune self-test fails and the loop stops -- the same proof that
-    #    protected-path rejection and secret scanning actually fire.
+    # 7. Proposal guard: guarded ground must be held, not queued.
     if route_proposal("Fix the bug in substrate/supervisor.py") != "mailbox":
         failures.append("proposal guard let a guarded path reach the queue")
     if route_proposal("Fix the bug in root/panic.py") != "mailbox":
         failures.append("proposal guard let a guarded path reach the queue")
-    # 7b. Case-variant guarded paths must also be caught. The original
-    #     check was case-sensitive substring matching, so 'Substrate/' or
-    #     'ROOT/' bypassed the fence entirely. Normalising to lowercase
-    #     closes the class for all case paraphrases.
+    # 7b. Case-variant guarded paths must also be caught.
     if route_proposal("Fix the bug in Substrate/supervisor.py") != "mailbox":
         failures.append("proposal guard let a case-variant guarded path reach the queue")
     if route_proposal("Fix the bug in ROOT/panic.py") != "mailbox":
@@ -184,20 +163,12 @@ def golden_fixtures() -> list[str]:
         failures.append("proposal guard held an ordinary proposal")
     if route_proposal("Grow an organ at body/organs/summarise/") != "agenda":
         failures.append("proposal guard held an ordinary proposal")
-    # 7a. A cap change must arrive argued. This fixture outlives every
-    #    demotion of the approval seat, because what it enforces is
-    #    monotonicity -- a budget may not move on an unexamined say-so -- and
-    #    not the question of whose hand signs it. An argued, approved change
-    #    stays possible at every rung; a silent one never does.
+    # 7a. Unargued cap changes must be refused; argued ones must pass.
     silent = "raise KERNEL_LOC_CAP to 6000"
     if not cap_case_missing(silent):
         failures.append("cap-case check accepted an unargued budget change")
     if route_proposal(silent) != "refused":
         failures.append("an unargued cap change was not refused")
-    # The fixture above builds its input from the marker list, so it could
-    # only ever pass -- P-001 inside the immune system itself. If complete-case
-    # recognition broke, every real case would be refused as unargued and the
-    # ladder would lose its top rung.
     argued = ("Per-file LOC: loop.py 757. Core pressure 0.88, closure "
               "pressure 0.65. Already externalized the view commands; "
               "insufficient. Proposed new cap 3400. Expected closure "
@@ -239,11 +210,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
         git("-c", "user.name=meristem", "-c", "user.email=meristem@localhost",
             "commit", "-q", "-m", f"cycle {cycle}: {task}\n\n{mutation.rationale}", cwd=workdir)
 
-        # The candidate tree, not this checkout. A gate handed the wrong tree
-        # inspects unmodified code and passes everything (P-009).
-        # The candidate tree AND the state that predates the mutation. The
-        # mutation is already committed here, so HEAD is the change itself --
-        # comparing against it would compare the change with itself (P-013).
+        # Gates inspect the candidate tree, against the state before the mutation.
         verdict = deterministic.run(result.changed, root=workdir, base="HEAD~1")
         if not verdict.passed:
             result.reason = "deterministic: " + "; ".join(verdict.failures)
@@ -288,15 +255,13 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
                                    "error": f"{type(exc).__name__}: {exc}"[:400]})
         return result
     finally:
-        # Bill every attempt this cycle made, including the ones that
-        # failed -- their tokens were spent all the same (P-015).
+        # Bill every attempt, including failures.
         try:
             ledger_mod.drain_attempts(cycle, models)
         except Exception:
             pass
-        # The six questions, by construction -- not aspiration, schema.
-        # The rationale summary travels here so a reviewer can answer all
-        # six from the journal alone, without opening decisions.jsonl.
+        # Six questions by construction: rationale travels here so reviewers
+        # can answer all six from the journal alone.
         append_jsonl(JOURNAL, {
             "kind": "cycle",
             "cycle": cycle,
@@ -310,23 +275,12 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
             "usd": round(result.usd, 6),
             "approved_by": [v.get("slot") for v in result.votes
                             if v.get("verdict") == "approve"],
-            # A rejection that records no reason teaches nothing: the candidate
-            # is discarded with its branch, so if the objection is not captured
-            # here it is gone. Rejections are the raw material of the pattern
-            # register -- they must outlive the worktree.
             "rejected_by": [
                 {"slot": v.get("slot"), "weakens_gate": v.get("weakens_gate"),
                  "reasons": [str(r)[:200] for r in (v.get("reasons") or [])[:3]]}
                 for v in result.votes if v.get("verdict") != "approve"
             ],
-            # MCR (mutation compression ratio): which tier resolved this task.
-            # Recorded explicitly even while only Tier A exists, so the ratio
-            # is measurable the moment Tier B appears. A falling Tier-A share
-            # with flat kernel LOC means the kernel is getting harder to
-            # understand without getting bigger.
             "tier": result.tier,
-            # Per-slot agreement: the instrument for testing whether cheap
-            # heterogeneous reviewers actually beat one strong reviewer.
             "slot_votes": {v.get("slot"): v.get("verdict") for v in result.votes},
             "reason": result.reason,
             "branch": branch if keep else "",
@@ -340,11 +294,7 @@ def print_utility() -> int:
 
 
 def print_body() -> int:
-    """List every organ in the registry: id, version, lifecycle, capability.
-
-    The body is as inspectable as the agenda. Reuses germline.registry() so
-    the command and the closure calculator see the same source of truth.
-    """
+    """List every organ: id, version, lifecycle, capability."""
     organs = germline.registry()
     if not organs:
         print("no organs registered")
@@ -361,39 +311,24 @@ def print_spend() -> int:
     return journal.print_spend(JOURNAL)
 
 
-#: A proposal naming any of these is a proposal to change something the seed
-#: may not change, or may change only under human review. It is routed to the
-#: mailbox instead of the agenda queue. Data from a model passes through the
-#: same protected-path scanning as a mutation from a model -- the reflect step
-#: is a new way for model output to reach the work queue, so it needs the
-#: same fence the mutation path already has.
+#: Guarded ground: proposals naming these go to the mailbox, not the queue.
 PROPOSAL_GUARDED = (
     "root/", "substrate/", "meristem/gates/",
     "control/constitution.md", "control/checklists.md",
 )
 
-#: Changing the kernel's budget -- in EITHER direction -- is a contract-tier
-#: act while the approval seat sits at rung 1. Raising it loosens what
-#: reviewers must be able to see. Shrinking it can be a weakening wearing the
-#: costume of metabolism: lines removed by deleting a check are not lines
-#: saved. Both directions therefore need a complete case and an approval;
-#: neither may ride in as an ordinary layer-1 mutation.
-#:
-#: The SEAT is a ladder position, not a permanent feature (v3.1 6.1): it
-#: demotes on evidence like any other prosthetic, and the criteria are written
-#: into decisions.jsonl alongside this. What never demotes is the requirement
-#: that the change be argued -- that is monotonicity, not the human.
-#: Where the budgets live: guarded ground a cap case must be able to name.
+#: Cap changes need a complete case and approval; never ride in as ordinary
+#: mutations. The seat demotes on evidence, but the argued-case requirement
+#: never demotes (monotonicity).
 CAP_HOME = "meristem/gates/deterministic.py"
 
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
     "raise the cap", "increase the cap", "lower the cap", "\u5185\u6838\u4e0a\u9650", "\u6269\u5bb9",
-    "\u4e0a\u9650",  # bare: "\u63d0\u9ad8\u4e0a\u9650\u52304000" matches neither the 4-char marker nor \bcaps?\b
+    "\u4e0a\u9650",
 )
 
-#: A cap case is incomplete without every one of these. Deterministic, so an
-#: unargued proposal costs nothing to refuse.
+#: A cap case is incomplete without every one of these.
 CAP_CASE_REQUIRED = (
     "per-file", "core pressure", "closure pressure",
     "already externalized", "proposed", "expected",
@@ -401,25 +336,15 @@ CAP_CASE_REQUIRED = (
 
 
 def mentions_cap_change(text: str) -> bool:
-    """Case-insensitive: a paraphrase like 'Raise The Cap' must not bypass
-    the fence. Normalising both text and markers to lowercase closes the
-    class for all case variants, not just the ones enumerated above."""
+    """Case-insensitive matching so paraphrases don't bypass the fence."""
     lowered = text.lower()
     if any(marker.lower() in lowered for marker in CAP_PROPOSAL_MARKERS):
         return True
-    # Markers match PHRASING, CAP_CASE_REQUIRED matches SUBSTANCE, and they
-    # were never aligned: a complete case names no marker. The word boundary
-    # catches phrasings nobody enumerated without matching 'capability'.
     return re.search(r"\bcaps?\b", lowered) is not None
 
 
 def cap_case_missing(text: str) -> list[str]:
-    """Which mandatory elements a cap-change case fails to supply.
-
-    Empty means the case is complete enough to be judged -- not that it is
-    right. Judging is the reviewer's job; this only refuses to spend a
-    reviewer on a proposal that has not done its homework.
-    """
+    """Missing mandatory elements of a cap case. Empty = complete enough to judge."""
     lowered = text.lower()
     return [item for item in CAP_CASE_REQUIRED if item.lower() not in lowered]
 
@@ -443,23 +368,12 @@ def _is_duplicate_proposal(new_text: str, existing_lines: list) -> bool:
 
 
 def route_proposal(text: str) -> str:
-    """'agenda' to queue it, 'mailbox' for a human, 'refused' to drop it.
-
-    Guarded ground goes to the mailbox. A cap change no longer does: the cap
-    seat sits at rung 2, so the panel grants it (2/2 + canary + probes) and
-    nobody is asked. What did not move is that the case must be ARGUED --
-    an incomplete one is refused here, before a reviewer is spent.
-
-    Matching is case-insensitive: a case paraphrase must not dodge the fence.
-    """
+    """'agenda' to queue, 'mailbox' for human review, 'refused' to drop.
+    Cap changes need a complete case; guarded ground goes to mailbox."""
     lowered = text.lower()
     if mentions_cap_change(text):
         if cap_case_missing(text):
             return "refused"
-        # The budgets live in guarded ground, so a case must name it to be
-        # actionable; without this exemption every realistic case routes to a
-        # human and rung 2 is decorative. One path wide: drop that mention,
-        # and any guarded prefix still standing holds the proposal.
         rest = lowered.replace(CAP_HOME, "")
         return "mailbox" if any(p in rest for p in PROPOSAL_GUARDED) else "agenda"
     if any(p in lowered for p in PROPOSAL_GUARDED):
@@ -468,13 +382,7 @@ def route_proposal(text: str) -> str:
 
 
 def print_probe_proposals() -> int:
-    """List every probe proposal under state/probe-proposals/ with its id
-    and whether it carries both a statement/ and a rubric/.
-
-    A proposal is the staging form of a probe: the seed authors it, but the
-    gates promote a validated proposal into the vault. The seed never writes
-    to the vault directly (Principle 4: rubrics are physically invisible).
-    """
+    """List probe proposals under state/probe-proposals/."""
     proposals_dir = REPO / "state" / "probe-proposals"
     if not proposals_dir.is_dir():
         print("no probe proposals")
@@ -496,62 +404,65 @@ def print_probe_proposals() -> int:
     return 0
 
 
-PRESSURE_MANDATE_ASK = """The kernel budget is running out. This is not a
-routine reflection: propose ONE concrete relief, and nothing else.
+PRESSURE_MANDATE_ASK = """The kernel budget is running out. Propose ONE concrete relief.
 
-The constitution ranks the options, and the order is not a preference:
-
-  1. externalize -- move a capability out of the kernel into an organ. Name
-     which capability leaves, and to which organ. This is first because it
-     lowers BOTH pressures at once.
-  2. prune -- delete something that has stopped earning its lines.
-  3. compress, or internalize with equal deletion -- budget-neutral only.
-  4. change the cap -- LAST. If you propose this you must supply the full
-     case: per-file LOC breakdown, core pressure, closure pressure, what was
-     already externalized or pruned and why it was insufficient, the proposed
-     new value, and the expected closure impact. An unargued cap proposal is
-     refused before it is read, and a cap proposal is always held for a human.
-
-Precedent from the constitution: if a review pack must cut modules to fit,
-that is a signal to refactor the repo, not to reduce scope. Growth pressure
-resolves by restructuring first; the budget moves last.
+Options in priority order:
+  1. externalize -- move capability into an organ (lowers both pressures).
+  2. prune -- delete something that stopped earning its lines.
+  3. compress or internalize with equal deletion (budget-neutral only).
+  4. change the cap -- LAST. Must supply the full case: per-file LOC,
+     core pressure, closure pressure, what was externalized/pruned and why
+     insufficient, proposed value, expected closure impact.
 
 Reply with ONLY: {"proposals": ["one concrete relief"]}"""
 
 
+def scan_unexercised() -> int:
+    """Scan for unexercised capabilities. No model call -- pure analysis."""
+    rows = read_jsonl(JOURNAL)
+    findings: list[str] = []
+    # Organs registered but never invoked
+    called = {r.get("callee") for r in rows if r.get("kind") == "organ_call"}
+    for organ in germline.registry():
+        if organ.id not in called:
+            findings.append(f"organ '{organ.id}' ({organ.lifecycle}) never invoked")
+    # Probe proposals never promoted
+    pp_dir = REPO / "state" / "probe-proposals"
+    if pp_dir.is_dir():
+        promoted = {r.get("probe_id") for r in rows
+                    if r.get("kind") == "probe_promoted"}
+        for entry in sorted(pp_dir.iterdir()):
+            if entry.is_dir() and entry.name not in promoted:
+                findings.append(f"probe proposal '{entry.name}' never promoted")
+    # Proposals completed but still listed as open
+    done = journal.done_tasks(JOURNAL)
+    proposals = read_text(REPO / "state" / "proposals.md")
+    for line in proposals.splitlines():
+        s = line.strip()
+        if s.startswith("- [ ] "):
+            task = s[6:].strip()[:80]
+            if task in done:
+                findings.append(f"completed proposal still listed: {task}")
+    if not findings:
+        print("no unexercised capabilities detected")
+    else:
+        for f in findings:
+            print(f"  {f}")
+    return 0
+
+
 def run_reflect(*, config=None, pressure: bool = False) -> int:
-    """Reflect: compose the memory-graph organ with one model call to
-    propose up to three concrete next tasks.
-
-    Invokes the memory-graph organ (op "stale", threshold 0.5) for
-    low-activation node ids; reads state/gaps.md and state/patterns.md;
-    makes exactly ONE model call with the "score" role; appends proposals
-    to state/proposals.md. Never writes to control/agenda.md -- a human
-    promotes a proposal into the agenda.
-
-    The prompt demands BOTH kinds of proposal every time: at least one
-    repair (something measurably wrong) and at least one growth proposal
-    (a capability not yet possessed). The constitution's phrase is
-    "Spiral, not circular": a loop that only ever repairs converges on a
-    fixed point and stops; a loop that only grows without repairing
-    accumulates debt. Both directions are required every pass.
-    """
+    """Reflect: one model call proposing up to three next tasks.
+    Appends to state/proposals.md, never to control/agenda.md."""
     models = config or llm_mod.load_models()
-    # Reflect writes no "cycle" record, so next_cycle() hands it the SAME
-    # number every time -- and the per-cycle call cap counts every reflection
-    # ever made against that one number. Twelve pressure beats reached 51
-    # calls against a cap of 12 and every one of them faulted (P-021). A
-    # reflection is its own accounting unit; it records that fact so the next
-    # one gets a fresh number.
+    # Reflect records its own cycle so the per-cycle call cap resets.
     cycle = journal.next_cycle(JOURNAL)
     append_jsonl(JOURNAL, {"kind": "cycle", "cycle": cycle,
                            "outcome": "reflection",
                            "why": "reflect" + (" --pressure" if pressure else ""),
                            "what": [], "reason": "reflection, not a mutation"})
 
-    # 1. Invoke the memory-graph organ for stale (low-activation) node ids.
-    #    The organ may not exist or may not be active yet; reflect still
-    #    works with gaps and patterns alone.
+    # 1. Stale node ids from memory-graph organ (may not exist yet).
     stale_ids: list = []
     try:
         result = germline.invoke(
@@ -564,16 +475,12 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     except Exception:
         pass
 
-    # 2. Read the registers that hold what is known to be wrong or recurring.
+    # 2. Read registers.
     gaps_text = read_text(REPO / "state" / "gaps.md")
     patterns_text = read_text(REPO / "state" / "patterns.md")
 
-    # 3. Build a digest and make exactly ONE model call with the score role.
-    #    The prompt demands both a repair and a growth proposal every time.
-    #    Without this structural requirement the model collapses to whichever
-    #    mode is easiest -- usually repair, because the evidence for it is
-    #    already in the digest -- and the loop converges on a fixed point
-    #    instead of spiralling outward (Principle 2: "Spiral, not circular").
+    # 3. Build digest and make ONE model call. The prompt demands both
+    #    repair and growth proposals to avoid converging on a fixed point.
     digest = (
         "# Reflection digest\n\n"
         "## Stale knowledge (low-activation node ids)\n"
@@ -599,9 +506,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         "Reply with ONLY a JSON object:\n"
         '{"proposals": ["task 1", "task 2", "task 3"]}'
     )
-    # Feed existing proposals into the digest so the model does not regenerate
-    # duplicates. Dedup discards copies AFTER paying for them; only the prompt
-    # stops regeneration and frees all 3 proposal slots for fresh ideas.
+    # Feed existing proposals to prevent regeneration.
     open_proposals = []
     _pp = REPO / "state" / "proposals.md"
     if _pp.exists():
@@ -620,31 +525,19 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             "\n\n## Already proposed (DO NOT repeat these)\n"
             + "\n".join(f"- {p}" for p in open_proposals)
         )
-    # Refusals live only in the journal, and generate_report counts only
-    # kind=="cycle" -- so without this the seed never learns which element it
-    # left out and regenerates the same case every reflect (P-031's shape).
+    # Feed refused cap cases so the seed learns what was incomplete.
     _ref = [r for r in read_jsonl(JOURNAL)
             if r.get("kind") == "cap_case_refused"][-3:]
     if _ref:
         digest += ("\n\n## Cap cases refused as incomplete (fix, do not repeat)\n"
                    + "\n".join(f"- {r.get('why','')[:100]} -- {r.get('reason','')}"
                                for r in _ref))
-    # Self-observation: the seed reads its own report. REPORT.md holds the
-    # aggregate evidence no single cycle can see -- acceptance rate, pressure
-    # trend, parked tasks, probe scores, organ lifecycle. Without it reflect
-    # sees only registers a human or a past mutation wrote, and can never
-    # detect a failure CLASS (P2: meta-over-patch) from its own history.
-    # Read the rendered report rather than recomputing: reporter.py is an
-    # organ, and duplicating its arithmetic here would grow the core.
+    # Self-observation: read the rendered REPORT.md for aggregate evidence.
     report_text = read_text(REPO / "REPORT.md")
     if report_text.strip():
         digest += "\n\n## Self-report (last heartbeat)\n" + report_text[:2000]
     if pressure:
-        # Under a mandate the generic ask is REPLACED, not appended to: a
-        # budget about to bind is not one consideration among three, and
-        # asking for a balanced spread would dilute the one answer needed.
-        # The per-file breakdown is supplied because a relief must name a
-        # specific capability to move, not a direction to move in.
+        # Under mandate, replace the generic ask with a focused relief request.
         breakdown = "\n".join(
             f"  {q.relative_to(REPO).as_posix()}: "
             f"{len(q.read_text(encoding='utf-8').splitlines())} lines"
@@ -686,8 +579,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         pass
     ledger_mod.check(cycle)
 
-    # 4. Parse proposals from the model reply. Unparseable is zero
-    #    proposals -- the call was still recorded through the ledger.
+    # 4. Parse proposals.
     proposals: list = []
     try:
         data = engine_mod._parse(completion.text)
@@ -697,9 +589,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     except Exception:
         pass
 
-    # 5. Append to state/proposals.md -- never to control/agenda.md.
-    #    A human promotes a proposal into the agenda; the seed proposes but
-    #    does not self-schedule.
+    # 5. Append to state/proposals.md, never to control/agenda.md.
     proposals_path = REPO / "state" / "proposals.md"
     mailbox_path = REPO / "state" / "mailbox.md"
     proposals_path.parent.mkdir(parents=True, exist_ok=True)
@@ -720,8 +610,6 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         if _is_duplicate_proposal(text, all_dedup_lines):
             skipped += 1
         elif route == "refused":
-            # Journalled, not mailboxed: nobody is asked, and the digest above
-            # feeds the reason back so the seed can resubmit a complete case.
             append_jsonl(JOURNAL, {
                 "kind": "cap_case_refused", "cycle": cycle,
                 "why": text[:200],
@@ -729,9 +617,6 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
                           + ", ".join(cap_case_missing(text))})
             refused += 1
         elif route == "mailbox":
-            # Mailbox now means exactly one thing: guarded ground. Labels stay
-            # COLON-FREE -- the dedup above splits on the first ': ', so a
-            # colon in the label steals the split (the P-031 spam loop).
             with mailbox_path.open("a", encoding="utf-8") as handle:
                 handle.write("- PROPOSAL (needs human review, names guarded "
                              f"ground): {text}\n")
@@ -792,6 +677,9 @@ def main(argv=None) -> int:
     parser.add_argument("--pressure", action="store_true",
                         help="reflect under a pressure mandate: propose ONE concrete "
                              "relief for a kernel budget that is running out")
+    parser.add_argument("--scan", action="store_true",
+                        help="reflect sub-mode: scan for unexercised capabilities "
+                             "(no model call)")
     args = parser.parse_args(argv)
 
     if args.command == "selftest":
@@ -823,6 +711,8 @@ def main(argv=None) -> int:
         return print_probe_proposals()
 
     if args.command == "reflect":
+        if args.scan:
+            return scan_unexercised()
         return run_reflect(pressure=args.pressure)
 
     if args.command == "report":
@@ -848,11 +738,6 @@ def main(argv=None) -> int:
         print(f"  rejected      : {sum(1 for c in cycles if c.get('outcome') == 'rejected')}")
         print(f"  faults        : {sum(1 for r in rows if r.get('kind') == 'fault')}")
         loc = deterministic.kernel_loc()
-        # Core Pressure: how close the generating point is to its cap.
-        # The design says externalize at >=0.9 -- proactively, not when
-        # the deterministic gate finally refuses a change. Reporting it
-        # is what makes "not yet needed" a measurement rather than a
-        # guess about capability that was never built.
         core_pressure = loc / deterministic.KERNEL_LOC_CAP
         closure_now = closure_mod.compute([]).tokens
         closure_pressure = closure_now / deterministic.CLOSURE_TOKEN_CAP
@@ -877,8 +762,7 @@ def main(argv=None) -> int:
         return 0
 
     # Circuit breaker: park a task that has been rejected too many times
-    # before any model call is made. Unbounded retry on the same task is
-    # not progress, it is a loop -- the breaker turns that loop into a stop.
+    # before any model call is made.
     if breaker_mod.should_park(task):
         reason_str = journal.park_task(task, JOURNAL, REPO)
         print(f"task parked: {task} ({reason_str})")
@@ -889,9 +773,6 @@ def main(argv=None) -> int:
     try:
         result = run_cycle(task, cycle)
     except Exception as exc:
-        # Anything unexpected is still a cycle outcome, not a traceback. An
-        # unhandled exception left the journal recording a rejection with no
-        # reason -- a rejection that teaches nothing (P-012).
         append_jsonl(JOURNAL, {"kind": "fault", "cycle": cycle, "task": task,
                                "error": f"{type(exc).__name__}: {exc}"[:400]})
         print(f"cycle {cycle} FAULT: {type(exc).__name__}: {exc}", file=sys.stderr)
