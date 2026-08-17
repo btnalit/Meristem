@@ -96,3 +96,11 @@ must support (control/germline-protocol.md). Two things are not yet built:
    premature core growth with nothing to run against.
 
 Both are blocked on the first multi-part organ appearing in body/.
+
+- RESOLVED G-003: Vault seed content generation moved out of the repository.
+  bootstrap.py no longer contains demo probe rubrics, statements, or any
+  probe content. It creates the vault directory structure and an empty
+  manifest only. The human writes anchor probes directly into the vault.
+  This closes the class structurally: there is no rubric content in the
+  repository for the mutation engine to read, so physical invisibility
+  holds by construction rather than by convention.
