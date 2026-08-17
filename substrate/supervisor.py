@@ -76,6 +76,54 @@ def _is_guarded_proposal(text: str) -> bool:
     return any(m in lowered for m in CAP_MARKERS)
 
 
+SEAT_LOCK = REPO / "state" / "approval_seat.rung1.lock"
+DEMOTION_STREAK = 3
+
+
+def _check_demotion() -> bool:
+    """Scan journal for consecutive self-promoted task failures.
+
+    If the N most recent auto_promote tasks all ended rejected/parked with
+    none accepted, write a lock file and notify. Returns True if demoted.
+    """
+    if SEAT_LOCK.exists():
+        return True
+    if not JOURNAL.exists():
+        return False
+    promotes = []
+    outcomes = {}
+    for line in JOURNAL.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") == "auto_promote":
+            promotes.append(row.get("task", "")[:80])
+        elif row.get("kind") == "cycle" and row.get("outcome") in ("candidate", "rejected", "parked"):
+            why = row.get("why", "")[:80]
+            outcomes[why] = row.get("outcome")
+    if len(promotes) < DEMOTION_STREAK:
+        return False
+    recent = promotes[-DEMOTION_STREAK:]
+    for task in recent:
+        if outcomes.get(task) == "candidate":
+            return False
+    if all(outcomes.get(t) in ("rejected", "parked") for t in recent):
+        SEAT_LOCK.write_text(
+            f"Demoted: {DEMOTION_STREAK} consecutive self-promoted tasks "
+            f"rejected/parked. Delete this file to re-arm rung 2.\n",
+            encoding="utf-8",
+        )
+        _journal({"kind": "seat_change", "seat": "proposal_approval",
+                  "from_rung": 2, "to_rung": 1,
+                  "reason": f"{DEMOTION_STREAK} consecutive failures"})
+        notify("seat_demotion",
+               f"Approval seat demoted to rung 1: {DEMOTION_STREAK} consecutive "
+               f"self-promoted tasks failed. Delete {SEAT_LOCK.name} to re-arm.")
+        return True
+    return False
+
+
 def _auto_promote() -> bool:
     """Move the top eligible proposal from proposals.md to agenda.md.
 
@@ -84,6 +132,8 @@ def _auto_promote() -> bool:
     for human review — the code gate is untouched, only scheduling autonomy
     is granted. The approval seat moved rung 1 → 2 per decisions.jsonl.
     """
+    if _check_demotion():
+        return False
     if not PROPOSALS.exists():
         return False
     lines = PROPOSALS.read_text(encoding="utf-8").splitlines()
@@ -102,9 +152,12 @@ def _auto_promote() -> bool:
     PROPOSALS.write_text("\n".join(remaining) + "\n", encoding="utf-8")
     agenda = AGENDA.read_text(encoding="utf-8") if AGENDA.exists() else ""
     marker = f"- [ ] {promoted_text}\n"
-    if marker not in agenda:
-        with AGENDA.open("a", encoding="utf-8") as f:
-            f.write(marker)
+    done_marker = f"- [x] {promoted_text}\n"
+    if marker in agenda or done_marker in agenda:
+        print(f"    dedup-drop (already in agenda): {promoted_text[:120]}", flush=True)
+        return False
+    with AGENDA.open("a", encoding="utf-8") as f:
+        f.write(marker)
     _journal({"kind": "auto_promote", "task": promoted_text[:200],
               "why": "approval seat rung 2: non-guarded proposal auto-promoted"})
     notify("auto_promote", f"Self-promoted to agenda:\n  {promoted_text[:200]}")
@@ -361,7 +414,7 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             print(f"    core pressure {pressure:.2f}, agenda empty, no proposals"
                   " -- re-issuing the mandate", flush=True)
             argv = ["reflect", "--pressure"]
-        elif pressure >= PRESSURE_MANDATE and _auto_promote():
+        elif _auto_promote():
             argv = ["cycle"]
         else:
             argv = ["reflect"]

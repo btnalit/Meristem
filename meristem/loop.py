@@ -663,6 +663,27 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         "Reply with ONLY a JSON object:\n"
         '{"proposals": ["task 1", "task 2", "task 3"]}'
     )
+    # Feed existing proposals into the digest so the model does not regenerate
+    # duplicates. Dedup discards copies AFTER paying for them; only the prompt
+    # stops regeneration and frees all 3 proposal slots for fresh ideas.
+    open_proposals = []
+    _pp = REPO / "state" / "proposals.md"
+    if _pp.exists():
+        for _line in _pp.read_text(encoding="utf-8").splitlines():
+            _s = _line.strip()
+            if _s.startswith("- [ ] "):
+                open_proposals.append(_s[6:].strip()[:80])
+    _ap = REPO / "control" / "agenda.md"
+    if _ap.exists():
+        for _line in _ap.read_text(encoding="utf-8").splitlines():
+            _s = _line.strip()
+            if _s.startswith("- [ ] "):
+                open_proposals.append(_s[6:].strip()[:80])
+    if open_proposals:
+        digest += (
+            "\n\n## Already proposed (DO NOT repeat these)\n"
+            + "\n".join(f"- {p}" for p in open_proposals)
+        )
     if pressure:
         # Under a mandate the generic ask is REPLACED, not appended to: a
         # budget about to bind is not one consideration among three, and
@@ -729,10 +750,12 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     proposals_path.parent.mkdir(parents=True, exist_ok=True)
     existing_lines = proposals_path.read_text(encoding="utf-8").splitlines() if proposals_path.exists() else []
     mailbox_lines = mailbox_path.read_text(encoding="utf-8").splitlines() if mailbox_path.exists() else []
+    agenda_path = REPO / "control" / "agenda.md"
+    agenda_lines = agenda_path.read_text(encoding="utf-8").splitlines() if agenda_path.exists() else []
     all_dedup_lines = existing_lines + [
         f"- [ ] {line.split(': ', 1)[1]}" for line in mailbox_lines
         if line.strip().startswith("- PROPOSAL") and ": " in line
-    ]
+    ] + [line for line in agenda_lines if line.strip().startswith(("- [ ] ", "- [x] "))]
     queued = held = skipped = 0
     for proposal in proposals[:3]:
         text = str(proposal).strip()
