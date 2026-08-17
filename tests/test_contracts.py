@@ -149,6 +149,84 @@ class TestFaultRecordWrittenOnException(unittest.TestCase):
                 breaker.JOURNAL = orig
 
 
+class TestBeatFirewall(unittest.TestCase):
+    """The soil's own exceptions must not be more fatal than the seed's.
+
+    A seed failure was always handled: counted, escalated to rollback after
+    three. A soil exception -- from core_pressure, _auto_promote,
+    _commit_state or promote -- skipped all of that and killed all fourteen
+    beats. Three separate nights died that way before the class was named.
+    The firewall adds no new machinery; it routes soil exceptions into the
+    machinery that already existed.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _run_beats(self, beats, promote_side_effect, journal):
+        sv = self._sv()
+        ok = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        orig = sv.JOURNAL
+        try:
+            sv.JOURNAL = journal
+            with patch.object(sv, "panic") as pan, \
+                 patch.object(sv, "core_pressure", return_value=0.5), \
+                 patch.object(sv, "pending_task", return_value=True), \
+                 patch.object(sv, "_commit_state"), \
+                 patch.object(sv, "subprocess") as sp, \
+                 patch.object(sv, "resolve", return_value="c" * 40), \
+                 patch.object(sv, "promote", side_effect=promote_side_effect), \
+                 patch.object(sv, "rollback", return_value=99) as rb, \
+                 patch.object(sv, "notify"), \
+                 patch.object(sv, "_pressure_reflected_today", return_value=True):
+                pan.engaged.return_value = False
+                sp.run.return_value = ok
+                rc = sv.heartbeat(beats, dry=True)
+            return rc, rb
+        finally:
+            sv.JOURNAL = orig
+
+    def test_one_exception_costs_a_beat_not_the_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            calls = [RuntimeError("git exploded"), None, None]
+            rc, rb = self._run_beats(3, calls, journal)
+            self.assertEqual(rc, 0, "the run must finish all three beats")
+            rb.assert_not_called()
+            rows = [r for r in read_jsonl(journal)
+                    if r.get("kind") == "beat_exception"]
+            self.assertEqual(len(rows), 1)
+            self.assertIn("git exploded", rows[0]["reason"])
+            self.assertIn("Traceback", rows[0]["traceback"])
+
+    def test_three_consecutive_exceptions_reach_rollback(self):
+        """The budget is the same one subprocess failures spend."""
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            boom = [RuntimeError("a"), RuntimeError("b"), RuntimeError("c")]
+            rc, rb = self._run_beats(5, boom, journal)
+            self.assertEqual(rc, 99, "must return rollback's value")
+            rb.assert_called_once()
+            self.assertIn("consecutive", rb.call_args[0][0])
+
+    def test_panic_still_stops_everything(self):
+        """The latch is checked outside the firewall and must not be caught."""
+        sv = self._sv()
+        with patch.object(sv, "panic") as pan, \
+             patch.object(sv, "_pressure_reflected_today", return_value=True):
+            pan.engaged.return_value = True
+            self.assertEqual(sv.heartbeat(5, dry=True), 3)
+
+    def test_keyboard_interrupt_is_not_swallowed(self):
+        """except Exception, never BaseException."""
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            with self.assertRaises(KeyboardInterrupt):
+                self._run_beats(3, [KeyboardInterrupt()], journal)
+
+
 class TestPublishIsNeverFatal(unittest.TestCase):
     """publish()'s own docstring: "failing to publish must not undo a
     promotion that already succeeded." Only the returncode branch honoured
@@ -292,7 +370,8 @@ class TestPressureProbeLeavesATrace(unittest.TestCase):
                 sv.JOURNAL = orig
             rows = read_jsonl(journal)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["kind"], "fault")
+            self.assertEqual(rows[0]["kind"], "probe_fault",
+                             "distinct kind so it cannot pollute breaker faults")
             self.assertIn("boom", rows[0]["reason"])
 
     def test_missing_pressure_line_is_journalled(self):
