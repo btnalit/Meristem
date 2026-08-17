@@ -82,6 +82,25 @@ invocation through the registry is an observed dependency edge and is
 journalled — that is what makes the observed half of the closure real rather
 than assumed.
 
+## Selfcheck op
+
+Multi-part organs — those with more than one source file — must support a
+`selfcheck` op. When invoked with `{"op": "selfcheck"}`, the organ:
+
+1. imports each of its own modules,
+2. exercises every entry point with tiny fixtures,
+3. returns `{"ok": true, "results": [...]}` on success, or
+   `{"ok": false, "results": [...], "failures": [...]}` on failure.
+
+This is the organ-level equivalent of the kernel's `selftest` command: a way
+to prove the parts still fit together after a change. Single-file organs are
+exempt — their entry point IS the whole surface.
+
+The selfcheck op is part of the ABI: it uses the same stdin/stdout JSON
+shape, runs with the organ's own directory as cwd, and is an observed
+dependency edge when invoked through the registry. An organ that cannot
+selfcheck cannot be trusted after a mutation touches it.
+
 ## Growing one (Loop B)
 
 1. Real work reveals a capability gap → recorded in `state/gaps.md`.

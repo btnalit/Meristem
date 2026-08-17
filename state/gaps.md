@@ -78,3 +78,21 @@ cycles (the journal stores `why` as the task string, so this is queryable but
 nothing does it yet), and a policy for what happens when the threshold is
 crossed — escalate tier, block, or notify. Both are kernel-level changes that
 belong in `meristem/loop.py` and should be gated normally.
+
+## G-SELFCHECK — Selfcheck enforcement and runner
+
+The germline protocol now defines a `selfcheck` op that multi-part organs
+must support (control/germline-protocol.md). Two things are not yet built:
+
+1. **Validator enforcement.** `meristem/gates/germline_validate.py` does not
+   yet check that a multi-part organ (more than one `.py` file) declares
+   selfcheck support. This should be added when the first multi-part organ
+   reaches calibrate, so the requirement is enforced at the gate rather than
+   merely documented.
+
+2. **Kernel runner.** There is no `meristem loop selfcheck` command that
+   invokes the selfcheck op on every active multi-part organ. This should be
+   added (or grown as an organ) when organs exist — adding it now would be
+   premature core growth with nothing to run against.
+
+Both are blocked on the first multi-part organ appearing in body/.
