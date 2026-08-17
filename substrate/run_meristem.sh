@@ -35,6 +35,16 @@ REPO=/RSI/Meristem
 LOG="$REPO/heartbeat_keeper.log"
 BEATS=14
 
+# A rollback already reverted to the canary-proven last-good commit, so
+# relaunching once runs code that has passed the gates -- stopping there
+# would make a recoverable event need a human, which is the scaffolding this
+# loop is meant to shed. Two rollbacks inside a day is a different claim: it
+# says the failure is systemic rather than one bad mutation, and that does
+# want a person. The <30min crash-loop guard still backstops both.
+ROLLBACK_LOG=/RSI/keeper_rollbacks
+ROLLBACK_WINDOW=86400
+ROLLBACK_COOLDOWN=1800
+
 # A complete run cannot be short: thirteen sleeps of 15-45 minutes each put
 # the floor above three hours. Anything under thirty minutes means the run
 # died rather than finished, and relaunching it would be a crash loop.
@@ -82,7 +92,26 @@ while true; do
     [ $rc -ne 0 ] && stop "heartbeat exited $rc after ${dur}s -- stopped" "$rc"
 
     if git log --format=%s "${head_before}..HEAD" | grep -q auto-rollback; then
-        stop "auto-rollback occurred during run -- stopped for human review" 4
+        now=$(date +%s)
+        recent=0
+        if [ -f "$ROLLBACK_LOG" ]; then
+            while read -r stamp; do
+                case "$stamp" in ''|*[!0-9]*) continue;; esac
+                [ $(( now - stamp )) -lt $ROLLBACK_WINDOW ] && recent=$(( recent + 1 ))
+            done < "$ROLLBACK_LOG"
+        fi
+        echo "$now" >> "$ROLLBACK_LOG"
+        if [ "$recent" -ge 1 ]; then
+            stop "second auto-rollback within 24h -- systemic, stopped for review" 4
+        fi
+        # Resuming here skips the crash-loop guard below, deliberately: a
+        # rollback can follow a short run, and the rollback counter is its own
+        # bound -- a fast rollback loop stops itself on the second one, inside
+        # about half an hour. The guard still covers every non-rollback exit.
+        notify "auto-rollback: reverted to last-good, cooling down ${ROLLBACK_COOLDOWN}s then resuming. No action needed unless it recurs."
+        echo "$(date '+%F %T') rollback; cooldown then resume" >> "$LOG"
+        sleep $ROLLBACK_COOLDOWN
+        continue
     fi
 
     [ $dur -lt $MIN_RUN_SECONDS ] \

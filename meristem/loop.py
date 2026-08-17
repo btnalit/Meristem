@@ -41,8 +41,13 @@ def _notify_park(task: str, cycles: str) -> None:
     url = os.environ.get("MERISTEM_WEBHOOK_URL", "")
     if not url:
         return
+    # FYI, not a request. The parked list rides the self-report into reflect,
+    # so the loop proposes alternatives and keeps running; clearing the
+    # mailbox line is only needed to retry THIS task.
     body = json.dumps({"msgtype": "text", "text": {
-        "content": f"[meristem:park] Task parked: {task[:80]} (cycles: {cycles})"
+        "content": f"[meristem:park] Parked (loop continues, no action needed): "
+                   f"{task[:80]} ({cycles}). To retry only this task, delete its "
+                   f"line from state/mailbox.md."
     }}).encode()
     try:
         req = urllib.request.Request(url, data=body,
