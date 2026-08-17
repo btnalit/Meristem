@@ -78,6 +78,53 @@ def _is_guarded_proposal(text: str) -> bool:
 
 SEAT_LOCK = REPO / "state" / "approval_seat.rung1.lock"
 DEMOTION_STREAK = 3
+#: Consecutive accepted cycles after a demotion that re-arm rung 2.
+REARM_STREAK = 3
+
+
+def _cycles_since_demotion() -> list:
+    """Cycle outcomes journalled after the MOST RECENT demotion.
+
+    Resetting on every demotion matters: counting from the first one would
+    let cycles earned before a later demotion pay for it.
+    """
+    if not JOURNAL.exists():
+        return []
+    outcomes: list = []
+    for line in JOURNAL.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") == "seat_change" and row.get("to_rung") == 1:
+            outcomes = []
+        elif row.get("kind") == "cycle" and row.get("outcome") in (
+                "candidate", "rejected", "parked"):
+            outcomes.append(row.get("outcome"))
+    return outcomes
+
+
+def _check_rearm() -> bool:
+    """Restore rung 2 once the seed has earned it back. True if still locked.
+
+    A gate that only ever tightens is the ossified layer 6.1 exists to
+    prevent: the human seat is a PROSTHETIC, so it needs an exit condition
+    that does not require a human to remember to delete a file. Demotion
+    stays automatic and needs no evidence -- the ratchet turns freely toward
+    safety -- but the way back is now evidence-backed rather than manual.
+    """
+    outcomes = _cycles_since_demotion()
+    if len(outcomes) < REARM_STREAK or any(
+            o != "candidate" for o in outcomes[-REARM_STREAK:]):
+        return True
+    SEAT_LOCK.unlink(missing_ok=True)
+    _journal({"kind": "seat_change", "seat": "proposal_approval",
+              "from_rung": 1, "to_rung": 2,
+              "reason": f"{REARM_STREAK} consecutive accepted cycles since demotion"})
+    notify("seat_rearm",
+           f"Approval seat restored to rung 2: {REARM_STREAK} consecutive "
+           f"cycles accepted since the demotion. No action needed.")
+    return False
 
 
 def _check_demotion() -> bool:
@@ -87,7 +134,7 @@ def _check_demotion() -> bool:
     none accepted, write a lock file and notify. Returns True if demoted.
     """
     if SEAT_LOCK.exists():
-        return True
+        return _check_rearm()
     if not JOURNAL.exists():
         return False
     promotes = []

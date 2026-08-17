@@ -147,5 +147,76 @@ class TestFaultRecordWrittenOnException(unittest.TestCase):
                 breaker.JOURNAL = orig
 
 
+class TestApprovalSeatRearm(unittest.TestCase):
+    """A human gate is a prosthetic (6.1) and needs an exit condition that
+    does not depend on a human remembering to delete a file. Demotion stays
+    automatic and evidence-free -- the ratchet turns freely toward safety --
+    but the way back is evidence-backed and automatic too."""
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _run(self, outcomes):
+        """Seed a journal with a demotion then `outcomes`; return (locked, sv)."""
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            lock = pathlib.Path(tmp) / "seat.lock"
+            append_jsonl(journal, {"kind": "seat_change",
+                                   "seat": "proposal_approval",
+                                   "from_rung": 2, "to_rung": 1})
+            for i, outcome in enumerate(outcomes):
+                append_jsonl(journal, {"kind": "cycle", "cycle": i,
+                                       "outcome": outcome, "why": f"t{i}"})
+            lock.write_text("demoted\n", encoding="utf-8")
+            orig_j, orig_l = sv.JOURNAL, sv.SEAT_LOCK
+            try:
+                sv.JOURNAL, sv.SEAT_LOCK = journal, lock
+                with patch.object(sv, "notify"), patch.object(sv, "_journal"):
+                    locked = sv._check_demotion()
+                return locked, lock.exists()
+            finally:
+                sv.JOURNAL, sv.SEAT_LOCK = orig_j, orig_l
+
+    def test_three_accepted_cycles_rearm_the_seat(self):
+        locked, lock_exists = self._run(["candidate"] * 3)
+        self.assertFalse(locked, "seat must re-arm after three accepted cycles")
+        self.assertFalse(lock_exists, "lock file must be removed on re-arm")
+
+    def test_a_rejection_in_the_streak_keeps_the_lock(self):
+        locked, lock_exists = self._run(["candidate", "rejected", "candidate"])
+        self.assertTrue(locked, "a rejection inside the streak must not re-arm")
+        self.assertTrue(lock_exists)
+
+    def test_too_few_cycles_keep_the_lock(self):
+        locked, _ = self._run(["candidate", "candidate"])
+        self.assertTrue(locked, "two accepted cycles are not the streak")
+
+    def test_streak_resets_on_a_later_demotion(self):
+        """Cycles earned before a later demotion must not pay for it."""
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            lock = pathlib.Path(tmp) / "seat.lock"
+            demote = {"kind": "seat_change", "seat": "proposal_approval",
+                      "from_rung": 2, "to_rung": 1}
+            append_jsonl(journal, demote)
+            for i in range(3):
+                append_jsonl(journal, {"kind": "cycle", "cycle": i,
+                                       "outcome": "candidate", "why": f"a{i}"})
+            append_jsonl(journal, demote)  # demoted again; the streak is spent
+            lock.write_text("demoted\n", encoding="utf-8")
+            orig_j, orig_l = sv.JOURNAL, sv.SEAT_LOCK
+            try:
+                sv.JOURNAL, sv.SEAT_LOCK = journal, lock
+                with patch.object(sv, "notify"), patch.object(sv, "_journal"):
+                    self.assertTrue(sv._check_demotion(),
+                                    "the second demotion must start a fresh streak")
+            finally:
+                sv.JOURNAL, sv.SEAT_LOCK = orig_j, orig_l
+
+
 if __name__ == "__main__":
     unittest.main()
