@@ -305,8 +305,16 @@ def heartbeat(beats: int, dry: bool = False) -> int:
         elif pressure >= PRESSURE_MANDATE:
             print(f"    core pressure {pressure:.2f}, agenda empty, proposals pending"
                   " -- skipping (proposals await human review)", flush=True)
+            prop_lines = []
+            if PROPOSALS.exists():
+                for pline in PROPOSALS.read_text(encoding="utf-8").splitlines():
+                    if pline.strip().startswith("- [ ] "):
+                        prop_lines.append(pline.strip()[6:][:120])
+                        if len(prop_lines) >= 3:
+                            break
+            prop_detail = chr(10).join(f"  {i+1}. {p}" for i, p in enumerate(prop_lines)) if prop_lines else "  (none)"
             notify("pressure_proposals",
-                   f"Core pressure {pressure:.2f}, proposals pending in proposals.md")
+                   f"Core pressure {pressure:.2f}, {len(prop_lines)}+ proposals pending:\n{prop_detail}")
             argv = ["reflect"]
         else:
             argv = ["reflect"]

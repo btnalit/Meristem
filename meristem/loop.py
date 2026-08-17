@@ -494,6 +494,24 @@ def cap_case_missing(text: str) -> list[str]:
     return [item for item in CAP_CASE_REQUIRED if item.lower() not in lowered]
 
 
+def _is_duplicate_proposal(new_text: str, existing_lines: list) -> bool:
+    """Jaccard word overlap > 0.5 means near-duplicate."""
+    new_words = set(new_text.lower().split())
+    if len(new_words) < 3:
+        return False
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped.startswith("- [ ] "):
+            continue
+        old_words = set(stripped[6:].lower().split())
+        if not old_words:
+            continue
+        overlap = len(new_words & old_words) / max(len(new_words), len(old_words))
+        if overlap > 0.5:
+            return True
+    return False
+
+
 def route_proposal(text: str) -> str:
     """'agenda' for an ordinary proposal, 'mailbox' when it needs a human.
 
@@ -709,7 +727,8 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
     proposals_path = REPO / "state" / "proposals.md"
     mailbox_path = REPO / "state" / "mailbox.md"
     proposals_path.parent.mkdir(parents=True, exist_ok=True)
-    queued = held = 0
+    existing_lines = proposals_path.read_text(encoding="utf-8").splitlines() if proposals_path.exists() else []
+    queued = held = skipped = 0
     for proposal in proposals[:3]:
         text = str(proposal).strip()
         if not text:
@@ -724,13 +743,17 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
                 handle.write(f"- PROPOSAL (needs human review, names guarded "
                              f"ground): {text}\n")
             held += 1
+        elif _is_duplicate_proposal(text, existing_lines):
+            skipped += 1
         else:
             with proposals_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"- [ ] {text}\n")
+            existing_lines.append(f"- [ ] {text}")
             queued += 1
 
     print(f"appended {queued} proposal(s) to state/proposals.md; "
-          f"{held} held for human review in state/mailbox.md")
+          f"{held} held for human review in state/mailbox.md"
+          + (f"; {skipped} duplicate(s) skipped" if skipped else ""))
     return 0
 
 
