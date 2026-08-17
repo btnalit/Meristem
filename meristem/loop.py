@@ -703,9 +703,14 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             # live proposal: an unargued "raise the cap" and a complete case
             # both landed labelled "names guarded ground". The human could not
             # tell them apart; the seed was never told what its case lacked.
+            # Labels must stay COLON-FREE: the dedup above recovers a proposal
+            # by splitting the line on its first ': ', so a colon inside the
+            # label steals the split and the key never matches -- every reflect
+            # would re-append the same case, the P-031 spam loop returning
+            # through the one guard that closed it.
             if mentions_cap_change(text):
                 missing = cap_case_missing(text)
-                why = (f"cap change; case INCOMPLETE, missing: {', '.join(missing)}"
+                why = (f"cap change; case INCOMPLETE, missing {', '.join(missing)}"
                        if missing else "cap change; case complete, awaiting human grant")
             else:
                 why = "needs human review, names guarded ground"

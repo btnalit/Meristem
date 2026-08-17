@@ -1577,6 +1577,13 @@ class TestReflectCommand(unittest.TestCase):
             self.assertIn("INCOMPLETE", text)
             self.assertIn("per-file", text)
             self.assertNotIn("names guarded ground", text)
+            # The dedup recovers a proposal by splitting on the first ': ',
+            # so a colon in the label would steal the split and every reflect
+            # would re-append the same case (the P-031 spam loop).
+            label = text.split("- PROPOSAL (", 1)[1].split(")", 1)[0]
+            self.assertNotIn(": ", label)
+            self.assertEqual(text.split(": ", 1)[1].strip(),
+                             "raise KERNEL_LOC_CAP to 6000")
 
     def test_complete_cap_case_is_labelled_complete(self):
         """A six-element case must be marked complete and awaiting a grant."""
