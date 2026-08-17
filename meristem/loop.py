@@ -957,20 +957,26 @@ def main(argv=None) -> int:
             and row.get("why") == task
             and row.get("outcome") == "rejected"
         ]
+        canary_count = breaker_mod.canary_rejects_for(task)
         cycle = journal.next_cycle(JOURNAL)
-        cycles_str = ", ".join(str(c) for c in rejection_cycles)
+        parts = []
+        if rejection_cycles:
+            parts.append(f"rejected in cycles: {', '.join(str(c) for c in rejection_cycles)}")
+        if canary_count:
+            parts.append(f"canary rejects: {canary_count}")
+        reason_str = "; ".join(parts) or "breaker limit reached"
         mailbox = REPO / "state" / "mailbox.md"
         mailbox.parent.mkdir(parents=True, exist_ok=True)
         with mailbox.open("a", encoding="utf-8") as handle:
-            handle.write(f"- PARKED: {task} (rejected in cycles: {cycles_str})\n")
+            handle.write(f"- PARKED: {task} ({reason_str})\n")
         append_jsonl(JOURNAL, {
             "kind": "cycle",
             "cycle": cycle,
             "outcome": "parked",
             "why": task,
         })
-        print(f"task parked: {task} (rejected in cycles: {cycles_str})")
-        _notify_park(task, cycles_str)
+        print(f"task parked: {task} ({reason_str})")
+        _notify_park(task, reason_str)
         return 0
 
     cycle = journal.next_cycle(JOURNAL)

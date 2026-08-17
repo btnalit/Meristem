@@ -1021,6 +1021,33 @@ class TestCircuitBreaker(unittest.TestCase):
             tmp_path.unlink(missing_ok=True)
 
 
+    def test_should_park_on_canary_rejects(self):
+        """should_park returns True when canary rejects reach the limit."""
+        from unittest.mock import patch
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8")
+        entries = [
+            {"kind": "cycle", "cycle": 1, "why": "task CR", "outcome": "candidate"},
+            {"kind": "canary_reject", "why": "task CR", "reason": "tests failed"},
+            {"kind": "cycle", "cycle": 2, "why": "task CR", "outcome": "candidate"},
+            {"kind": "canary_reject", "why": "task CR", "reason": "tests failed"},
+            {"kind": "cycle", "cycle": 3, "why": "task CR", "outcome": "candidate"},
+            {"kind": "canary_reject", "why": "task CR", "reason": "tests failed"},
+        ]
+        for entry in entries:
+            tmp.write(json.dumps(entry) + "\n")
+        tmp.close()
+        tmp_path = pathlib.Path(tmp.name)
+        try:
+            with patch("meristem.breaker.JOURNAL", tmp_path):
+                self.assertTrue(breaker.should_park("task CR"))
+                self.assertEqual(breaker.canary_rejects_for("task CR"), 3)
+                self.assertEqual(breaker.rejections_for("task CR"), 0)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
 class TestParkedTaskSkipping(unittest.TestCase):
     def test_take_task_skips_parked_tasks(self):
         """take_task must skip tasks that are parked: have a 'parked' journal

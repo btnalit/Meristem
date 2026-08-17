@@ -59,13 +59,23 @@ def faults_for(task: str) -> int:
     return sum(1 for row in _cycles_for(task) if row.get("cycle") in faulted)
 
 
-def should_park(task: str, limit: int = 3, fault_limit: int = 6) -> bool:
+def canary_rejects_for(task: str) -> int:
+    """Canary rejections: approved by reviewers but failed functional tests."""
+    return sum(
+        1
+        for row in read_jsonl(JOURNAL)
+        if row.get("kind") == "canary_reject" and row.get("why") == task
+    )
+
+
+def should_park(task: str, limit: int = 3, fault_limit: int = 6,
+                canary_limit: int = 3) -> bool:
     """True when the task should be set aside.
 
-    Two independent thresholds, because the two failure modes deserve
-    different patience: a judged rejection repeats deterministically, so the
-    limit is tight; a fault is often transient, so it gets a looser one --
-    but not an unlimited one, since a task the mechanism can never express is
-    also a task worth parking.
+    Three independent thresholds: judged rejections (tight — deterministic),
+    faults (loose — transient), canary rejects (tight — approved-but-broken
+    code that the seed can't fix within budget).
     """
-    return rejections_for(task) >= limit or faults_for(task) >= fault_limit
+    return (rejections_for(task) >= limit
+            or faults_for(task) >= fault_limit
+            or canary_rejects_for(task) >= canary_limit)

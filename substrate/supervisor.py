@@ -439,9 +439,17 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             delay = random.randint(BEAT_MIN, BEAT_MAX)
             print(f"    next beat in {delay // 60}m {delay % 60}s", flush=True)
             time.sleep(delay)
+    subprocess.run([sys.executable, "-m", "meristem.loop", "report"],
+                    cwd=str(REPO))
     pressure = core_pressure()
+    summary = ""
+    report_path = REPO / "REPORT.md"
+    if report_path.exists():
+        text = report_path.read_text(encoding="utf-8")
+        summary = text[:800] if len(text) > 800 else text
     notify("heartbeat_done",
-           f"Heartbeat finished ({beats} beats). Pressure: {pressure:.2f}")
+           f"Heartbeat finished ({beats} beats). Pressure: {pressure:.2f}\n"
+           f"--- REPORT ---\n{summary}")
     return 0
 
 
