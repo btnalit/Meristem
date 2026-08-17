@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -553,52 +554,89 @@ def heartbeat(beats: int, dry: bool = False) -> int:
         # and nothing ever acted on it. 0.85 is the early-warning rung, below
         # the gate: pressure pre-empts ordinary work, because a kernel that
         # keeps growing while nothing watches ends at a wall no cycle can pass.
-        pressure = core_pressure()
-        # Pressure pre-empts work ONCE, then stands aside. Reflection only
-        # proposes; the relief itself arrives as ordinary cycles executing the
-        # agenda. Pre-empting on every beat while pressure stays high is a
-        # livelock -- the more urgent it gets the less gets done -- which is
-        # exactly what twelve wasted beats demonstrated (P-021).
-        if pressure >= PRESSURE_MANDATE and not pressure_raised:
-            print(f"    core pressure {pressure:.2f} >= {PRESSURE_MANDATE}"
-                  " -- reflecting under pressure mandate (once)", flush=True)
-            argv = ["reflect", "--pressure"]
-            pressure_raised = True
-        elif pending_task():
-            argv = ["cycle"]
-        elif pressure >= PRESSURE_MANDATE and not _has_unactioned_proposals():
-            # Still under pressure with an empty agenda AND no proposals
-            # waiting: the last mandate produced nothing, so ask again.
-            # But if proposals exist the seed already has an answer that
-            # nobody consumed -- re-asking is the livelock (P-021).
-            print(f"    core pressure {pressure:.2f}, agenda empty, no proposals"
-                  " -- re-issuing the mandate", flush=True)
-            argv = ["reflect", "--pressure"]
-        elif _auto_promote():
-            argv = ["cycle"]
-        else:
-            argv = ["reflect"]
-        # Clean the tree BEFORE the work starts, so a cycle branches from a
-        # commit that already carries the previous beat's bookkeeping and the
-        # ff-merge at promotion has nothing to collide with.
-        _commit_state(f"beat {beat} bookkeeping")
-        result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
-                                cwd=str(REPO),
-                                **({} if os.name == "nt" else {"start_new_session": True}))
-        if result.returncode != 0:
+        # Everything from here to the end of the beat runs inside a firewall.
+        # The seed's failures were always handled gracefully -- counted,
+        # escalated to rollback after three. The SOIL's own exceptions were
+        # fatal: one raise anywhere in core_pressure / _auto_promote /
+        # _commit_state / promote killed all fourteen beats. That asymmetry is
+        # backwards, the soil being the layer that is supposed to hold still,
+        # and it cost three separate nights (P-041, P-043) before it was named.
+        #
+        # This adds no new failure machinery. It ROUTES a soil exception into
+        # the machinery that already exists -- the same `failures` counter,
+        # the same HEALTH_FAIL_LIMIT, the same rollback, the same keeper stop.
+        # A transient push timeout should cost one beat, not a night.
+        try:
+            pressure = core_pressure()
+            # Pressure pre-empts work ONCE, then stands aside. Reflection only
+            # proposes; the relief itself arrives as ordinary cycles executing
+            # the agenda. Pre-empting on every beat while pressure stays high
+            # is a livelock -- the more urgent it gets the less gets done --
+            # which is exactly what twelve wasted beats demonstrated (P-021).
+            if pressure >= PRESSURE_MANDATE and not pressure_raised:
+                print(f"    core pressure {pressure:.2f} >= {PRESSURE_MANDATE}"
+                      " -- reflecting under pressure mandate (once)", flush=True)
+                argv = ["reflect", "--pressure"]
+                pressure_raised = True
+            elif pending_task():
+                argv = ["cycle"]
+            elif pressure >= PRESSURE_MANDATE and not _has_unactioned_proposals():
+                # Still under pressure with an empty agenda AND no proposals
+                # waiting: the last mandate produced nothing, so ask again.
+                # But if proposals exist the seed already has an answer that
+                # nobody consumed -- re-asking is the livelock (P-021).
+                print(f"    core pressure {pressure:.2f}, agenda empty, no"
+                      " proposals -- re-issuing the mandate", flush=True)
+                argv = ["reflect", "--pressure"]
+            elif _auto_promote():
+                argv = ["cycle"]
+            else:
+                argv = ["reflect"]
+            # Clean the tree BEFORE the work starts, so a cycle branches from a
+            # commit that already carries the previous beat's bookkeeping and
+            # the ff-merge at promotion has nothing to collide with.
+            _commit_state(f"beat {beat} bookkeeping")
+            result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
+                                    cwd=str(REPO),
+                                    **({} if os.name == "nt" else {"start_new_session": True}))
+            if result.returncode != 0:
+                failures += 1
+                if failures >= HEALTH_FAIL_LIMIT:
+                    return rollback(f"{failures} consecutive heartbeat failures")
+            # Promote whenever a candidate EXISTS, not only when the beat's
+            # exit code was clean. Cycle 120 passed both reviewers, was left
+            # unpromoted because its beat returned non-zero, and cycle 121 then
+            # branched from the unchanged HEAD and overwrote it -- a
+            # unanimously approved change discarded in silence (P-024). A
+            # candidate is the gates' verdict; it is not the exit status of the
+            # process that produced it.
+            if resolve(CANDIDATE_REF):
+                promote()
+            # Clear the budget only once the WHOLE beat came through. Resetting
+            # right after the subprocess looked equivalent and was not: promote()
+            # raises AFTER that point, so every beat wiped the exception budget
+            # before the exception could be counted, the streak never reached
+            # three, and rollback could never fire on soil failures. The test
+            # for the three-strike path is what caught it.
+            if result.returncode == 0:
+                failures = 0
+        except Exception as exc:
+            # Exception, never BaseException: SystemExit and KeyboardInterrupt
+            # must still pass through. No `continue` either -- the sleep below
+            # is outside this block, and skipping it would spin the beats with
+            # no pause at all when the raise happens before the subprocess.
             failures += 1
+            _journal({"kind": "beat_exception", "beat": beat,
+                      "reason": f"{type(exc).__name__}: {exc}"[:200],
+                      "traceback": traceback.format_exc()[:400]})
+            print(f"    beat {beat} raised {type(exc).__name__}: {exc}",
+                  file=sys.stderr, flush=True)
+            notify("beat_exception",
+                   f"Beat {beat} failed with {type(exc).__name__} "
+                   f"({failures}/{HEALTH_FAIL_LIMIT} before rollback). "
+                   f"The run continues. No action needed.")
             if failures >= HEALTH_FAIL_LIMIT:
-                return rollback(f"{failures} consecutive heartbeat failures")
-        else:
-            failures = 0
-        # Promote whenever a candidate EXISTS, not only when the beat's exit
-        # code was clean. Cycle 120 passed both reviewers, was left unpromoted
-        # because its beat returned non-zero, and cycle 121 then branched from
-        # the unchanged HEAD and overwrote it -- a unanimously approved change
-        # discarded in silence (P-024). A candidate is the gates' verdict; it
-        # is not the exit status of the process that produced it.
-        if resolve(CANDIDATE_REF):
-            promote()
+                return rollback(f"{failures} consecutive beat failures")
         if beat < beats and not dry:
             delay = random.randint(BEAT_MIN, BEAT_MAX)
             print(f"    next beat in {delay // 60}m {delay % 60}s", flush=True)
@@ -639,7 +677,7 @@ def core_pressure() -> float:
     # changing a heartbeat decision input is not something to ship into an
     # unattended night -- but a silent 0.0 must at least leave a trace.
     if result.returncode != 0:
-        _journal({"kind": "fault", "why": "core_pressure",
+        _journal({"kind": "probe_fault", "why": "core_pressure",
                   "reason": f"status exited {result.returncode}: "
                             f"{result.stderr.strip()[:200]}"})
         print(f"core_pressure: status exited {result.returncode}", file=sys.stderr)
@@ -649,10 +687,10 @@ def core_pressure() -> float:
             try:
                 return float(line.split(":")[1].split()[0])
             except (IndexError, ValueError):
-                _journal({"kind": "fault", "why": "core_pressure",
+                _journal({"kind": "probe_fault", "why": "core_pressure",
                           "reason": f"unparseable: {line[:120]}"})
                 return 0.0
-    _journal({"kind": "fault", "why": "core_pressure",
+    _journal({"kind": "probe_fault", "why": "core_pressure",
               "reason": "no 'core pressure' line in status output"})
     return 0.0
 
@@ -662,7 +700,7 @@ def pending_task() -> bool:
     result = subprocess.run([sys.executable, "-m", "meristem.loop", "status"],
                             cwd=str(REPO), capture_output=True, text=True)
     if result.returncode != 0:
-        _journal({"kind": "fault", "why": "pending_task",
+        _journal({"kind": "probe_fault", "why": "pending_task",
                   "reason": f"status exited {result.returncode}: "
                             f"{result.stderr.strip()[:200]}"})
     for line in result.stdout.splitlines():
