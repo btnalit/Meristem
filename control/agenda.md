@@ -30,3 +30,4 @@ boundary is enforced rather than merely stated.
 - [ ] Add selfcheck op to all multi-part organs that imports each module and exercises every entry point with tiny fixtures.
 - [ ] GROWTH (G-005): Define an external anchor probe as a second anchor for the divergence alarm.
 - [x] GROWTH (G-003): Move vault seed content generation out of the repository.
+- [ ] GROWTH (G-001): Implement a mailbox acknowledgment protocol with timestamp, status, and expiry.
