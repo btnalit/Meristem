@@ -104,3 +104,15 @@ Both are blocked on the first multi-part organ appearing in body/.
   This closes the class structurally: there is no rubric content in the
   repository for the mutation engine to read, so physical invisibility
   holds by construction rather than by convention.
+
+## G-001 — Mailbox acknowledgment protocol
+
+Addressed by `body/organs/mailbox-ack/` (candidate). Provides structured
+tracking of mailbox entries with timestamp, status
+(pending/acknowledged/expired), and TTL-based expiry. Organ at candidate
+stage; probes to be staged through `state/probe-proposals/` and promoted
+to the vault by the gates before calibrate. No rubric logic in the
+mutation surface — the previous rejection at cycle 175 taught that
+placing check.py inside the repo lets the engine read scoring logic and
+craft organ behavior to pass, weakening the internal probe as a genuine
+gate.

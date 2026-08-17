@@ -1,0 +1,22 @@
+{
+  "id": "mailbox-ack",
+  "version": "1",
+  "capability": "Track mailbox entries with timestamp, status (pending/acknowledged/expired), and expiry for acknowledgment protocol.",
+  "entrypoint": ["python3", "main.py"],
+  "input_schema": {
+    "op": "string (add|ack|list|expire|selfcheck)",
+    "text": "string (required for add)",
+    "id": "string (required for ack)",
+    "ttl_hours": "number (optional for add, default 24)",
+    "status": "string (optional filter for list)"
+  },
+  "output_schema": {
+    "ok": "boolean",
+    "result": "object (entry or summary)",
+    "error": "string (when ok is false)"
+  },
+  "dependencies": [],
+  "probes": [],
+  "metrics": ["usage", "success_rate"],
+  "lifecycle": "candidate"
+}
