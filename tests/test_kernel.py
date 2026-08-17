@@ -1426,6 +1426,108 @@ class TestReflectCommand(unittest.TestCase):
             # The output should report how many were appended
             self.assertIn("2", buf.getvalue())
 
+    def test_reflect_digest_carries_self_report(self):
+        """reflect must feed REPORT.md back into its own digest.
+
+        The report holds the aggregate evidence no single cycle can see --
+        acceptance rate, pressure trend, parked tasks. Without it in the
+        digest the seed can never detect a failure CLASS from its own
+        history, and the report is a gauge only a human ever reads.
+        """
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        fake_completion = llm.Completion(
+            text=json.dumps({"proposals": ["task A"]}),
+            model="test",
+        )
+        captured = {}
+
+        def _capture(role, messages, config=None):
+            captured["digest"] = messages[-1]["content"]
+            return fake_completion
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            state = tmpdir / "state"
+            state.mkdir(parents=True)
+            (state / "gaps.md").write_text("## G-001 gap\n", encoding="utf-8")
+            (state / "patterns.md").write_text("## P-001 pat\n", encoding="utf-8")
+            (state / "proposals.md").write_text("", encoding="utf-8")
+            control = tmpdir / "control"
+            control.mkdir(parents=True)
+            (control / "agenda.md").write_text("# Agenda\n", encoding="utf-8")
+            (tmpdir / "REPORT.md").write_text(
+                "# Meristem Report\n\nacceptance rate: 0.42\nparked: none\n",
+                encoding="utf-8")
+            journal = state / "journal.jsonl"
+
+            buf = io.StringIO()
+            with patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.JOURNAL", journal), \
+                 patch("meristem.loop.llm_mod.complete", _capture), \
+                 patch("meristem.loop.germline.invoke",
+                       return_value={"ok": True, "result": {"stale": []}}), \
+                 patch("meristem.loop.ledger_mod.record", return_value=0.0), \
+                 patch("meristem.loop.ledger_mod.check"), \
+                 patch("meristem.loop.ledger_mod.drain_attempts",
+                       return_value=0), \
+                 patch("meristem.loop.llm_mod.load_models", return_value={}):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["reflect"])
+
+            self.assertEqual(rc, 0)
+            self.assertIn("## Self-report", captured["digest"])
+            self.assertIn("acceptance rate: 0.42", captured["digest"])
+
+    def test_reflect_digest_omits_missing_report(self):
+        """A missing REPORT.md must not add an empty section or crash."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        fake_completion = llm.Completion(
+            text=json.dumps({"proposals": ["task A"]}),
+            model="test",
+        )
+        captured = {}
+
+        def _capture(role, messages, config=None):
+            captured["digest"] = messages[-1]["content"]
+            return fake_completion
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = pathlib.Path(tmp)
+            state = tmpdir / "state"
+            state.mkdir(parents=True)
+            (state / "gaps.md").write_text("## G-001 gap\n", encoding="utf-8")
+            (state / "patterns.md").write_text("## P-001 pat\n", encoding="utf-8")
+            (state / "proposals.md").write_text("", encoding="utf-8")
+            control = tmpdir / "control"
+            control.mkdir(parents=True)
+            (control / "agenda.md").write_text("# Agenda\n", encoding="utf-8")
+            journal = state / "journal.jsonl"
+
+            buf = io.StringIO()
+            with patch("meristem.loop.REPO", tmpdir), \
+                 patch("meristem.loop.CONTROL", control), \
+                 patch("meristem.loop.JOURNAL", journal), \
+                 patch("meristem.loop.llm_mod.complete", _capture), \
+                 patch("meristem.loop.germline.invoke",
+                       return_value={"ok": True, "result": {"stale": []}}), \
+                 patch("meristem.loop.ledger_mod.record", return_value=0.0), \
+                 patch("meristem.loop.ledger_mod.check"), \
+                 patch("meristem.loop.ledger_mod.drain_attempts",
+                       return_value=0), \
+                 patch("meristem.loop.llm_mod.load_models", return_value={}):
+                with contextlib.redirect_stdout(buf):
+                    rc = loop.main(["reflect"])
+
+            self.assertEqual(rc, 0)
+            self.assertNotIn("## Self-report", captured["digest"])
+
     def test_reflect_appends_at_most_three(self):
         """reflect must cap proposals at three, even if the model returns more."""
         import io

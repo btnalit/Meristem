@@ -684,6 +684,16 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             "\n\n## Already proposed (DO NOT repeat these)\n"
             + "\n".join(f"- {p}" for p in open_proposals)
         )
+    # Self-observation: the seed reads its own report. REPORT.md holds the
+    # aggregate evidence no single cycle can see -- acceptance rate, pressure
+    # trend, parked tasks, probe scores, organ lifecycle. Without it reflect
+    # sees only registers a human or a past mutation wrote, and can never
+    # detect a failure CLASS (P2: meta-over-patch) from its own history.
+    # Read the rendered report rather than recomputing: reporter.py is an
+    # organ, and duplicating its arithmetic here would grow the core.
+    report_text = read_text(REPO / "REPORT.md")
+    if report_text.strip():
+        digest += "\n\n## Self-report (last heartbeat)\n" + report_text[:2000]
     if pressure:
         # Under a mandate the generic ask is REPLACED, not appended to: a
         # budget about to bind is not one consideration among three, and
