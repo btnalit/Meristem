@@ -41,6 +41,16 @@ PROTECTED = ("root/", "substrate/")
 HEALTH_FAIL_LIMIT = 3
 JOURNAL = REPO / "state" / "journal.jsonl"
 PROPOSALS = REPO / "state" / "proposals.md"
+AGENDA = REPO / "control" / "agenda.md"
+
+PROPOSAL_GUARDED_SUBSTRATE = (
+    "root/", "substrate/", "meristem/gates/",
+    "control/constitution.md", "control/checklists.md",
+)
+CAP_MARKERS = (
+    "kernel_loc_cap", "loc cap", "raise the cap", "increase the cap",
+    "lower the cap", "内核上限", "扩容",
+)
 
 
 def _has_unactioned_proposals() -> bool:
@@ -51,6 +61,55 @@ def _has_unactioned_proposals() -> bool:
         if line.strip().startswith("- [ ] "):
             return True
     return False
+
+
+def _is_guarded_proposal(text: str) -> bool:
+    """Substrate's own copy of the guarded-path check.
+
+    MUST NOT import from meristem.loop — the seed can legally mutate loop.py,
+    so importing eligibility from the kernel would let the seed relax the
+    fence in a way reviewers could miss.
+    """
+    lowered = text.lower()
+    if any(p in lowered for p in PROPOSAL_GUARDED_SUBSTRATE):
+        return True
+    return any(m in lowered for m in CAP_MARKERS)
+
+
+def _auto_promote() -> bool:
+    """Move the top eligible proposal from proposals.md to agenda.md.
+
+    Returns True if a proposal was promoted, False if none eligible.
+    Guarded-ground and cap-change proposals stay in proposals.md (or mailbox)
+    for human review — the code gate is untouched, only scheduling autonomy
+    is granted. The approval seat moved rung 1 → 2 per decisions.jsonl.
+    """
+    if not PROPOSALS.exists():
+        return False
+    lines = PROPOSALS.read_text(encoding="utf-8").splitlines()
+    promoted_text = None
+    remaining = []
+    for line in lines:
+        stripped = line.strip()
+        if promoted_text is None and stripped.startswith("- [ ] "):
+            proposal = stripped[6:]
+            if not _is_guarded_proposal(proposal):
+                promoted_text = proposal
+                continue
+        remaining.append(line)
+    if promoted_text is None:
+        return False
+    PROPOSALS.write_text("\n".join(remaining) + "\n", encoding="utf-8")
+    agenda = AGENDA.read_text(encoding="utf-8") if AGENDA.exists() else ""
+    marker = f"- [ ] {promoted_text}\n"
+    if marker not in agenda:
+        with AGENDA.open("a", encoding="utf-8") as f:
+            f.write(marker)
+    _journal({"kind": "auto_promote", "task": promoted_text[:200],
+              "why": "approval seat rung 2: non-guarded proposal auto-promoted"})
+    notify("auto_promote", f"Self-promoted to agenda:\n  {promoted_text[:200]}")
+    print(f"    auto-promoted: {promoted_text[:120]}", flush=True)
+    return True
 
 
 def notify(event: str, message: str) -> None:
@@ -302,20 +361,8 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             print(f"    core pressure {pressure:.2f}, agenda empty, no proposals"
                   " -- re-issuing the mandate", flush=True)
             argv = ["reflect", "--pressure"]
-        elif pressure >= PRESSURE_MANDATE:
-            print(f"    core pressure {pressure:.2f}, agenda empty, proposals pending"
-                  " -- skipping (proposals await human review)", flush=True)
-            prop_lines = []
-            if PROPOSALS.exists():
-                for pline in PROPOSALS.read_text(encoding="utf-8").splitlines():
-                    if pline.strip().startswith("- [ ] "):
-                        prop_lines.append(pline.strip()[6:][:120])
-                        if len(prop_lines) >= 3:
-                            break
-            prop_detail = chr(10).join(f"  {i+1}. {p}" for i, p in enumerate(prop_lines)) if prop_lines else "  (none)"
-            notify("pressure_proposals",
-                   f"Core pressure {pressure:.2f}, {len(prop_lines)}+ proposals pending:\n{prop_detail}")
-            argv = ["reflect"]
+        elif pressure >= PRESSURE_MANDATE and _auto_promote():
+            argv = ["cycle"]
         else:
             argv = ["reflect"]
         result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
