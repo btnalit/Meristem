@@ -144,7 +144,15 @@ def _check_demotion() -> bool:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if row.get("kind") == "auto_promote":
+        if row.get("kind") == "seat_change":
+            # A seat change settles the account. Without this the failures
+            # that CAUSED a demotion are still in promotes[-3:] after the
+            # re-arm, so one fresh failure re-demotes instantly -- a 3-strike
+            # rule collapsed to 1 strike, oscillating the seat and firing a
+            # notification pair each way. Every seat change starts a fresh
+            # budget; a failure may only be billed to one demotion.
+            promotes = []
+        elif row.get("kind") == "auto_promote":
             promotes.append(row.get("task", "")[:80])
         elif row.get("kind") == "cycle" and row.get("outcome") in ("candidate", "rejected", "parked"):
             why = row.get("why", "")[:80]

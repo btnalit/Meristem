@@ -194,6 +194,41 @@ class TestApprovalSeatRearm(unittest.TestCase):
         locked, _ = self._run(["candidate", "candidate"])
         self.assertTrue(locked, "two accepted cycles are not the streak")
 
+    def test_rearm_gives_a_fresh_three_strike_budget(self):
+        """After a re-arm, ONE fresh failure must not re-demote.
+
+        The failures that caused a demotion stay in the journal forever. If
+        the demotion scan still counts them, promotes[-3:] after a re-arm is
+        [old_fail, old_fail, new_task] and a single new failure re-demotes --
+        a 3-strike rule collapsed to 1, oscillating the seat.
+        """
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            lock = pathlib.Path(tmp) / "seat.lock"
+            for i in range(3):  # the failures that caused the demotion
+                append_jsonl(journal, {"kind": "auto_promote", "task": f"old{i}"})
+                append_jsonl(journal, {"kind": "cycle", "cycle": i,
+                                       "outcome": "rejected", "why": f"old{i}"})
+            append_jsonl(journal, {"kind": "seat_change", "seat": "proposal_approval",
+                                   "from_rung": 2, "to_rung": 1})
+            for i in range(3):  # earned back
+                append_jsonl(journal, {"kind": "cycle", "cycle": 10 + i,
+                                       "outcome": "candidate", "why": f"good{i}"})
+            append_jsonl(journal, {"kind": "seat_change", "seat": "proposal_approval",
+                                   "from_rung": 1, "to_rung": 2})
+            append_jsonl(journal, {"kind": "auto_promote", "task": "fresh"})
+            append_jsonl(journal, {"kind": "cycle", "cycle": 20,
+                                   "outcome": "rejected", "why": "fresh"})
+            orig_j, orig_l = sv.JOURNAL, sv.SEAT_LOCK
+            try:
+                sv.JOURNAL, sv.SEAT_LOCK = journal, lock  # lock absent = rung 2
+                with patch.object(sv, "notify"), patch.object(sv, "_journal"):
+                    self.assertFalse(sv._check_demotion(),
+                                     "one failure after a re-arm must not re-demote")
+            finally:
+                sv.JOURNAL, sv.SEAT_LOCK = orig_j, orig_l
+
     def test_streak_resets_on_a_later_demotion(self):
         """Cycles earned before a later demotion must not pay for it."""
         sv = self._sv()

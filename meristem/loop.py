@@ -381,6 +381,7 @@ PROPOSAL_GUARDED = (
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
     "raise the cap", "increase the cap", "lower the cap", "\u5185\u6838\u4e0a\u9650", "\u6269\u5bb9",
+    "\u4e0a\u9650",  # bare: "\u63d0\u9ad8\u4e0a\u9650\u52304000" matches neither the 4-char marker nor \bcaps?\b
 )
 
 #: A cap case is incomplete without every one of these. Deterministic, so an
