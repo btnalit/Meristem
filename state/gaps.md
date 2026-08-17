@@ -116,3 +116,26 @@ mutation surface — the previous rejection at cycle 175 taught that
 placing check.py inside the repo lets the engine read scoring logic and
 craft organ behavior to pass, weakening the internal probe as a genuine
 gate.
+
+## G-007 — The pattern register has never been written by the loop
+
+Observed facts, recorded as evidence:
+
+- `state/patterns.md` holds 23 failure classes (P-001..P-024, P-015 dangling).
+  `git log -- state/patterns.md` shows **zero commits authored by a cycle**;
+  every entry was written by the human operator. By contrast the loop HAS
+  appended to `state/gaps.md` in 4 cycles, so the appends mechanism and the
+  permission both work — `state/patterns.md` is not on a guarded path and a
+  proposal naming it routes to the agenda normally.
+- Cycles 172-176 worked one task, G-001. Attempt 2 (cycle 173) was refused
+  `deterministic: kernel is 3150 lines, over the 3000 cap`. Attempt 5 (cycle
+  176) was approved 2/2 and promoted, and its diff put 303 lines under
+  `body/organs/mailbox-ack/` with zero lines added to `meristem/`.
+- Cycles 177-178 then began G-002, a different task. Attempt 2 (cycle 178)
+  was refused `deterministic: kernel is 3098 lines, over the 3000 cap`.
+- `failure_history()` selects journal rows whose `why` equals the current
+  task, so rejections from G-001 are not visible while working G-002. It also
+  records only rejections; the successful fifth attempt left no trace in any
+  feedback channel.
+- Constitution Principle 2 assigns the detection of failure CLASSES, rather
+  than instances, to the loop itself.
