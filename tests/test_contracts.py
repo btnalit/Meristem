@@ -148,6 +148,117 @@ class TestFaultRecordWrittenOnException(unittest.TestCase):
                 breaker.JOURNAL = orig
 
 
+class TestProtectedRefusalIsNotSilent(unittest.TestCase):
+    """A candidate touching guarded ground used to wedge the loop forever.
+
+    promote() printed to stderr, returned 4, and left CANDIDATE_REF standing.
+    Every later beat re-resolved the same candidate and refused it the same
+    way, with nothing in the journal saying why the loop was stuck.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def test_refusal_journals_and_clears_the_ref(self):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            calls = []
+            orig = sv.JOURNAL
+            try:
+                sv.JOURNAL = journal
+                with patch.object(sv, "panic") as pan, \
+                     patch.object(sv, "resolve", return_value="deadbeef" * 5), \
+                     patch.object(sv, "guard_protected",
+                                  return_value=["root/panic.py"]), \
+                     patch.object(sv, "git",
+                                  side_effect=lambda *a, **k: calls.append(a)
+                                  or "cycle 9: do a thing"), \
+                     patch.object(sv, "notify"):
+                    pan.engaged.return_value = False
+                    rc = sv.promote()
+            finally:
+                sv.JOURNAL = orig
+
+            self.assertEqual(rc, 4)
+            rows = read_jsonl(journal)
+            self.assertEqual(len(rows), 1, "the refusal must be journalled")
+            self.assertIn("protected paths", rows[0]["reason"])
+            self.assertEqual(rows[0]["why"], "do a thing",
+                             "the task text must survive so it can be retried")
+            self.assertTrue(
+                any(a[:2] == ("update-ref", "-d") for a in calls),
+                "the candidate ref must be cleared or the wedge repeats")
+
+    def test_it_is_recorded_as_a_canary_reject_so_the_task_reopens(self):
+        """done_tasks() is (candidates - canary_rejects) | promoted.
+
+        The cycle record for this task already says outcome=candidate. Any
+        OTHER record kind would leave it inside `candidates` with nothing
+        subtracting it, so the task would read as DONE forever and the work
+        would vanish -- P-026's exact failure, re-entered by a new door.
+        """
+        from meristem import journal as jr
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            append_jsonl(j, {"kind": "cycle", "cycle": 9, "outcome": "candidate",
+                             "why": "do a thing"})
+            self.assertIn("do a thing", jr.done_tasks(j),
+                          "precondition: a bare candidate reads as done")
+            append_jsonl(j, {"kind": "canary_reject", "commit": "abc",
+                             "why": "do a thing",
+                             "reason": "REFUSED: touches protected paths"})
+            self.assertNotIn("do a thing", jr.done_tasks(j),
+                             "the refusal must reopen the task for retry")
+
+
+class TestPressureProbeLeavesATrace(unittest.TestCase):
+    """0.0 is the dangerous way to fail: unknown pressure reads as NO
+    pressure, suppressing the mandate exactly when the kernel is at its cap.
+    The value is unchanged for now; the silence is not."""
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def test_failed_status_is_journalled(self):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            fake = types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
+            orig = sv.JOURNAL
+            try:
+                sv.JOURNAL = journal
+                with patch.object(sv.subprocess, "run", return_value=fake):
+                    self.assertEqual(sv.core_pressure(), 0.0)
+            finally:
+                sv.JOURNAL = orig
+            rows = read_jsonl(journal)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["kind"], "fault")
+            self.assertIn("boom", rows[0]["reason"])
+
+    def test_missing_pressure_line_is_journalled(self):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            fake = types.SimpleNamespace(returncode=0, stdout="nothing here\n",
+                                         stderr="")
+            orig = sv.JOURNAL
+            try:
+                sv.JOURNAL = journal
+                with patch.object(sv.subprocess, "run", return_value=fake):
+                    sv.core_pressure()
+            finally:
+                sv.JOURNAL = orig
+            rows = read_jsonl(journal)
+            self.assertEqual(len(rows), 1)
+            self.assertIn("no 'core pressure' line", rows[0]["reason"])
+
+
 class TestSoilCommitsItsBookkeeping(unittest.TestCase):
     """reflect and _auto_promote write tracked files in the MAIN worktree.
 
