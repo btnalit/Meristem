@@ -1,0 +1,12 @@
+{
+  "id": "failure-aggregator",
+  "version": "1",
+  "capability": "Detect repeated rejection patterns from the journal and write structured entries to state/patterns.md",
+  "entrypoint": ["python3", "main.py"],
+  "input_schema": {"op": "string", "journal_path": "string", "repo_path": "string", "cycle": "integer"},
+  "output_schema": {"ok": "boolean", "signals": "array", "patterns_written": "array"},
+  "dependencies": [],
+  "probes": [],
+  "metrics": ["usage", "success_rate"],
+  "lifecycle": "candidate"
+}

@@ -462,7 +462,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
                            "why": "reflect" + (" --pressure" if pressure else ""),
                            "what": [], "reason": "reflection, not a mutation"})
 
-    # 1. Stale node ids from memory-graph organ (may not exist yet).
+    # 1. Stale node ids from memory-Graph organ (may not exist yet).
     stale_ids: list = []
     try:
         result = germline.invoke(
@@ -668,6 +668,34 @@ def generate_report() -> int:
     return 0
 
 
+def _try_aggregate_failures(cycle: int) -> None:
+    """Call failure-aggregator organ to detect patterns and write to
+    state/patterns.md.  Purely additive: the kernel breaker
+    (breaker_mod.should_park) is unchanged and still runs every cycle.
+    The organ is at candidate lifecycle; its signals are surfaced but
+    not yet acted upon for blocking or escalation."""
+    organ = REPO / "body" / "organs" / "failure-aggregator" / "main.py"
+    if not organ.exists():
+        return
+    payload = json.dumps({"op": "aggregate", "journal_path": str(JOURNAL),
+                          "repo_path": str(REPO), "cycle": cycle})
+    try:
+        r = subprocess.run(["python3", str(organ)], input=payload,
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            print(f"failure-aggregator: exit {r.returncode}: {r.stderr[:200]}",
+                  file=sys.stderr)
+            return
+        data = json.loads(r.stdout or "{}")
+        for s in (data.get("signals") or []):
+            if s.get("action") == "surface":
+                print(f"  pattern: {s.get('class', '?')} on "
+                      f"'{s.get('task', '')[:60]}' "
+                      f"({s.get('count', 0)} rejections)")
+    except Exception as exc:
+        print(f"failure-aggregator: {exc}", file=sys.stderr)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="meristem", description="Meristem evolution loop")
     parser.add_argument("command", choices=["cycle", "status", "selftest", "gaps", "body",
@@ -776,10 +804,12 @@ def main(argv=None) -> int:
         append_jsonl(JOURNAL, {"kind": "fault", "cycle": cycle, "task": task,
                                "error": f"{type(exc).__name__}: {exc}"[:400]})
         print(f"cycle {cycle} FAULT: {type(exc).__name__}: {exc}", file=sys.stderr)
+        _try_aggregate_failures(cycle)
         return 2
     print(f"cycle {cycle}: {result.outcome} -- {result.reason}")
     if result.outcome == "candidate":
         print(f"candidate on branch {result.branch}; run substrate/supervisor.py promote")
+    _try_aggregate_failures(cycle)
     return 0
 
 
