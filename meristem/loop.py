@@ -727,7 +727,11 @@ def _try_aggregate_failures(cycle: int) -> None:
     state/patterns.md.  Purely additive: the kernel breaker
     (breaker_mod.should_park) is unchanged and still runs every cycle.
     The organ is at candidate lifecycle; its signals are surfaced but
-    not yet acted upon for blocking or escalation."""
+    not yet acted upon for blocking or escalation.
+
+    All graded signals (surface/escalate/block) are printed -- filtering
+    to 'surface' only was a cycle 203 regression that dropped severity
+    information G-006/circuit-breaker input needs."""
     organ = REPO / "body" / "organs" / "failure-aggregator" / "main.py"
     if not organ.exists():
         return
@@ -742,10 +746,10 @@ def _try_aggregate_failures(cycle: int) -> None:
             return
         data = json.loads(r.stdout or "{}")
         for s in (data.get("signals") or []):
-            if s.get("action") == "surface":
-                print(f"  pattern: {s.get('class', '?')} on "
-                      f"'{s.get('task', '')[:60]}' "
-                      f"({s.get('count', 0)} rejections)")
+            action = s.get("action", "surface")
+            print(f"  pattern [{action}]: {s.get('class', '?')} on "
+                  f"'{s.get('task', '')[:60]}' "
+                  f"({s.get('count', 0)} rejections)")
     except Exception as exc:
         print(f"failure-aggregator: {exc}", file=sys.stderr)
 
