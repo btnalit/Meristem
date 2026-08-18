@@ -58,7 +58,18 @@ CAP_MARKERS = (
     "kernel_loc_cap", "loc cap", "raise the cap", "increase the cap",
     "lower the cap", "内核上限", "扩容", "上限",
 )
-CAP_WORD = re.compile(r"\bcaps?\b")
+#: Keep in step with meristem.loop.CAP_INTENT. Tuned for PRECISION: after
+#: P-040 a false positive is refused-and-dropped (unrecoverable) while a miss
+#: still faces the review panel, so "new" and "move" are deliberately absent
+#: -- they are the mandate's own words for relief -- and the numeric branch
+#: takes only "to", since "under the cap of 3000" describes the budget rather
+#: than asking to move it.
+CAP_WORD = re.compile(
+    r"\b(raise|raising|increase|increasing|lower|lowering"
+    r"|adjust|adjusting|change|changing|set|setting)\b[^.]{0,20}?\bcaps?\b"
+    r"|\bnew\s+caps?\b"
+    r"|\bcaps?\b\s*to\s*\d"
+)
 CAP_HOME_SUBSTRATE = "meristem/gates/deterministic.py"
 
 

@@ -255,6 +255,89 @@ class TestCapGovernance(unittest.TestCase):
         )
         self.assertEqual(loop.route_proposal(case), "agenda")
 
+    #: The only surviving text of the five proposals the bare \bcaps?\b guard
+    #: ate (journal cycles 187, 194, 198, 199, 200). These are the journal's
+    #: `why` fields, which store why[:200] -- the FULL proposals no longer
+    #: exist anywhere, because "refused" meant dropped and nothing was kept.
+    #: The bug under test destroyed the evidence needed to verify its own fix,
+    #: so these truncations are the whole record. Every one is an
+    #: EXTERNALIZATION: exactly the relief the pressure mandate had asked for.
+    #:
+    #: ZERO DISCRIMINATING POWER, on purpose kept anyway. Not one surviving
+    #: prefix contains "cap" -- the matching word lived in the tail that was
+    #: dropped -- so these pass under the old regex too. They are a record of
+    #: what was destroyed, not armour. The armour is RELIEF_PHRASINGS and
+    #: golden fixture 7c. A corpus that cannot even reproduce the bug it
+    #: documents is the sharpest possible statement of how completely the
+    #: refusal path erased its own evidence.
+    EATEN = (
+        "Externalize meristem/journal.py (306 lines) into body/organs/journal/ "
+        "as a self-contained persistence organ with a clean read/write/query "
+        "interface. This brings core from 2865 to ~2559, freeing 441 li",
+        "Externalize the task-scheduling and failure-aggregation logic from "
+        "meristem/loop.py (787 LOC, the largest file) into a new organ under "
+        "body/organs/task-scheduler/. This organ would own: (a) the circui",
+        "Externalize failure aggregation and pattern-detection logic from "
+        "loop.py (817 LOC, the single largest file) into a new organ "
+        "`body/organs/failure-aggregator/`. This organ would own: (a) querying the j",
+        "Externalize the failure-history aggregation and task-scheduling logic "
+        "from loop.py (817 lines, the single largest file) into a new organ at "
+        "body/organs/task-scheduler/. This chunk — failure_history(),",
+        "Externalize the failure-history aggregation and retry/circuit-breaker "
+        "logic from loop.py (817 LOC, the single largest file) into a new organ "
+        "at body/organs/task-lifecycle/. The organ would own: (a) pe",
+    )
+
+    #: Relief phrasings that MUST survive. The mandate's own vocabulary for
+    #: options 1-3 is "move capability into an organ" and "a new organ", and a
+    #: proposal naturally cites the budget it is trying to get under.
+    RELIEF_PHRASINGS = (
+        "Externalize aggregation into a new organ to stay under the cap.",
+        "Move capability into an organ to bring loop.py under the cap of 3000.",
+        "Keeping loop.py below the cap at 3000 lines by growing an organ.",
+        "Externalize into a new organ; this brings core from 2865 to ~2559.",
+        # Load-bearing: these two sit INSIDE the 20-char window, so putting
+        # "new" or "move" back into the verb list turns them red. Without
+        # them the exclusion lives only in a comment, and the nearest other
+        # phrasing here clears the window by 25 characters -- the same cliff
+        # edge this fix was rejected for the first time around.
+        "a new organ under the cap",      # new -> cap: 17 chars
+        "move it back under the cap",     # move -> cap: 14 chars
+    )
+
+    def test_relief_proposals_are_not_eaten_by_the_cap_guard(self):
+        """The mandate asks for relief; the guard must not destroy the answer.
+
+        Five consecutive externalization proposals were read as incomplete cap
+        cases and dropped, so the queue stayed empty, pressure stayed high, and
+        reflect ran again -- a livelock built entirely out of my own guard. The
+        widening was priced when a false positive cost one held mailbox line;
+        P-040 changed the price to 'refused and dropped' without repricing it.
+        """
+        for text in self.EATEN:
+            self.assertEqual(loop.route_proposal(text), "agenda", text[:70])
+            self.assertFalse(loop.mentions_cap_change(text), text[:70])
+
+    def test_relief_vocabulary_is_not_mistaken_for_cap_intent(self):
+        """The mandate teaches "a new organ" and "move capability into an
+        organ"; a guard that reads those as budget requests eats the answers
+        to its own question. These are adversarial, not the eaten corpus:
+        the corpus only proves the old bug, not that the fix has margin."""
+        for text in self.RELIEF_PHRASINGS:
+            self.assertFalse(loop.mentions_cap_change(text), text)
+            self.assertEqual(loop.route_proposal(text), "agenda", text)
+
+    def test_real_cap_intents_are_still_caught(self):
+        for text in ("raise the cap to 4000",
+                     "adjust KERNEL_LOC_CAP",
+                     "提高上限到4000",
+                     "increase the cap because loop.py keeps growing",
+                     "set the cap at 3400",
+                     "Proposed new cap 3400",
+                     "change the kernel line cap",
+                     "lower the cap after externalizing the reporter"):
+            self.assertTrue(loop.mentions_cap_change(text), text)
+
     def test_complete_case_may_name_the_file_holding_the_budget(self):
         """Otherwise the rung-2 seat is decorative.
 
