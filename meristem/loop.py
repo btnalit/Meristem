@@ -731,27 +731,56 @@ def _try_aggregate_failures(cycle: int) -> None:
 
     All graded signals (surface/escalate/block) are printed -- filtering
     to 'surface' only was a cycle 203 regression that dropped severity
-    information G-006/circuit-breaker input needs."""
+    information G-006/circuit-breaker input needs.
+
+    Every outcome -- success, failure, timeout, exception -- produces a
+    journal entry with kind='aggregation' (G-008), recording the organ's
+    return value, exit code, and detected patterns, so the aggregator's
+    behaviour is observable and debuggable rather than invisible."""
     organ = REPO / "body" / "organs" / "failure-aggregator" / "main.py"
     if not organ.exists():
         return
     payload = json.dumps({"op": "aggregate", "journal_path": str(JOURNAL),
                           "repo_path": str(REPO), "cycle": cycle})
+    outcome, exit_code, data, signals_list, error = "exception", None, None, [], ""
     try:
         r = subprocess.run(["python3", str(organ)], input=payload,
                            capture_output=True, text=True, timeout=30)
+        exit_code = r.returncode
         if r.returncode != 0:
-            print(f"failure-aggregator: exit {r.returncode}: {r.stderr[:200]}",
-                  file=sys.stderr)
-            return
-        data = json.loads(r.stdout or "{}")
-        for s in (data.get("signals") or []):
+            outcome = "failure"
+            error = r.stderr[:400]
+        else:
+            try:
+                data = json.loads(r.stdout or "{}")
+                signals_list = (data.get("signals") or []) if isinstance(data, dict) else []
+                outcome = "success"
+            except json.JSONDecodeError as exc:
+                outcome = "bad_output"
+                error = f"JSONDecodeError: {exc}"[:300]
+                data = r.stdout[:400]
+    except subprocess.TimeoutExpired:
+        outcome = "timeout"
+    except Exception as exc:
+        outcome = "exception"
+        error = f"{type(exc).__name__}: {exc}"[:300]
+
+    patterns = [s.get("class", "?") for s in signals_list]
+    append_jsonl(JOURNAL, {"kind": "aggregation", "cycle": cycle,
+                           "outcome": outcome, "exit_code": exit_code,
+                           "return_value": data, "patterns": patterns,
+                           "error": error})
+
+    if outcome == "success":
+        for s in signals_list:
             action = s.get("action", "surface")
             print(f"  pattern [{action}]: {s.get('class', '?')} on "
                   f"'{s.get('task', '')[:60]}' "
                   f"({s.get('count', 0)} rejections)")
-    except Exception as exc:
-        print(f"failure-aggregator: {exc}", file=sys.stderr)
+    elif outcome == "timeout":
+        print("failure-aggregator: timeout after 30s", file=sys.stderr)
+    else:
+        print(f"failure-aggregator: {outcome}: {error[:200]}", file=sys.stderr)
 
 
 def main(argv=None) -> int:
