@@ -762,3 +762,14 @@ nothing.**
   - cycle 70: review:sensenova: op_explain removes the same node-existence validation: the old code returned {"ok": false, ...} for a missing node; the new code proceeds with node=None, returning zeroed-out fields (activation 0.0, l
 - **Detected at cycle:** 202
 
+
+## FA-019 — Repeated rejection: gate-weakening
+- **Task:** Externalize the failure-history aggregation and pattern-class detection logic fr
+- **Failure class:** gate-weakening
+- **Count:** 2 rejection(s)
+- **Representative reasons:**
+  - cycle 202: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+  - cycle 203: review:deepseek: The new classifier narrows what it inspects: it no longer scans per-reviewer `rejected_by[*].reasons`, and it drops the old broad keywords (weaken/gate/invariant/secret/protected/root/substrate/closur
+  - cycle 203: review:deepseek: The organ's selfcheck no longer exercises classification at all; it just runs aggregate on /dev/null. A completely broken `_classify` would pass the organ's own health check, removing a prior validati
+- **Detected at cycle:** 203
+
