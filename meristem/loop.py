@@ -177,6 +177,14 @@ def golden_fixtures() -> list[str]:
         failures.append("cap-case check called a complete case incomplete")
     if route_proposal(argued) != "agenda":
         failures.append("a complete cap case did not reach the review panel")
+    # 7c. Relief proposals must survive the cap guard. Real text, from one of
+    #     five consecutive externalization proposals the bare \bcaps?\b ate:
+    #     each was read as an incomplete cap case and DROPPED, so the mandate
+    #     asked for relief, the guard destroyed the answer, and the queue
+    #     stayed empty. The guard must match an intent to MOVE the budget.
+    relief = "Externalize aggregation into a new organ to stay under the cap."
+    if route_proposal(relief) != "agenda":
+        failures.append("the cap guard ate an externalization proposal")
 
     return failures
 
@@ -335,12 +343,37 @@ CAP_CASE_REQUIRED = (
 )
 
 
+#: An INTENT to move a budget, not the mere appearance of the word. A bare
+#: \bcaps?\b caught every externalization proposal that said "bring pressure
+#: under the cap" -- five in a row were read as incomplete cap cases and
+#: DISCARDED, which is how the pressure mandate livelocked: reflect proposes
+#: relief, the guard eats it, the queue stays empty, reflect runs again.
+#:
+#: Tuned for PRECISION, not recall, because P-040 made the two errors wildly
+#: asymmetric. A missed cap intent is cheap: it still faces the review panel
+#: and review.py's hard limits (pressure >= 0.90, step <= 10%, constant only).
+#: A false positive is unrecoverable: the proposal is refused and dropped, and
+#: nothing survives to appeal. So the guard is deliberately narrow.
+#:
+#: Excluded on purpose: "new" and "move" as verbs -- "into a NEW organ to get
+#: under the cap" and "MOVE capability into an organ" are the mandate's own
+#: vocabulary for relief. "new cap" survives as its own idiom. The second
+#: alternative takes only "to": "under the cap of 3000" and "sits at the cap
+#: at 3000" describe the budget, they do not ask to move it.
+CAP_INTENT = re.compile(
+    r"\b(raise|raising|increase|increasing|lower|lowering"
+    r"|adjust|adjusting|change|changing|set|setting)\b[^.]{0,20}?\bcaps?\b"
+    r"|\bnew\s+caps?\b"
+    r"|\bcaps?\b\s*to\s*\d"
+)
+
+
 def mentions_cap_change(text: str) -> bool:
     """Case-insensitive matching so paraphrases don't bypass the fence."""
     lowered = text.lower()
     if any(marker.lower() in lowered for marker in CAP_PROPOSAL_MARKERS):
         return True
-    return re.search(r"\bcaps?\b", lowered) is not None
+    return CAP_INTENT.search(lowered) is not None
 
 
 def cap_case_missing(text: str) -> list[str]:
