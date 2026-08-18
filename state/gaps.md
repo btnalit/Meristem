@@ -160,3 +160,34 @@ and invoked from `_try_aggregate_failures()` every cycle:
 - The one visible signal is a printed line reading
   `pattern: unclassified on '<task>' (2 rejections)` — the classifier
   reached a verdict of `unclassified` for that group.
+
+## G-009 — A working organ checker exists and nothing calls it
+
+- `body/organs/selfcheck-runner/` was promoted by cycle 210 (commit 1fc2e4c5).
+  `grep -rn "selfcheck-runner\|selfcheck_runner" meristem/ substrate/`
+  returns nothing: no call site exists in the kernel or the substrate.
+- Run by hand against the live organ set, it returns:
+
+      {"ok": false,
+       "results": [
+         {"organ": "failure-aggregator", "ok": false,
+          "error": "exit 1: Traceback (most recent call last):\n
+            File \"body/organs/failure-aggregator/main.py\", line 34,
+            in <module>\n from classify import classify, ...\n
+            File \"body/organs/failure-aggregator/classify.py\", line 21\n
+            dominant-class detection.\n SyntaxError: invalid syntax"},
+         {"organ": "memory-graph", "ok": true, "results": [], "failures": []}
+       ],
+       "failures": ["failure-aggregator"]}
+
+- `failure-aggregator` was rewritten by cycle 206 (promoted). Before that
+  rewrite it appended 18 entries to `state/patterns.md`; since it, none.
+- Cycle 209 attempted this same task with a kernel call site and was refused
+  `deterministic: kernel is 3001 lines, over the 3000 cap`. Cycle 210 was
+  promoted with zero kernel lines. Its own rationale records the reason:
+  "The validator-enforcement half ... is deliberately deferred to avoid
+  adding kernel lines while at the cap; it can be done in a separate
+  mutation when core pressure drops."
+- `_try_aggregate_failures()` in `meristem/loop.py` catches every exception
+  from the aggregator organ, prints to stderr, and returns; no journal
+  record is written for either a success or a failure.
