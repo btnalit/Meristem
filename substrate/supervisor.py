@@ -505,6 +505,16 @@ def rollback(reason: str) -> int:
         print("nothing to roll back to")
         return 1
     git("revert", "--no-edit", "--no-commit", f"{last_good}..HEAD", check=False)
+    if not git("diff", "--cached", "--name-only"):
+        # An earlier rollback already landed the tree at last-good, so the
+        # revert staged nothing and `commit` exits non-zero on an empty tree.
+        # That RuntimeError escaped the beat firewall and stopped the keeper
+        # while the FIRST rollback had in fact succeeded (P-055). Narrowed to
+        # the empty case on purpose: a lock file or a full disk must still
+        # raise, so this is not a catch-all around the commit.
+        print(f"already at {last_good[:12]}; nothing left to revert")
+        notify("rollback", f"Already at last-good {last_good[:12]}: {reason}")
+        return 0
     git("-c", "user.name=meristem-substrate",
         "-c", "user.email=substrate@localhost",
         "commit", "-q", "-m", f"revert: auto-rollback to last-good\n\nreason: {reason}")
