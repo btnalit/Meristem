@@ -433,8 +433,18 @@ def promote() -> int:
     ok, output = canary(candidate)
     if not ok:
         print(f"REFUSED: canary boot failed\n{output}", file=sys.stderr)
+        # Identity first, summary second. unittest prints the failing test's
+        # name near the TOP of its output and the tally at the bottom, so a
+        # plain output[-400:] kept "Ran 146 tests / FAILED (failures=1)" and
+        # dropped the only fact the seed could act on. failure_history() then
+        # hands it just reason[:200], so the names must lead (cycle 225 was
+        # refused this way and had no way to learn which test it broke).
+        named = re.findall(r"(?:FAIL|ERROR): [^\n]+", output)
+        tally = re.findall(r"FAILED \([^)]*\)", output)
+        reason = ("; ".join(named) + (" || " + tally[-1] if tally else "")
+                  if named else output[-400:])
         _journal({"kind": "canary_reject", "commit": candidate[:12],
-                  "why": why, "reason": output[-400:]})
+                  "why": why, "reason": reason[:400]})
         git("update-ref", "-d", CANDIDATE_REF, check=False)
         return 5
 
