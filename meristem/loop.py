@@ -689,9 +689,9 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
                           + ", ".join(cap_case_missing(text))})
             refused += 1
         elif route == "mailbox":
+            hit = next((p for p in PROPOSAL_GUARDED if p in CAP_CITE.sub("", text.lower())), "?")
             with mailbox_path.open("a", encoding="utf-8") as handle:
-                handle.write("- PROPOSAL (needs human review, names guarded "
-                             f"ground): {text}\n")
+                handle.write(f"- PROPOSAL (held, names guarded ground {hit!r}): {text}\n")
             all_dedup_lines.append(f"- [ ] {text}")
             held += 1
         else:
