@@ -341,8 +341,8 @@ PROPOSAL_GUARDED = (
 #: mutations. The seat demotes on evidence, but the argued-case requirement
 #: never demotes (monotonicity).
 CAP_HOME = "meristem/gates/deterministic.py"
-#: A per-file citation: a kernel path followed by its line count.
-CAP_CITE = re.compile(r"meristem/[\w/.-]+\.py[\s:]*\d+")
+#: A citation: kernel path + its size, bare or parenthesised. Never \s -- a newline before the number is prose, not a citation, and stripping it let a rewrite intent through (P-052).
+CAP_CITE = re.compile(r"meristem/[\w/.-]+\.py(?:[ \t:]*\d+|[ \t]*\(\d+[^)]{0,12}\))")
 
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
@@ -426,7 +426,7 @@ def route_proposal(text: str) -> str:
         # meristem/gates/, so an honest case always named guarded ground.
         rest = CAP_CITE.sub("", lowered).replace(CAP_HOME, "")
         return "mailbox" if any(p in rest for p in PROPOSAL_GUARDED) else "agenda"
-    if any(p in lowered for p in PROPOSAL_GUARDED):
+    if any(p in CAP_CITE.sub("", lowered) for p in PROPOSAL_GUARDED):
         return "mailbox"
     return "agenda"
 
@@ -689,9 +689,9 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
                           + ", ".join(cap_case_missing(text))})
             refused += 1
         elif route == "mailbox":
+            hit = next((p for p in PROPOSAL_GUARDED if p in CAP_CITE.sub("", text.lower())), "?")
             with mailbox_path.open("a", encoding="utf-8") as handle:
-                handle.write("- PROPOSAL (needs human review, names guarded "
-                             f"ground): {text}\n")
+                handle.write(f"- PROPOSAL (held, names guarded ground {hit!r}): {text}\n")
             all_dedup_lines.append(f"- [ ] {text}")
             held += 1
         else:
