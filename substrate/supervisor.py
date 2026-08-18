@@ -71,6 +71,8 @@ CAP_WORD = re.compile(
     r"|\bcaps?\b\s*to\s*\d"
 )
 CAP_HOME_SUBSTRATE = "meristem/gates/deterministic.py"
+#: Keep in step with meristem.loop.CAP_CITE: a per-file LOC citation.
+CAP_CITE_SUBSTRATE = re.compile(r"meristem/[\w/.-]+\.py[\s:]*\d+")
 
 
 #: Tracked files the loop writes in the MAIN worktree: reflect appends to
@@ -144,7 +146,10 @@ def _is_guarded_proposal(text: str) -> bool:
         # The budgets live in guarded ground, so a case must name it to be
         # actionable. Drop that one mention; anything guarded still standing
         # holds the proposal.
-        rest = lowered.replace(CAP_HOME_SUBSTRATE, "")
+        # The mandate requires a per-file breakdown and four kernel files
+        # sit under meristem/gates/, so an honest case always cited guarded
+        # ground. Strip citations (path + line count) only.
+        rest = CAP_CITE_SUBSTRATE.sub("", lowered).replace(CAP_HOME_SUBSTRATE, "")
         return any(p in rest for p in PROPOSAL_GUARDED_SUBSTRATE)
     return any(p in lowered for p in PROPOSAL_GUARDED_SUBSTRATE)
 

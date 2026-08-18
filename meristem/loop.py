@@ -185,6 +185,18 @@ def golden_fixtures() -> list[str]:
     relief = "Externalize aggregation into a new organ to stay under the cap."
     if route_proposal(relief) != "agenda":
         failures.append("the cap guard ate an externalization proposal")
+    # 7d. The per-file format the mandate DEMANDS cites gates files, which
+    #     forced every complete case into the mailbox. Real text, from the
+    #     seed's first complete case. A citation is not a request to edit.
+    cited = ("Change the cap. per-file: meristem/loop.py 904, "
+             "meristem/gates/review.py 196, meristem/gates/probes.py 198. "
+             "Core pressure 0.99, closure pressure 0.77. Already externalized "
+             "the aggregator; insufficient. Proposed new cap 3200. Expected "
+             "closure impact: none.")
+    if route_proposal(cited) != "agenda":
+        failures.append("the per-file requirement forced a cap case to a human")
+    if route_proposal(cited + " Also rewrite meristem/gates/review.py.") != "mailbox":
+        failures.append("a cap case bought passage past the gates fence")
 
     return failures
 
@@ -329,6 +341,8 @@ PROPOSAL_GUARDED = (
 #: mutations. The seat demotes on evidence, but the argued-case requirement
 #: never demotes (monotonicity).
 CAP_HOME = "meristem/gates/deterministic.py"
+#: A per-file citation: a kernel path followed by its line count.
+CAP_CITE = re.compile(r"meristem/[\w/.-]+\.py[\s:]*\d+")
 
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
@@ -407,7 +421,10 @@ def route_proposal(text: str) -> str:
     if mentions_cap_change(text):
         if cap_case_missing(text):
             return "refused"
-        rest = lowered.replace(CAP_HOME, "")
+        # Strip per-file CITATIONS (path + line count) before the fence check:
+        # the mandate demands that breakdown and four kernel files sit under
+        # meristem/gates/, so an honest case always named guarded ground.
+        rest = CAP_CITE.sub("", lowered).replace(CAP_HOME, "")
         return "mailbox" if any(p in rest for p in PROPOSAL_GUARDED) else "agenda"
     if any(p in lowered for p in PROPOSAL_GUARDED):
         return "mailbox"
