@@ -410,9 +410,16 @@ Options in priority order:
   1. externalize -- move capability into an organ (lowers both pressures).
   2. prune -- delete something that stopped earning its lines.
   3. compress or internalize with equal deletion (budget-neutral only).
-  4. change the cap -- LAST. Must supply the full case: per-file LOC,
-     core pressure, closure pressure, what was externalized/pruned and why
-     insufficient, proposed value, expected closure impact.
+  4. change the cap -- LAST. The check is LITERAL: your text must contain
+     each of these phrases, unbroken --
+       "per-file" (give the per-file LOC breakdown under it)
+       "core pressure"
+       "closure pressure"
+       "already externalized"
+       "proposed" (the new value)
+       "expected" (state the expected closure impact under it)
+     Five cases were refused for missing the same phrases while arguing the
+     substance perfectly well. The checker reads words; write those words.
 
 Reply with ONLY: {"proposals": ["one concrete relief"]}"""
 
@@ -520,22 +527,6 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             _s = _line.strip()
             if _s.startswith("- [ ] "):
                 open_proposals.append(_s[6:].strip()[:80])
-    if open_proposals:
-        digest += (
-            "\n\n## Already proposed (DO NOT repeat these)\n"
-            + "\n".join(f"- {p}" for p in open_proposals)
-        )
-    # Feed refused cap cases so the seed learns what was incomplete.
-    _ref = [r for r in read_jsonl(JOURNAL)
-            if r.get("kind") == "cap_case_refused"][-3:]
-    if _ref:
-        digest += ("\n\n## Cap cases refused as incomplete (fix, do not repeat)\n"
-                   + "\n".join(f"- {r.get('why','')[:100]} -- {r.get('reason','')}"
-                               for r in _ref))
-    # Self-observation: read the rendered REPORT.md for aggregate evidence.
-    report_text = read_text(REPO / "REPORT.md")
-    if report_text.strip():
-        digest += "\n\n## Self-report (last heartbeat)\n" + report_text[:2000]
     if pressure:
         # Under mandate, replace the generic ask with a focused relief request.
         breakdown = "\n".join(
@@ -550,6 +541,36 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             f"{closure_mod.compute([]).tokens}/{deterministic.CLOSURE_TOKEN_CAP}\n\n"
             f"## Gaps\n{gaps_text}\n\n{PRESSURE_MANDATE_ASK}"
         )
+    # MEMORY IS APPENDED TO BOTH BASES. The mandate replaces the QUESTION, not
+    # what has already been learned. These three used to sit above `if
+    # pressure:` and were wiped by the replacement -- harmless when pressure
+    # was occasional (P-021's era), starvation once it became chronic at 0.95+
+    # and nearly every reflection ran in mandate mode:
+    #   - already-proposed: mandate could not see what it had just proposed,
+    #     so cycle 202 re-proposed the organ cycle 197 had already built.
+    #   - refused cap cases: cap cases are ONLY authored under the mandate,
+    #     so the one mode that needed the refusal reasons was the one mode
+    #     that could not see them. Five cases, same elements missing, zero
+    #     convergence.
+    #   - self-report: previously documented as "absent under pressure by
+    #     design"; that note was wrong and is retracted.
+    # P-021 warned against diluting the single answer a mandate asks for.
+    # "What you already proposed" prevents waste and "why it was refused" is
+    # what makes the answer converge -- neither dilutes the ask.
+    if open_proposals:
+        digest += (
+            "\n\n## Already proposed (DO NOT repeat these)\n"
+            + "\n".join(f"- {p}" for p in open_proposals)
+        )
+    _ref = [r for r in read_jsonl(JOURNAL)
+            if r.get("kind") == "cap_case_refused"][-3:]
+    if _ref:
+        digest += ("\n\n## Cap cases refused as incomplete (fix, do not repeat)\n"
+                   + "\n".join(f"- {r.get('why','')[:100]} -- {r.get('reason','')}"
+                               for r in _ref))
+    report_text = read_text(REPO / "REPORT.md")
+    if report_text.strip():
+        digest += "\n\n## Self-report (last heartbeat)\n" + report_text[:2000]
     messages = [
         {
             "role": "system",

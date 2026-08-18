@@ -1665,6 +1665,93 @@ class TestReflectCommand(unittest.TestCase):
             label = text.split("- PROPOSAL (", 1)[1].split(")", 1)[0]
             self.assertNotIn(": ", label, "a colon in the label breaks dedup")
 
+    def _capture_digest(self, tmpdir, *, pressure, seed_journal=None):
+        """Run one reflect and return the digest that reached the model."""
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        state = tmpdir / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "gaps.md").write_text("## G-001 gap\n", encoding="utf-8")
+        (state / "patterns.md").write_text("## P-001 pat\n", encoding="utf-8")
+        (state / "proposals.md").write_text("- [ ] an existing proposal\n",
+                                            encoding="utf-8")
+        control = tmpdir / "control"
+        control.mkdir(parents=True, exist_ok=True)
+        (control / "agenda.md").write_text("# Agenda\n", encoding="utf-8")
+        (tmpdir / "REPORT.md").write_text("# Meristem Report\nagr: 0.42\n",
+                                          encoding="utf-8")
+        (tmpdir / "meristem").mkdir(parents=True, exist_ok=True)
+        (tmpdir / "meristem" / "x.py").write_text("x = 1\n", encoding="utf-8")
+        journal = state / "journal.jsonl"
+        for row in (seed_journal or []):
+            append_jsonl(journal, row)
+
+        captured = {}
+
+        def _capture(role, messages, config=None):
+            captured["digest"] = messages[-1]["content"]
+            return llm.Completion(text=json.dumps({"proposals": ["t"]}),
+                                  model="test")
+
+        argv = ["reflect", "--pressure"] if pressure else ["reflect"]
+        buf = io.StringIO()
+        with patch("meristem.loop.REPO", tmpdir), \
+             patch("meristem.loop.CONTROL", control), \
+             patch("meristem.loop.JOURNAL", journal), \
+             patch("meristem.loop.llm_mod.complete", _capture), \
+             patch("meristem.loop.germline.invoke",
+                   return_value={"ok": True, "result": {"stale": []}}), \
+             patch("meristem.loop.ledger_mod.record", return_value=0.0), \
+             patch("meristem.loop.ledger_mod.check"), \
+             patch("meristem.loop.ledger_mod.drain_attempts", return_value=0), \
+             patch("meristem.loop.llm_mod.load_models", return_value={}):
+            with contextlib.redirect_stdout(buf):
+                loop.main(argv)
+        return captured["digest"]
+
+    def test_the_mandate_replaces_the_question_not_the_memory(self):
+        """Under pressure the digest was REPLACED, wiping three feedback
+        sections that are appended above it. Harmless when pressure was
+        occasional; starvation once it sat at 0.95+ and nearly every
+        reflection ran in mandate mode. The worst case was self-inflicted:
+        cap cases are only authored UNDER the mandate, so the one mode that
+        needed the refusal reasons was the one mode that could not see them.
+        """
+        refusal = {"kind": "cap_case_refused", "cycle": 1,
+                   "why": "raise the cap", "reason": "missing per-file"}
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._capture_digest(pathlib.Path(tmp), pressure=True,
+                                          seed_journal=[refusal])
+            self.assertIn("Kernel LOC by file", digest, "mandate base present")
+            self.assertIn("Already proposed", digest)
+            self.assertIn("Cap cases refused", digest)
+            self.assertIn("missing per-file", digest)
+            self.assertIn("Self-report", digest)
+
+    def test_ordinary_reflect_still_carries_the_same_memory(self):
+        refusal = {"kind": "cap_case_refused", "cycle": 1,
+                   "why": "raise the cap", "reason": "missing per-file"}
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._capture_digest(pathlib.Path(tmp), pressure=False,
+                                          seed_journal=[refusal])
+            self.assertIn("Reflection digest", digest, "ordinary base present")
+            self.assertNotIn("Kernel LOC by file", digest)
+            self.assertIn("Already proposed", digest)
+            self.assertIn("Cap cases refused", digest)
+            self.assertIn("Self-report", digest)
+
+    def test_mandate_states_the_literal_phrases_the_checker_wants(self):
+        """cap_case_missing matches literal substrings. Five real cases were
+        refused for missing the same phrases while arguing the substance
+        fine, so the contract has to be readable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._capture_digest(pathlib.Path(tmp), pressure=True)
+            for phrase in loop.CAP_CASE_REQUIRED:
+                self.assertIn(f'"{phrase}"', digest,
+                              f"mandate must name the literal phrase {phrase}")
+
     def test_reflect_appends_at_most_three(self):
         """reflect must cap proposals at three, even if the model returns more."""
         import io
