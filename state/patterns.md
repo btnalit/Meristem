@@ -553,3 +553,212 @@ nothing.**
 - **Instance:** `promote()` believed a candidate existed when none did.
 - **Structural fix:** One `resolve()` helper using `--verify --quiet` is the
   only way the substrate resolves a ref. `substrate/supervisor.py`.
+
+## FA-001 — Repeated rejection: gate-weakening
+- **Task:** Add ONE function to body/organs/memory-graph/main.py named pipeline_check(workdi
+- **Failure class:** gate-weakening
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 74: review:deepseek: The selfcheck operation no longer returns `ok: false` when the pipeline detects 'no edges from >10 nodes' or 'all pattern nodes undated'. Previously it returned a hard failure (`ok: false` with a `fai
+  - cycle 74: review:deepseek: The `_current_cycle` function lost the broad `OSError`/`FileNotFoundError` catch-all, replacing it with only an `exists()` check. If the journal file exists but is unreadable (e.g. permission error), 
+  - cycle 75: review:deepseek: Selfcheck no longer fails when pipeline problems exist (no edges with >10 nodes, all pattern nodes undated); it returns ok with problems listed, weakening the gate that previously rejected such states
+  - cycle 75: review:deepseek: Error handling changed: exception details are removed from failure messages, making failures harder to diagnose and attribute.
+  - cycle 76: review:deepseek: Removes fields from the ABI responses of build, query, stale, and explain ops, breaking the existing structured return contract.
+  - cycle 76: review:deepseek: Rewrites the selfcheck op to test modules with hardcoded trivial data instead of the real workdir, weakening its ability to detect actual pipeline failures.
+- **Detected at cycle:** 202
+
+
+## FA-002 — Repeated rejection: gate-weakening
+- **Task:** Add a `report` command to meristem/loop.py that writes REPORT.md at the reposito
+- **Failure class:** gate-weakening
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 82: deterministic: review closure is ~50148 tokens, over the 50000 budget -- split the organ before growing it
+  - cycle 83: review:deepseek: Removes gitignore entries for meristem-vault/, eval-vault/, meristem-wt-*/, and meristem-canary/, which were defence-in-depth gates preventing accidental commit of sensitive or transient artifacts.
+  - cycle 83: review:deepseek: The constitution states 'The eval vault must NEVER be committed'; the previous gitignore helped enforce that. Removing it weakens the gate and makes accidental exposure more likely.
+  - cycle 84: review:deepseek: .gitignore change removes entries that protected eval vault, transient worktrees, and environment files from being committed, weakening defense-in-depth against accidental exposure of sensitive data a
+  - cycle 84: review:deepseek: Removing the .gitignore entry for `meristem-vault/` and `eval-vault/` directly contradicts the constitution's requirement that the vault must never be committed.
+- **Detected at cycle:** 202
+
+
+## FA-003 — Repeated rejection: probe-regression
+- **Task:** Add a `utility` command to meristem/loop.py that reads state/journal.jsonl and p
+- **Failure class:** probe-regression
+- **Count:** 2 rejection(s)
+- **Representative reasons:**
+  - cycle 88: probes: regression on frozen probe 'probe-kernel-selftest': 100.00 -> 0.00
+- **Detected at cycle:** 202
+
+
+## FA-004 — Repeated rejection: unclassified
+- **Task:** Add a golden fixture to meristem/loop.py golden_fixtures() covering a failure cl
+- **Failure class:** unclassified
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 4: review:deepseek: The diff replaces the entire contents of state/patterns.md, deleting all existing pattern entries (P-002 through P-007 and the original P-001) and renumbering/repurposing P-001. This violates Principl
+  - cycle 4: review:deepseek: The deletion of pattern history reduces the effectiveness of the meta-over-patch principle (Principle 2), which relies on patterns.md as the memory of failure classes. Without these entries, the syste
+- **Detected at cycle:** 202
+
+
+## FA-005 — Repeated rejection: gate-weakening
+- **Task:** Add an op "explain" to body/organs/memory-graph/main.py taking args {"id": "..."
+- **Failure class:** gate-weakening
+- **Count:** 2 rejection(s)
+- **Representative reasons:**
+  - cycle 57: review:sensenova: op_query and op_explain convert a hard failure into a success response: when a node is not found, the old code returned {"ok": false, "result": {"error": "..."}} but the new code returns {"found": fal
+  - cycle 57: review:sensenova: op_selfcheck is substantially weakened: the old version created a controlled temporary workdir with proper state files and tested the full extract→edges→decay pipeline end-to-end with type assertions.
+  - cycle 60: review:deepseek: Error response format changed from {"ok": false, "result": {"error": "..."}} to {"ok": false, "error": "..."}, breaking the documented ABI and making error attribution harder for callers that expect t
+  - cycle 60: review:deepseek: Query response no longer includes the full "activations" dict; only the activation of the queried node is returned. This removes information that may be relied upon by the immune system probes, potent
+- **Detected at cycle:** 202
+
+
+## FA-006 — Repeated rejection: gate-weakening
+- **Task:** Append one new capability gap to state/gaps.md that you observed while running, 
+- **Failure class:** gate-weakening
+- **Count:** 10 rejection(s)
+- **Representative reasons:**
+  - cycle 25: deterministic: state/gaps.md drops append-only entries ['G-001', 'G-002', 'G-003', 'G-004', 'G-005'] -- registers may gain entries, never lose them
+  - cycle 26: deterministic: state/gaps.md drops append-only entries ['G-001', 'G-002', 'G-003', 'G-004', 'G-005'] -- registers may gain entries, never lose them
+  - cycle 27: review:sensenova: The task explicitly requires 'Append only: every existing G-NNN heading must survive.' The diff replaces all five existing G-001 through G-005 entries with entirely different content rather than appen
+  - cycle 27: review:sensenova: Violates Principle 6 (change is not delete): removing the new wording does not leave the original principle recognizable — the old entries are gone, not supplemented. The old G-001 ('Cannot run unatte
+- **Detected at cycle:** 202
+
+
+## FA-007 — Repeated rejection: gate-weakening
+- **Task:** Collect organ utility. meristem/germline.py already journals an "organ_call" rec
+- **Failure class:** gate-weakening
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 106: review:deepseek: The diff makes only two cosmetic changes: a docstring line wrap and added whitespace in the Pressures digest string.
+  - cycle 106: review:deepseek: No check, assertion, threshold, cap, quorum, visibility, or invariant is removed, narrowed, or relaxed.
+- **Detected at cycle:** 202
+
+
+## FA-008 — Repeated rejection: gate-weakening
+- **Task:** EXTERNALIZE: Move generate_report() formatting logic from meristem/loop.py into 
+- **Failure class:** gate-weakening
+- **Count:** 6 rejection(s)
+- **Representative reasons:**
+  - cycle 146: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+  - cycle 156: review:deepseek: Bypasses germline.invoke by using subprocess.run directly, which weakens the gate that controls organ execution (lifecycle validation, resource limits, probes).
+  - cycle 156: review:sensenova: Direct subprocess.run invocation bypasses germline.invoke entirely, circumventing the lifecycle gate that requires organs to be 'active' before invocation. The mutation explicitly acknowledges this ('
+  - cycle 157: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+- **Detected at cycle:** 202
+
+
+## FA-009 — Repeated rejection: probe-regression
+- **Task:** EXTERNALIZE: Move generate_report() from meristem/loop.py into a new organ body/
+- **Failure class:** probe-regression
+- **Count:** 2 rejection(s)
+- **Representative reasons:**
+  - cycle 133: deterministic: organ 'reporter': an organ may not reach register/active with no probes
+  - cycle 134: deterministic: organ 'reporter': an organ may not reach register/active with no probes
+- **Detected at cycle:** 202
+
+
+## FA-010 — Repeated rejection: unclassified
+- **Task:** EXTERNALIZE: Move journal aggregation and task lifecycle (take_task, done_tasks,
+- **Failure class:** unclassified
+- **Count:** 2 rejection(s)
+- **Representative reasons:**
+  - cycle 165: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+  - cycle 167: review:deepseek: reviewer unavailable: review:deepseek failed after 4 attempts: HTTP Error 429: Too Many Requests
+- **Detected at cycle:** 202
+
+
+## FA-011 — Repeated rejection: gate-weakening
+- **Task:** Externalize the circuit breaker for repeated review rejections (G-006) into a ne
+- **Failure class:** gate-weakening
+- **Count:** 4 rejection(s)
+- **Representative reasons:**
+  - cycle 190: review:deepseek: Organ's _read_jsonl returns [] when the journal path is missing, so should_park silently becomes False (retry) instead of failing loud; a missing/corrupt journal now disables the circuit breaker witho
+  - cycle 190: review:deepseek: The shim passes str(JOURNAL) while running the organ with cwd=str(_ORGAN_DIR); if JOURNAL is relative, the organ reads a non-existent path and the breaker never trips.
+  - cycle 191: engine proposed no files and no appends -- output budget exhausted (in=42147, out=42825, of which reasoning=25305); the task likely requires rewriting more than one large file at once
+  - cycle 192: probes: regression on frozen probe 'probe-kernel-selftest': 100.00 -> 40.00
+- **Detected at cycle:** 202
+
+
+## FA-012 — Repeated rejection: gate-weakening
+- **Task:** GROWTH (G-001): Implement a mailbox acknowledgment protocol with timestamp, stat
+- **Failure class:** gate-weakening
+- **Count:** 4 rejection(s)
+- **Representative reasons:**
+  - cycle 173: deterministic: kernel is 3150 lines, over the 3000 cap
+  - cycle 174: mutate:glm failed after 4 attempts: The read operation timed out
+  - cycle 175: review:deepseek: Adds a probe rubric (state/probe-proposals/probe-mailbox-ack-basic/rubric/check.py) inside the repository/worktree, violating Principle 4's physical-invisibility invariant for rubrics.
+  - cycle 175: review:deepseek: The mutation engine can now read the exact scoring logic and craft organ behavior to pass the probe, weakening the internal probe as a genuine gate.
+- **Detected at cycle:** 202
+
+
+## FA-013 — Repeated rejection: unclassified
+- **Task:** GROWTH (G-002): Add syscall-level dependency observation to strengthen the closu
+- **Failure class:** unclassified
+- **Count:** 5 rejection(s)
+- **Representative reasons:**
+  - cycle 179: deterministic: kernel is 3013 lines, over the 3000 cap
+  - cycle 180: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+  - cycle 181: deterministic: kernel is 3030 lines, over the 3000 cap
+- **Detected at cycle:** 202
+
+
+## FA-014 — Repeated rejection: unclassified
+- **Task:** GROWTH (self-detection): Add a reflect sub-mode that scans the kernel for unexer
+- **Failure class:** unclassified
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 183: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+  - cycle 184: mutate:glm failed after 4 attempts: HTTP Error 429: Too Many Requests
+  - cycle 185: deterministic: kernel is 3071 lines, over the 3000 cap
+- **Detected at cycle:** 202
+
+
+## FA-015 — Repeated rejection: gate-weakening
+- **Task:** Make meristem/breaker.py delegate counting to the journal-query organ when that 
+- **Failure class:** gate-weakening
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 112: review:deepseek: When the journal-query organ is active, breaker.rejections_for/faults_for use unchecked organ output instead of the old deterministic journal counts; an organ that returns lower counts (or an empty re
+  - cycle 112: review:deepseek: Malformed organ responses are silently accepted as zeros via result.get(..., 0); a missing key returns (0,0) instead of raising and falling back, converting a hard failure into silent default-continue
+  - cycle 113: review:deepseek: The breaker's retry budget now trusts counts returned by the journal-query organ whenever it is active, and the only validation is key-presence; a stale, undercounting, or malformed organ result (e.g.
+  - cycle 113: review:deepseek: The organ's count semantics (including the P-016 fault-exclusion rule) are not part of this review closure; the diff asserts equivalence with the inline logic without demonstrating it, so reviewers ca
+  - cycle 114: review:deepseek: The breaker's parking gate no longer derives rejection/fault counts directly from the journal whenever the journal-query organ is active; it trusts organ-supplied cycles and faulted_cycles. An active 
+  - cycle 114: review:deepseek: The organ result is only type-checked at the outer list level, not validated for task ownership, row shape, or consistency with the journal. Malformed list contents raise outside the try/except, so th
+- **Detected at cycle:** 202
+
+
+## FA-016 — Repeated rejection: closure-budget
+- **Task:** Make meristem/breaker.py delegate to the journal-query organ when it is active, 
+- **Failure class:** closure-budget
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 97: deterministic: review closure is ~51180 tokens, over the 50000 budget -- split the organ before growing it
+  - cycle 98: deterministic: review closure is ~50916 tokens, over the 50000 budget -- split the organ before growing it
+  - cycle 99: deterministic: review closure is ~51360 tokens, over the 50000 budget -- split the organ before growing it
+- **Detected at cycle:** 202
+
+
+## FA-017 — Repeated rejection: gate-weakening
+- **Task:** Make the dating in body/organs/memory-graph/extract.py actually take effect: eve
+- **Failure class:** gate-weakening
+- **Count:** 3 rejection(s)
+- **Representative reasons:**
+  - cycle 63: review:deepseek: The new _parse_register function no longer checks that the node id starts with the expected prefix (P, G, B) for the respective register file. The old code enforced that only entries with the correct 
+  - cycle 63: review:deepseek: Even though the primary goal is to fix dating, the removal of the prefix check is an unintended relaxation that could allow erroneous or misattributed entries into the graph.
+  - cycle 64: review:sensenova: Organ nodes lose the 'probes' field entirely — information that downstream consumers (decay, edge rules, or review gates checking probe coverage) may depend on is silently removed. This narrows what t
+  - cycle 64: review:sensenova: Cycle node titles are truncated to 80 characters (`str(row.get('why', ''))[:80]`). Edge rules that match pattern/gap ids in cycle titles could miss matches in the truncated portion, weakening the memo
+  - cycle 65: review:deepseek: Removal of the 'probes' field from organ nodes reduces the information available to the memory graph, weakening the ability to track probe relationships and potentially undermining immune system monit
+  - cycle 65: review:deepseek: Truncation of cycle node title to 80 characters may lose information, though this is a minor concern.
+- **Detected at cycle:** 202
+
+
+## FA-018 — Repeated rejection: unclassified
+- **Task:** Strengthen the memory-graph selfcheck so it would have caught this. In addition 
+- **Failure class:** unclassified
+- **Count:** 5 rejection(s)
+- **Representative reasons:**
+  - cycle 69: review:deepseek: Changed error response structure from nested {'ok': false, 'result': {'error': ...}} to flat {'ok': false, 'error': ...}, breaking any consumer that expects the old format and making errors harder to 
+  - cycle 69: review:deepseek: Removed 'current_cycle' from op_query and op_stale results, reducing information available to callers.
+  - cycle 70: review:sensenova: op_query removes the node-existence validation: the old code returned {"ok": false, ...} when the requested node_id was not found; the new code silently returns {"ok": true, "result": {"node": null, .
+  - cycle 70: review:sensenova: op_explain removes the same node-existence validation: the old code returned {"ok": false, ...} for a missing node; the new code proceeds with node=None, returning zeroed-out fields (activation 0.0, l
+- **Detected at cycle:** 202
+

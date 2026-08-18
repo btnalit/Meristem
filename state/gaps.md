@@ -139,3 +139,24 @@ Observed facts, recorded as evidence:
   feedback channel.
 - Constitution Principle 2 assigns the detection of failure CLASSES, rather
   than instances, to the loop itself.
+
+## G-008 — The aggregator's own runs leave no trace in the journal
+
+Observed facts about `body/organs/failure-aggregator/`, built by cycle 197
+and invoked from `_try_aggregate_failures()` every cycle:
+
+- The organ works. On 2026-08-18 it appended 18 entries (FA-001..FA-018,
+  209 insertions, 0 deletions) to `state/patterns.md`, aggregating repeated
+  rejections per task across cycles 74-83 and later, each with a failure
+  class, a count, and representative reviewer reasons.
+- Its call site records nothing. `_try_aggregate_failures()` prints organ
+  failures to stderr and returns; a non-zero exit, a timeout, an exception,
+  or a malformed reply all leave the journal unchanged. A successful run
+  leaves the journal unchanged too. There is no `kind` for this organ.
+- Consequence, observed: between the organ's promotion and its first
+  written entries, `{"ok": true, "signals": [], "patterns_written": []}`
+  was its actual return value when run by hand, and nothing in the journal
+  distinguished that state from "the organ never ran".
+- The one visible signal is a printed line reading
+  `pattern: unclassified on '<task>' (2 rejections)` — the classifier
+  reached a verdict of `unclassified` for that group.
