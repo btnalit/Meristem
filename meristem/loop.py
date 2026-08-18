@@ -341,8 +341,8 @@ PROPOSAL_GUARDED = (
 #: mutations. The seat demotes on evidence, but the argued-case requirement
 #: never demotes (monotonicity).
 CAP_HOME = "meristem/gates/deterministic.py"
-#: A per-file citation: a kernel path followed by its line count.
-CAP_CITE = re.compile(r"meristem/[\w/.-]+\.py[\s:]*\d+")
+#: A citation: kernel path + its size, bare or parenthesised. Never \s -- a newline before the number is prose, not a citation, and stripping it let a rewrite intent through (P-052).
+CAP_CITE = re.compile(r"meristem/[\w/.-]+\.py(?:[ \t:]*\d+|[ \t]*\(\d+[^)]{0,12}\))")
 
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
@@ -426,7 +426,7 @@ def route_proposal(text: str) -> str:
         # meristem/gates/, so an honest case always named guarded ground.
         rest = CAP_CITE.sub("", lowered).replace(CAP_HOME, "")
         return "mailbox" if any(p in rest for p in PROPOSAL_GUARDED) else "agenda"
-    if any(p in lowered for p in PROPOSAL_GUARDED):
+    if any(p in CAP_CITE.sub("", lowered) for p in PROPOSAL_GUARDED):
         return "mailbox"
     return "agenda"
 
