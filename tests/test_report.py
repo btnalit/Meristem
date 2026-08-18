@@ -93,7 +93,13 @@ class TestReportCommand(unittest.TestCase):
                 {"kind": "report", "cycle": 1, "core_pressure": 0.4,
                  "closure_pressure": 0.3},
             ])
-            # kernel_loc=2700 -> 2700/3000 = 0.90 (up from 0.40)
+            # kernel_loc=2700 -> 2700/KERNEL_LOC_CAP, up from 0.40. DERIVED,
+            # never hardcoded: the cap is designed to be raised through the
+            # governance ladder, and pinning 3000 into the arithmetic here
+            # made an approved cap case fail the canary on a test that has
+            # nothing to do with what it changed (cycle 225, cap 3000->3200).
+            # The mocked 2700 must stay above 0.40 * cap or the arrow below
+            # flips to flat and the assertion stops meaning "went up".
             # closure tokens=15000 -> 15000/50000 = 0.30 (flat from 0.30)
             import io
             import contextlib
@@ -109,7 +115,7 @@ class TestReportCommand(unittest.TestCase):
                 with contextlib.redirect_stdout(buf):
                     loop.main(["report"])
             report = (tmpdir / "REPORT.md").read_text(encoding="utf-8")
-            self.assertIn("0.90", report)
+            self.assertIn(f"{2700 / loop.deterministic.KERNEL_LOC_CAP:.2f}", report)
             self.assertIn("\u2191", report)  # core went up
             self.assertIn("0.30", report)
             self.assertIn("\u2192", report)  # closure flat
