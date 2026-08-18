@@ -584,11 +584,12 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             f"{len(q.read_text(encoding='utf-8').splitlines())} lines"
             for q in sorted((REPO / "meristem").rglob("*.py"))
         )
+        _ck = sorted([(closure_mod._estimate_tokens(closure_mod.organ_closure(o.id).paths), o.id) for o in germline.registry()] + [(closure_mod._estimate_tokens([q]), q.name) for q in sorted((REPO / "state").glob("*.md"))], key=lambda x: -x[0])[:3]
+        _cb = closure_mod.compute([]).tokens
         digest = (
             f"## Kernel LOC by file\n{breakdown}\n\n"
-            f"## Pressures\ncore {deterministic.kernel_loc()}/"
-            f"{deterministic.KERNEL_LOC_CAP}; closure "
-            f"{closure_mod.compute([]).tokens}/{deterministic.CLOSURE_TOKEN_CAP}\n\n"
+            f"## Pressures\ncore {deterministic.kernel_loc()}/{deterministic.KERNEL_LOC_CAP}; closure {_cb}/{deterministic.CLOSURE_TOKEN_CAP} (headroom {deterministic.CLOSURE_TOKEN_CAP - _cb}; one mutation adds the whole organ dir plus every file it touches; largest chunks: "
+            + ", ".join(f"{n} {t}" for t, n in _ck) + ")\n\n"
             f"## Gaps\n{gaps_text}\n\n{PRESSURE_MANDATE_ASK}"
         )
     # MEMORY IS APPENDED TO BOTH BASES. The mandate replaces the QUESTION, not
@@ -876,8 +877,7 @@ def main(argv=None) -> int:
         print(f"kernel LOC      : {loc} / {deterministic.KERNEL_LOC_CAP}")
         print(f"  core pressure : {core_pressure:.2f}"
               + ("  <- externalize capability into an organ" if core_pressure >= 0.9 else ""))
-        print(f"  closure press : {closure_pressure:.2f} ({closure_now} tokens)"
-              + ("  <- split an organ" if closure_pressure >= 0.9 else ""))
+        print(f"  closure press : {closure_pressure:.2f} ({closure_now} tokens); headroom {deterministic.CLOSURE_TOKEN_CAP - closure_now} for everything a mutation touches")
         print(f"organs (body)   : {len(organs)}"
               + (f"  [{', '.join(f'{o.id}:{o.lifecycle}' for o in organs)}]" if organs else ""))
         print(f"MCR by tier     : {tiers or '(none accepted yet)'}")
