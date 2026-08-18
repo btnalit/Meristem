@@ -218,10 +218,10 @@ def run(
     verdict.notes["closure_tokens"] = computed.tokens
     verdict.notes["closure_files"] = len(computed.paths)
     if not computed.fits:
-        verdict.fail(
-            f"review closure is ~{computed.tokens} tokens, over the "
-            f"{CLOSURE_TOKEN_CAP} budget -- split the organ before growing it"
-        )
+        base = closure_mod.compute([], CLOSURE_TOKEN_CAP, root)
+        heavy = sorted(((closure_mod._estimate_tokens([p]), f"{p.parent.name}/{p.name}") for p in computed.paths - base.paths), key=lambda x: -x[0])[:3]
+        verdict.fail(f"closure ~{computed.tokens} > {CLOSURE_TOKEN_CAP} budget. Kernel+control "
+                     f"~{base.tokens} always counted. Droppable: " + (", ".join(f"{n} ~{t}" for t, n in heavy) or "none -- baseline alone is over"))
     if declared_closure is not None and computed.tokens > declared_closure:
         verdict.fail(f"real closure ~{computed.tokens} exceeds declared {declared_closure}")
     for edge in computed.undeclared:
