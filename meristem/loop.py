@@ -545,7 +545,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         "## Gaps\n"
         f"{gaps_text}\n\n"
         "## Patterns\n"
-        f"{patterns_text}\n\n"
+        f"{patterns_text[-8000:]}\n\n"
         "Propose up to three concrete, actionable next tasks for Meristem. "
         "Each should be specific enough to be taken from the agenda and "
         "executed as a single mutation.\n\n"
