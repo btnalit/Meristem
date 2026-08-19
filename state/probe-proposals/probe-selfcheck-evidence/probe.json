@@ -1,0 +1,5 @@
+{
+  "id": "probe-selfcheck-evidence",
+  "capability_domain": "selfcheck",
+  "description": "Verifies that each organ's selfcheck exercises its primary function by checking for organ-specific evidence in the output."
+}
