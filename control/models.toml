@@ -96,11 +96,35 @@ usd_out = 0.0
 
 # Cheapest adequate, highest quota. Executable check.py rubrics are preferred
 # and cost nothing; this role only handles what cannot be asserted.
-[roles.score]
-id = "score"
+#
+# TWO slots, unlike the review panel. The panel's slots deliberately do not
+# fall back -- substituting a reviewer collapses its independence. That
+# argument does not reach here: score is not a reviewer, and it is not the
+# author of a mutation either (mutate:glm is), so P-029's author-and-judge
+# collapse cannot happen through this role. Note this slot ALREADY shares a
+# model with review:sensenova, so the second slot introduces no new coupling.
+#
+# What it does have is a single point of failure. This slot has failed 18
+# times (empty content at finish_reason=length, 429, HTTP 500) and
+# HEALTH_FAIL_LIMIT stops the whole loop after three consecutive beats --
+# twice now. A second lineage turns those into a slower beat, not a dead run.
+[[roles.score.slots]]
+id = "score:sensenova"
 lineage = "sensenova"
 base_url = "https://token.sensenova.cn/v1"
 model = "sensenova-6.8-flash-lite"
+api_key_env = "SENSENOVA_API_KEY"
+temperature = 0.0
+max_tokens = 32000
+timeout = 600
+usd_in = 0.0
+usd_out = 0.0
+
+[[roles.score.slots]]
+id = "score:deepseek"
+lineage = "deepseek"
+base_url = "https://token.sensenova.cn/v1"
+model = "deepseek-v4-flash"
 api_key_env = "SENSENOVA_API_KEY"
 temperature = 0.0
 max_tokens = 32000
