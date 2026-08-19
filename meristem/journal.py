@@ -60,18 +60,18 @@ def failure_history(journal_path, task: str, limit: int = 3) -> str:
             reasons: list[str] = []
             reason_text = row.get("reason", "")
             if reason_text and not reason_text.startswith("review rejected"):
-                reasons.append(reason_text[:200])
+                reasons.append(reason_text[:500])
             for rej in row.get("rejected_by") or []:
                 slot = rej.get("slot", "unknown")
                 for r in rej.get("reasons") or []:
-                    reasons.append(f"{slot}: {r[:200]}")
+                    reasons.append(f"{slot}: {r[:500]}")
             if reasons:
                 entries.append((str(row.get("cycle", "?")), reasons))
 
         elif kind == "canary_reject":
             reason_text = row.get("reason", "")
             if reason_text:
-                entries.append(("canary", [reason_text[:200]]))
+                entries.append(("canary", [reason_text[:500]]))
 
     if not entries:
         return ""

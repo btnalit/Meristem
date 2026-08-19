@@ -297,7 +297,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
                             if v.get("verdict") == "approve"],
             "rejected_by": [
                 {"slot": v.get("slot"), "weakens_gate": v.get("weakens_gate"),
-                 "reasons": [str(r)[:200] for r in (v.get("reasons") or [])[:3]]}
+                 "reasons": [str(r)[:500] for r in (v.get("reasons") or [])[:5]]}
                 for v in result.votes if v.get("verdict") != "approve"
             ],
             "tier": result.tier,
