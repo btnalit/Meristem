@@ -91,49 +91,46 @@ def invoke(organ_id: str, payload: dict, *, caller: str = "kernel",
            timeout: int = 120, cycle: int = 0) -> dict:
     """Call an active organ over the fixed ABI: stdin JSON -> stdout JSON.
 
-    Every call is an observed dependency edge; the closure calculator reads
-    these from the journal (see gates/closure.py). The caller parameter
-    identifies who invoked the organ -- "kernel" by default, or the calling
-    organ's id when one organ calls another -- so organ-to-organ edges become
-    observable rather than assumed.
-
-    The record written to the journal now includes the outcome (success/failure)
-    and the cycle number, so the utility command can report successful invocations
-    and last-used cycle.
+    Every call is an observed dependency edge (closure calculator reads these
+    from the journal). The journal record captures the full execution outcome
+    -- exit code, return value, error, and outcome classification -- so that
+    silent organ failures are visible and the circuit breaker can distinguish
+    failure modes rather than seeing only a boolean.
     """
     organ = load(organ_id)
     if organ is None or not organ.is_active:
         raise MeristemError(f"organ '{organ_id}' is not active")
-    # Record the call before execution, then update with outcome after.
-    # We write a single record that includes the outcome after the call.
-    # Use a try-except to capture failure and still write the record.
-    success = False
-    result = {}
+
+    exit_code, outcome, result, error = None, "exception", {}, ""
     try:
         proc = subprocess.run(
-            organ.entrypoint,
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(organ.path),
+            organ.entrypoint, input=json.dumps(payload),
+            capture_output=True, text=True, timeout=timeout, cwd=str(organ.path),
         )
+        exit_code = proc.returncode
         if proc.returncode != 0:
+            outcome, error = "failure", proc.stderr[:400]
             raise MeristemError(f"organ '{organ_id}' exited {proc.returncode}: {proc.stderr[:400]}")
         try:
             result = json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
+            outcome, error = "bad_output", f"non-JSON stdout: {exc}"[:300]
             raise MeristemError(f"organ '{organ_id}' returned non-JSON on stdout") from exc
-        success = True
+        outcome = "success"
+    except subprocess.TimeoutExpired:
+        outcome, error = "timeout", f"timed out after {timeout}s"
+        raise
+    except MeristemError:
+        raise
+    except Exception as exc:
+        outcome, error = "exception", f"{type(exc).__name__}: {exc}"[:300]
+        raise
     finally:
         append_jsonl(JOURNAL, {
-            "kind": "organ_call",
-            "caller": caller,
-            "callee": organ_id,
-            "success": success,
-            "cycle": cycle,
+            "kind": "organ_call", "caller": caller, "callee": organ_id,
+            "cycle": cycle, "outcome": outcome, "success": outcome == "success",
+            "exit_code": exit_code,
+            "return_value": result if outcome == "success" else None,
+            "error": error,
         })
-    if not success:
-        # If we failed, the exception was already raised; this line is unreachable
-        pass
     return result
