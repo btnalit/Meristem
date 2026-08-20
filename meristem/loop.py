@@ -543,7 +543,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
         "## Stale knowledge (low-activation node ids)\n"
         f"{', '.join(stale_ids) if stale_ids else '(none)'}\n\n"
         "## Gaps\n"
-        f"{gaps_text}\n\n"
+        f"{gaps_text[-8000:]}\n\n"
         "## Patterns\n"
         f"{patterns_text[-8000:]}\n\n"
         "Propose up to three concrete, actionable next tasks for Meristem. "
@@ -590,7 +590,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             f"## Kernel LOC by file\n{breakdown}\n\n"
             f"## Pressures\ncore {deterministic.kernel_loc()}/{deterministic.KERNEL_LOC_CAP}; closure {_cb}/{deterministic.CLOSURE_TOKEN_CAP} (headroom {deterministic.CLOSURE_TOKEN_CAP - _cb}; one mutation adds the whole organ dir plus every file it touches; largest chunks: "
             + ", ".join(f"{n} {t}" for t, n in _ck) + ")\n\n"
-            f"## Gaps\n{gaps_text}\n\n{PRESSURE_MANDATE_ASK}"
+            f"## Gaps\n{gaps_text[-8000:]}\n\n{PRESSURE_MANDATE_ASK}"
         )
     # MEMORY IS APPENDED TO BOTH BASES. The mandate replaces the QUESTION, not
     # what has already been learned. These three used to sit above `if
