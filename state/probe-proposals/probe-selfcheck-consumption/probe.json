@@ -1,0 +1,6 @@
+{
+  "id": "probe-selfcheck-consumption",
+  "capability_domain": "selfcheck-loop",
+  "organ": "selfcheck-runner",
+  "note": "Rubric intentionally omitted from staging. This probe verifies immune behavior (failure consumption), so its scoring logic must not be visible to the mutation engine. The rubric is authored directly in the vault by the human, outside the repository and worktree."
+}

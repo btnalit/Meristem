@@ -773,3 +773,28 @@ nothing.**
   - cycle 203: review:deepseek: The organ's selfcheck no longer exercises classification at all; it just runs aggregate on /dev/null. A completely broken `_classify` would pass the organ's own health check, removing a prior validati
 - **Detected at cycle:** 203
 
+
+## P-030 — Immune-behavior probe rubrics must not be staged visibly
+
+**Class:** A probe that verifies the immune system's own behavior (e.g.,
+selfcheck consumption, gate firing, failure escalation) has its scoring
+logic staged in state/probe-proposals/<id>/rubric/check.py, which is
+visible to the mutation engine. The engine can read the exact pass/fail
+conditions and tune future proposals to pass the probe without actually
+fixing the underlying immune gap.
+
+**Root cause:** The probe staging protocol allows rubric/check.py in the
+staging area, which is visible to the engine. This is acceptable for
+capability probes (the engine cannot fake capability), but dangerous for
+immune-behavior probes (the engine can fake the appearance of immune
+function by satisfying the visible rubric without closing the actual gap).
+
+**Structural fix:** Immune-behavior probes stage only the statement
+(what is being tested) in the repository. The rubric (how it is scored)
+is authored directly in the vault by the human, outside the repository
+and worktree. The staging proposal notes this explicitly.
+
+**Evidence:** cycles 292–293 rejected probe-selfcheck-consumption twice
+for the same failure class: first for staging rubric/check.py, then for
+embedding the rubric logic in task.md prose. Both were the same class:
+scoring logic visible to the engine.
