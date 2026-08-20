@@ -1429,6 +1429,34 @@ class TestFailureHistory(unittest.TestCase):
             self.assertIn("cycle 3", result)
             self.assertIn("cycle 4", result)
 
+    def test_faults_do_not_consume_the_history_window(self):
+        """A run of 429s must not push the real objections out of the window.
+
+        The window keeps the last `limit` entries. A fault is a mechanism
+        failure -- the proposal was never judged -- so counting faults as
+        entries let three rate-limit retries flush the reviewer objections
+        the seed actually needs to see. Same distinction the breaker already
+        makes (P-016): a fault is not a verdict.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            j = pathlib.Path(tmp) / "journal.jsonl"
+            lines = [
+                json.dumps({"kind": "cycle", "cycle": 1, "outcome": "rejected",
+                            "why": "task F", "reason": "review rejected (0/2)",
+                            "rejected_by": [{"slot": "r1",
+                                             "reasons": ["the real objection"]}]}),
+            ]
+            for c in (2, 3, 4):
+                lines.append(json.dumps({"kind": "fault", "cycle": c,
+                                         "task": "task F", "error": "HTTP 429"}))
+                lines.append(json.dumps({"kind": "cycle", "cycle": c,
+                                         "outcome": "rejected", "why": "task F",
+                                         "reason": "mutate:glm failed: HTTP 429"}))
+            j.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+            result = journal_mod.failure_history(j, "task F", limit=3)
+            self.assertIn("the real objection", result)
+            self.assertNotIn("429", result)
+
     def test_different_task_not_included(self):
         with tempfile.TemporaryDirectory() as tmp:
             j = pathlib.Path(tmp) / "journal.jsonl"

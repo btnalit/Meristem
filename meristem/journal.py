@@ -49,14 +49,14 @@ def failure_history(journal_path, task: str, limit: int = 3) -> str:
     Returns a formatted string suitable for engine.propose(extra=...).
     Empty string when no prior failures exist for this task.
     """
-    entries: list[tuple[str, list[str]]] = []
+    entries, faulted = [], {r.get("cycle") for r in read_jsonl(journal_path) if r.get("kind") == "fault"}
     for row in read_jsonl(journal_path):
         kind = row.get("kind", "")
         why = row.get("why", "")
         if why != task:
             continue
 
-        if kind == "cycle" and row.get("outcome") == "rejected":
+        if kind == "cycle" and row.get("outcome") == "rejected" and row.get("cycle") not in faulted:
             reasons: list[str] = []
             reason_text = row.get("reason", "")
             if reason_text and not reason_text.startswith("review rejected"):
