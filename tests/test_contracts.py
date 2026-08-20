@@ -674,3 +674,114 @@ class TestApprovalSeatRearm(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProbePromotion(unittest.TestCase):
+    """The staged-proposal -> vault path (P-062).
+
+    control/probe-protocol.md documents it; until 2026-08-20 only the seed's
+    half existed. Eight proposals were staged and two probes were live, both
+    placed by hand at birth, so no probe the seed ever wrote had scored.
+    """
+
+    def _stage(self, root, pid, body, statement="check the thing"):
+        d = root / "state" / "probe-proposals" / pid
+        (d / "rubric").mkdir(parents=True)
+        (d / "statement").mkdir(parents=True)
+        (d / "probe.json").write_text(
+            json.dumps({"id": pid, "capability_domain": "test"}), encoding="utf-8")
+        (d / "statement" / "task.md").write_text(statement, encoding="utf-8")
+        (d / "rubric" / "check.py").write_text(body, encoding="utf-8")
+        return d
+
+    def _run(self, root):
+        import importlib
+        sup = importlib.import_module("substrate.supervisor")
+        old_repo, old_vault, old_stage, old_journal = (
+            sup.REPO, sup.VAULT, sup.PROBE_STAGING, sup.JOURNAL)
+        sup.REPO = root
+        sup.VAULT = root / "vault"
+        sup.PROBE_STAGING = root / "state" / "probe-proposals"
+        sup.JOURNAL = root / "state" / "journal.jsonl"
+        try:
+            return sup.promote_probes()
+        finally:
+            (sup.REPO, sup.VAULT, sup.PROBE_STAGING, sup.JOURNAL) = (
+                old_repo, old_vault, old_stage, old_journal)
+
+    GOOD = "import json,sys; sys.stdin.read(); print(json.dumps({'score': 42.0}))"
+
+    def test_valid_proposal_reaches_the_vault(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            self._stage(root, "probe-good", self.GOOD)
+            self.assertEqual(self._run(root), 1)
+            landed = root / "vault" / "internal" / "active" / "probe-good"
+            self.assertTrue((landed / "rubric" / "check.py").is_file())
+            self.assertTrue(json.loads(
+                (landed / "probe.json").read_text(encoding="utf-8"))["frozen"])
+            self.assertFalse((root / "state" / "probe-proposals" / "probe-good").exists(),
+                             "staging must be cleared: staged-and-promoted is not a state")
+
+    def test_missing_rubric_is_refused_with_a_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            d = self._stage(root, "probe-norubric", self.GOOD)
+            (d / "rubric" / "check.py").unlink()
+            self.assertEqual(self._run(root), 0)
+            self.assertFalse((root / "vault" / "internal" / "active" / "probe-norubric").exists())
+            rows = [json.loads(l) for l in
+                    (root / "state" / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
+            refused = [r for r in rows if r.get("kind") == "probe_refused"]
+            self.assertEqual(len(refused), 1)
+            self.assertIn("rubric", refused[0]["reason"])
+
+    def test_a_score_that_depends_on_where_it_lives_is_refused(self):
+        """A rubric reading its own cwd scores differently once it moves.
+
+        Such a probe is not frozen -- the first thing that moved it would read
+        as a capability regression -- so it must not enter the vault at all.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            self._stage(root, "probe-wandering",
+                        "import json,os,sys; sys.stdin.read(); "
+                        "print(json.dumps({'score': 1.0 if 'vault' in os.getcwd() else 0.0}))")
+            self.assertEqual(self._run(root), 0)
+            self.assertFalse((root / "vault" / "internal" / "active" / "probe-wandering").exists(),
+                             "a half-copied probe must be removed again")
+            rows = [json.loads(l) for l in
+                    (root / "state" / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
+            self.assertIn("location-dependent",
+                          [r.get("reason", "") for r in rows if r.get("kind") == "probe_refused"][0])
+
+    def test_promotion_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            self._stage(root, "probe-once", self.GOOD)
+            self.assertEqual(self._run(root), 1)
+            self._stage(root, "probe-once", self.GOOD)
+            self.assertEqual(self._run(root), 0, "already in the vault; must not re-promote")
+
+    def test_zero_score_is_promoted_not_refused(self):
+        """A probe measuring something that does not work yet scores 0.
+
+        The probe gate fails on REGRESSION, never on an absolute score, and a
+        probe with no history cannot fail anything. Refusing zeros would throw
+        away exactly the probes that make a broken thing measurable.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            self._stage(root, "probe-zero",
+                        "import json,sys; sys.stdin.read(); print(json.dumps({'score': 0.0}))")
+            self.assertEqual(self._run(root), 1)
+            rows = [json.loads(l) for l in
+                    (root / "state" / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
+            rec = [r for r in rows if r.get("kind") == "probe_promoted"][0]
+            self.assertEqual(rec["score"], 0.0)
+            self.assertEqual(len(rec["sha256"]), 64, "the freeze is recorded as a hash")

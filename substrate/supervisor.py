@@ -22,11 +22,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import random
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -497,6 +499,109 @@ def publish() -> None:
               file=sys.stderr)
 
 
+#: Probe staging -> vault. control/probe-protocol.md: "the seed writes
+#: proposals into the repository; the gates promote validated proposals into
+#: the vault. The seed never touches the vault directly." The seed held up its
+#: half -- eight proposals staged by 2026-08-20, four of them in one day -- and
+#: this half did not exist. No probe the seed ever wrote had scored anything,
+#: so Loop B ("the measuring stick precedes the capability") was an open
+#: circuit: it kept making sticks that never measured.
+VAULT = pathlib.Path(os.environ.get("MERISTEM_VAULT", REPO.parent / "meristem-vault"))
+PROBE_STAGING = REPO / "state" / "probe-proposals"
+
+
+def _score_probe(probe_dir, probe_id: str):
+    """Run one rubric the way the kernel does -- without importing the kernel.
+
+    Substrate mirrors the contract instead of calling meristem.gates.probes,
+    for the reason _is_guarded_proposal mirrors the fence: the seed may legally
+    mutate the kernel, and a promotion path that asked the kernel whether a
+    probe is sound would let the seed answer for itself. Returns None when the
+    rubric cannot produce a score at all.
+    """
+    check = probe_dir / "rubric" / "check.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(check)],
+            input=json.dumps({"workdir": str(REPO), "probe": probe_id}),
+            capture_output=True, text=True, timeout=120, cwd=str(probe_dir))
+        return float(json.loads(result.stdout or "{}").get("score", 0.0))
+    except (subprocess.SubprocessError, ValueError, OSError,
+            json.JSONDecodeError, TypeError):
+        return None
+
+
+def promote_probes() -> int:
+    """Validated staged proposals become frozen vault probes.
+
+    A probe that scores 0 is NOT refused. The probe gate fails on REGRESSION
+    (probes.run: score < previous), and a probe with no history cannot fail
+    anything -- its first run only records a baseline. Several of these will
+    score 0 on arrival because they measure organs that are built but never
+    called; that zero is the point. It is the first time "not wired" becomes
+    a number instead of a paragraph.
+    """
+    if not PROBE_STAGING.is_dir():
+        return 0
+    promoted = 0
+    for src in sorted(p for p in PROBE_STAGING.iterdir() if p.is_dir()):
+        pid = src.name
+        dest = VAULT / "internal" / "active" / pid
+        if dest.exists():
+            continue
+        refuse, manifest, staged = None, {}, None
+        try:
+            manifest = json.loads((src / "probe.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            refuse = f"unreadable probe.json: {exc}"
+        if refuse is None and manifest.get("id") != pid:
+            refuse = f"probe.json id {manifest.get('id')!r} != directory {pid!r}"
+        if refuse is None and not (src / "statement" / "task.md").is_file():
+            refuse = "no statement/task.md"
+        check = src / "rubric" / "check.py"
+        if refuse is None and not check.is_file():
+            refuse = "no rubric/check.py"
+        if refuse is None:
+            try:
+                compile(check.read_text(encoding="utf-8"), str(check), "exec")
+            except (OSError, SyntaxError) as exc:
+                refuse = f"rubric does not compile: {exc}"
+        if refuse is None:
+            staged = _score_probe(src, pid)
+            if staged is None:
+                refuse = "rubric returned no score"
+        if refuse is None:
+            # Score again from inside the vault. A rubric that reaches for
+            # relative paths scores differently once its cwd moves, and a probe
+            # whose value depends on where it lives is not frozen -- it would
+            # read as a capability regression the first time anything moved.
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dest)
+            manifest["frozen"] = True
+            (dest / "probe.json").write_text(
+                json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            vaulted = _score_probe(dest, pid)
+            if vaulted is None or vaulted != staged:
+                shutil.rmtree(dest, ignore_errors=True)
+                refuse = f"location-dependent: staged {staged} vs vault {vaulted}"
+        if refuse is not None:
+            # Refusals are journalled too. A rubric that cannot be promoted
+            # would otherwise be re-validated every beat with nobody told why.
+            _journal({"kind": "probe_refused", "probe_id": pid, "reason": refuse[:300]})
+            print(f"probe refused: {pid}: {refuse}", file=sys.stderr)
+            continue
+        # The hash is the freeze made literal. The seed cannot reach the vault,
+        # but this is the first path by which seed-authored code enters it, so
+        # the contents get a fingerprint on the way in -- any later divergence
+        # is then detectable, including from a bug of mine.
+        _journal({"kind": "probe_promoted", "probe_id": pid, "score": staged,
+                  "sha256": hashlib.sha256(check.read_bytes()).hexdigest()})
+        shutil.rmtree(src, ignore_errors=True)
+        print(f"probe promoted: {pid} (baseline {staged})")
+        promoted += 1
+    return promoted
+
+
 def rollback(reason: str) -> int:
     """Revert, never reset. The failure is recorded, not erased."""
     last_good = resolve(LAST_GOOD)
@@ -648,6 +753,11 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             # process that produced it.
             if resolve(CANDIDATE_REF):
                 promote()
+            # After promotion, not before: a candidate that just landed may
+            # have staged the very proposal being promoted here. Staging is
+            # deleted on success, and that deletion rides the NEXT beat's
+            # _commit_state, which is where every other state change goes.
+            promote_probes()
             # Clear the budget only once the WHOLE beat came through. Resetting
             # right after the subprocess looked equivalent and was not: promote()
             # raises AFTER that point, so every beat wiped the exception budget
