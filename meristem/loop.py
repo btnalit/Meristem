@@ -80,6 +80,14 @@ def take_task() -> str | None:
     return journal.take_task(JOURNAL, REPO, CONTROL)
 
 
+def estimate_closure(task: str) -> int:
+    """Pre-proposal closure estimate (FA-016). Over-inclusion is acceptable."""
+    base = closure_mod.compute([]).tokens
+    extra = sum(closure_mod.organ_closure(o.id).tokens
+                for o in germline.registry() if o.id in task.lower())
+    return base + extra
+
+
 def make_worktree(cycle: int):
     """A fresh branch + worktree: the mutation's transaction boundary."""
     branch = f"cycle-{cycle}-{uuid.uuid4().hex[:8]}"
@@ -342,7 +350,7 @@ PROPOSAL_GUARDED = (
 #: never demotes (monotonicity).
 CAP_HOME = "meristem/gates/deterministic.py"
 #: A citation: kernel path + its size, bare or parenthesised. Never \s -- a newline before the number is prose, not a citation, and stripping it let a rewrite intent through (P-052).
-CAP_CITE = re.compile(r"meristem/[\w/.-]+\.py(?:[ \t:]*\d+|[ \t]*\(\d+[^)]{0,12}\))")
+CAP_CITE = re.compile(r"meristem/[\w/..-]+\.py(?:[ \t:]*\d+|[ \t]*\(\d+[^)]{0,12}\))")
 
 CAP_PROPOSAL_MARKERS = (
     "KERNEL_LOC_CAP", "kernel_loc_cap", "loc cap", "LOC cap",
@@ -592,22 +600,10 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
             + ", ".join(f"{n} {t}" for t, n in _ck) + ")\n\n"
             f"## Gaps\n{gaps_text[-8000:]}\n\n{PRESSURE_MANDATE_ASK}"
         )
-    # MEMORY IS APPENDED TO BOTH BASES. The mandate replaces the QUESTION, not
-    # what has already been learned. These three used to sit above `if
-    # pressure:` and were wiped by the replacement -- harmless when pressure
-    # was occasional (P-021's era), starvation once it became chronic at 0.95+
-    # and nearly every reflection ran in mandate mode:
-    #   - already-proposed: mandate could not see what it had just proposed,
-    #     so cycle 202 re-proposed the organ cycle 197 had already built.
-    #   - refused cap cases: cap cases are ONLY authored under the mandate,
-    #     so the one mode that needed the refusal reasons was the one mode
-    #     that could not see them. Five cases, same elements missing, zero
-    #     convergence.
-    #   - self-report: previously documented as "absent under pressure by
-    #     design"; that note was wrong and is retracted.
-    # P-021 warned against diluting the single answer a mandate asks for.
-    # "What you already proposed" prevents waste and "why it was refused" is
-    # what makes the answer converge -- neither dilutes the ask.
+    # MEMORY IS APPENDED TO BOTH BASES (P-021): the mandate replaces the
+    # question, not what was already learned. Without already-proposed and
+    # refused-cap-case context, the mandate re-proposed existing work and
+    # never converged on a complete cap case.
     if open_proposals:
         digest += (
             "\n\n## Already proposed (DO NOT repeat these)\n"
@@ -741,20 +737,9 @@ def generate_report() -> int:
 
 
 def _try_aggregate_failures(cycle: int) -> None:
-    """Call failure-aggregator organ to detect patterns and write to
-    state/patterns.md.  Purely additive: the kernel breaker
-    (breaker_mod.should_park) is unchanged and still runs every cycle.
-    The organ is at candidate lifecycle; its signals are surfaced but
-    not yet acted upon for blocking or escalation.
-
-    All graded signals (surface/escalate/block) are printed -- filtering
-    to 'surface' only was a cycle 203 regression that dropped severity
-    information G-006/circuit-breaker input needs.
-
-    Every outcome -- success, failure, timeout, exception -- produces a
-    journal entry with kind='aggregation' (G-008), recording the organ's
-    return value, exit code, and detected patterns, so the aggregator's
-    behaviour is observable and debuggable rather than invisible."""
+    """Call failure-aggregator to detect patterns and write to state/patterns.md.
+    Purely additive: breaker_mod.should_park still runs every cycle. All
+    signals are printed (G-006). Every outcome journals kind='aggregation' (G-008)."""
     organ = REPO / "body" / "organs" / "failure-aggregator" / "main.py"
     if not organ.exists():
         return
@@ -899,6 +884,15 @@ def main(argv=None) -> int:
         reason_str = journal.park_task(task, JOURNAL, REPO)
         print(f"task parked: {task} ({reason_str})")
         _notify_park(task, reason_str)
+        return 0
+
+    # Pre-proposal closure estimate (FA-016): park before spending a model call.
+    est = estimate_closure(task)
+    if est > deterministic.CLOSURE_TOKEN_CAP:
+        reason = f"closure estimate ~{est} > {deterministic.CLOSURE_TOKEN_CAP}"
+        journal.park_task(task, JOURNAL, REPO)
+        print(f"task parked: {task} ({reason})")
+        _notify_park(task, reason)
         return 0
 
     cycle = journal.next_cycle(JOURNAL)
