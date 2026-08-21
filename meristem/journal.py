@@ -50,7 +50,7 @@ def failure_history(journal_path, task: str, limit: int = 3) -> str:
     for row in read_jsonl(journal_path):
         kind = row.get("kind", "")
         why = row.get("why", "")
-        if why != task:
+        if why.strip().lower() != task.strip().lower():
             continue
 
         if kind == "cycle" and row.get("outcome") == "rejected" and row.get("cycle") not in faulted:
