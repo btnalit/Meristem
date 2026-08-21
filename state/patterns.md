@@ -820,3 +820,13 @@ Previous attempts at this exact task were rejected:
 - cycle 334: review:deepseek: reviewer unavailable: review:deepseek failed after 4 attempts: empty content (finish_reason=length); raise max_tokens -- reasoning consumed the budget
 
 Study these objections carefully. Do NOT repeat these mistakes.
+
+## G-006 — Repeated rejection
+
+Task: REPAIR (breaker counting): A reviewer that never read the proposal still casts a rejection vote, and that vote is counted as a judged rejection by the circuit breaker. Evidence: at cycle 334 review:de
+Rejected 5 times.
+Previous attempts at this exact task were rejected:
+- cycle 336: review:deepseek: rejections_for() now excludes cycles whose rejected_by votes are all 'reviewer unavailable', so the circuit breaker no longer counts three such cycles toward parking. That loosens the park threshold: a state the old code caught (task parked after three unavailability-rejections) now continues silently.
+- cycle 336: review:deepseek: The new unavail_only() predicate is keyed to the textual 'reviewer unavailable' prefix, adding a narrow but real bypass: any rejection whose reason begins with that prefix is erased from the judged-rejection count, reducing defence-in-depth.
+- cycle 336: review:deepseek: Independent of gate weakening, the journal.py change corrupts the module docstring: `""Journal-reading...` is not a valid Python string opener, so meristem/journal.py cannot be imported and the diff does not run.
+- cycle 339: review:deepseek: The breaker is a budget/threshold: a task is parked after 3 judged re
