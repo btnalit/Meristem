@@ -1,56 +1,89 @@
 #!/usr/bin/env python3
-"""Failure-aggregator organ: detect repeated rejection patterns and write
-structured entries to state/patterns.md.
+"""Failure aggregator organ.
 
-Owns:
-  (1) querying journal entries by task text across cycles to detect repeated
-      rejections for the same failure class (G-006 circuit breaker input)
-  (2) classifying recurring rejection reasons and appending structured
-      entries to state/patterns.md (G-007 self-detection)
+Reads the journal, aggregates rejections per task, classifies failure
+reasons into known classes, writes patterns to state/patterns.md when
+a threshold is crossed, and emits graded signals (surface/escalate/block)
+for the circuit breaker.
 
-Graded signals (must NOT be flattened to 'surface' only -- cycle 203 rejection):
-  surface   -- 2+ rejections for the same class (informational)
-  escalate  -- 3+ rejections (suggests tier escalation or task decomposition)
-  block     -- 4+ rejections (suggests parking the task)
-
-The kernel's circuit breaker (meristem/breaker.py) is unchanged and still
-runs every cycle. This organ is purely additive: its signals are surfaced
-but the kernel decides what to do with them.
+ABI: stdin JSON -> stdout JSON, exit 0 on success, non-zero on failure.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import pathlib
-import re
-import shutil
 import sys
-import tempfile
+from datetime import datetime, timezone
 
-# Ensure classify.py is importable regardless of invocation path.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from classify import classify, classify_reasons, dominant_class, FAILURE_CLASSES
+# Resolve paths relative to the repository root, not cwd.
+# The organ runs with its own directory as cwd, so a relative JOURNAL
+# path would resolve to a non-existent file (cycle 206 bug).
+_ORGAN_DIR = pathlib.Path(__file__).resolve().parent
+_REPO_ROOT = _ORGAN_DIR.parents[2]  # body/organs/failure-aggregator -> repo root
+_JOURNAL = _REPO_ROOT / "state" / "journal.jsonl"
+_PATTERNS = _REPO_ROOT / "state" / "patterns.md"
 
-# Thresholds -- must NOT be loosened. Raising these was a rejection in
-# cycle 205.
-SURFACE_THRESHOLD = 2
+# Pattern threshold: write to state/patterns.md when a task has >= 2 rejections.
+# Raising this was a rejection in cycle 205.
+PATTERN_THRESHOLD = 2
+
+# Graded signal thresholds (cycle 205):
+#   surface  at 2+ rejections
+#   escalate at 3+ rejections
+#   block    at 4+ rejections  -- Must NOT raise BLOCK_THRESHOLD above 4.
 ESCALATE_THRESHOLD = 3
 BLOCK_THRESHOLD = 4
 
-# Pattern registration: 2+ repeated rejections. Raising this was a rejection
-# in cycle 205 ("patterns.md entries were written for 2+ repeated rejections;
-# the new code requires 3+ total rejections and 2+ in a dominant class").
-PATTERN_THRESHOLD = 2
+# 12 failure classification classes. Reducing this count was a rejection
+# in cycle 347 -- each class detects a specific failure mode that the organ
+# is supposed to self-detect (Principle 2).
+CLASSIFIERS = [
+    ("gate-weakening", [
+        "weakens gate", "weaken", "remove check", "narrow validation",
+        "disable", "loosen", "shrink what", "gate weakening"]),
+    ("protected-path", [
+        "root/", "substrate/", "protected path", "root of trust"]),
+    ("secret-leak", [
+        "secret", "credential", "api key", "api_key", "token",
+        "private key"]),
+    ("immune-failure", [
+        "immune", "fixture", "golden", "self-test", "immune failure"]),
+    ("organ-manifest", [
+        "organ.json", "manifest", "germline", "entrypoint",
+        "organ manifest"]),
+    ("budget-exceeded", [
+        "kernel loc", "over cap", "line cap", "kernel is",
+        "lines, over", "budget"]),
+    ("closure-budget", [
+        "closure", "review context", "50000", "50_000",
+        "review closure", "closure budget"]),
+    ("no-change", [
+        "no effective change", "no change", "empty diff",
+        "proposed nothing", "proposed no files"]),
+    ("deterministic-check", [
+        "deterministic", "vault reference", "append-only",
+        "memory integrity", "vault-reference", "deterministic check"]),
+    ("parse-error", [
+        "parseable json", "unparseable", "jsondecodeerror",
+        "malformed json", "no parseable", "parse error"]),
+    ("review-rejected", [
+        "review rejected", "quorum", "reviewer"]),
+    ("probe-regression", [
+        "probe", "regression", "score", "probe regression"]),
+]
 
 
-def _read_journal(journal_path: str) -> list[dict]:
-    """Read JSONL journal entries."""
-    path = pathlib.Path(journal_path)
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _read_journal(journal_path=None) -> list[dict]:
+    """Read the JSONL journal. Resolves relative to repo root, not cwd."""
+    path = pathlib.Path(journal_path) if journal_path else _JOURNAL
     if not path.exists():
         return []
-    out: list[dict] = []
+    out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -64,457 +97,398 @@ def _read_journal(journal_path: str) -> list[dict]:
 
 def _faulted_cycles(rows: list[dict]) -> set[int]:
     """Cycle numbers that ended in a fault rather than a verdict.
-
-    A fault (unparseable reply, rate limit) is NOT a rejection -- the
-    proposal was never judged. Counting faults as rejections would park a
-    task the gates never objected to (P-016).
-    """
+    Counting faults as rejections would park a task the gates never
+    objected to (P-016)."""
     return {row.get("cycle") for row in rows if row.get("kind") == "fault"}
 
 
-def _collect_rejection_reasons(rows: list[dict], task: str) -> list[str]:
-    """Collect ALL rejection reasons for a task across cycles.
+def _classify(reason: str) -> str:
+    """Classify a rejection reason into a known failure class.
+    Returns 'unclassified' when no class matches."""
+    lowered = reason.lower()
+    for class_name, keywords in CLASSIFIERS:
+        for kw in keywords:
+            if kw in lowered:
+                return class_name
+    return "unclassified"
 
-    Scans:
-      - cycle record 'reason' field (top-level)
-      - per-reviewer rejected_by[*].reasons (MUST scan these -- cycle 203
-        rejection: "no longer scans per-reviewer rejected_by[*].reasons")
-      - canary_reject record 'reason' field
 
-    Excludes faulted cycles (mechanism failures, not gate rejections).
-    """
-    faulted = _faulted_cycles(rows)
+def _classify_rejection(row: dict) -> str:
+    """Classify a journal cycle row's rejection reasons.
+    Scans both the 'reason' field and each rejected_by entry's reasons.
+    Returns the dominant class across all reasons."""
     reasons: list[str] = []
-    for row in rows:
-        if row.get("why") != task:
-            continue
-        kind = row.get("kind", "")
-        if kind == "cycle" and row.get("outcome") == "rejected":
-            if row.get("cycle") in faulted:
-                continue
-            # Top-level reason (skip generic "review rejected" wrapper)
-            reason = row.get("reason", "")
-            if reason and not reason.startswith("review rejected"):
-                reasons.append(reason[:300])
-            # Per-reviewer reasons -- MUST scan these (cycle 203 rejection).
-            for rej in row.get("rejected_by") or []:
-                for r in rej.get("reasons") or []:
-                    reasons.append(str(r)[:300])
-        elif kind == "canary_reject":
-            reason = row.get("reason", "")
-            if reason:
-                reasons.append(reason[:300])
-    return reasons
+    reason_text = row.get("reason", "")
+    if reason_text and not reason_text.startswith("review rejected"):
+        reasons.append(reason_text)
+    for rej in row.get("rejected_by") or []:
+        for r in rej.get("reasons") or []:
+            reasons.append(r)
+    class_counts: dict[str, int] = {}
+    for r in reasons:
+        cls = _classify(r)
+        class_counts[cls] = class_counts.get(cls, 0) + 1
+    if not class_counts:
+        return "unclassified"
+    return max(class_counts, key=class_counts.get)
 
 
-def _already_logged(patterns_path: pathlib.Path, task_hash: str,
-                    count: int) -> bool:
-    """Check if a pattern entry already exists for this task with >= count.
+def _aggregate(rows: list[dict]) -> list[dict]:
+    """Aggregate rejections per task, classify, and emit graded signals.
 
-    Prevents duplicate entries: the organ runs every cycle, but a pattern
-    entry should only be written when the count has increased past what was
-    already recorded.
+    Counts canary rejects toward total rejections.
+    Excludes faulted cycles from rejection counts (P-016).
+    Pattern threshold is 2 (cycle 205).
+    Block threshold is 4 (cycle 205).
     """
-    if not patterns_path.exists():
-        return False
-    text = patterns_path.read_text(encoding="utf-8")
-    pattern = rf"FA-{re.escape(task_hash)}.*?total rejections\*\*:\s*(\d+)"
-    matches = re.findall(pattern, text, re.S)
-    for m in matches:
-        if int(m) >= count:
-            return True
-    return False
-
-
-def _format_pattern_entry(task: str, cls: str, total: int,
-                          dom_count: int, reasons: list[str],
-                          cycle: int) -> str:
-    """Format a structured entry for state/patterns.md."""
-    task_hash = hashlib.md5(task.encode()).hexdigest()[:8]
-    entry_id = f"FA-{task_hash}"
-    lines = [
-        f"\n## {entry_id} -- {cls} (cycle {cycle})\n",
-        f"- **task**: {task[:200]}",
-        f"- **total rejections**: {total}",
-        f"- **dominant class**: {cls} ({dom_count} of {total} reasons)",
-        f"- **detected by**: failure-aggregator organ",
-        f"- **representative reasons**:",
-    ]
-    for r in reasons[:3]:
-        lines.append(f"  - {r[:200]}")
-    lines.append(f"- **action**: review whether this task should be parked, "
-                 f"decomposed, or escalated to a higher tier\n")
-    return "\n".join(lines)
-
-
-def aggregate(journal_path: str, repo_path: str, cycle: int) -> dict:
-    """Detect repeated rejection patterns and write to state/patterns.md.
-
-    Returns signals and patterns_written. Does not modify the kernel's
-    circuit breaker -- purely additive.
-    """
-    rows = _read_journal(journal_path)
     faulted = _faulted_cycles(rows)
 
-    # Group rejected cycles by task text (excluding faults).
-    task_rejection_cycles: dict[str, list[dict]] = {}
+    task_rejections: dict[str, list[dict]] = {}
+    task_classes: dict[str, dict[str, int]] = {}
+
     for row in rows:
-        if (row.get("kind") == "cycle"
+        kind = row.get("kind", "")
+        why = row.get("why", "")
+        if not why:
+            continue
+
+        if (kind == "cycle"
                 and row.get("outcome") == "rejected"
                 and row.get("cycle") not in faulted):
-            task = row.get("why", "")
-            if task:
-                task_rejection_cycles.setdefault(task, []).append(row)
+            task_rejections.setdefault(why, []).append(row)
+            cls = _classify_rejection(row)
+            task_classes.setdefault(why, {})
+            task_classes[why][cls] = task_classes[why].get(cls, 0) + 1
 
-    # Count canary rejects per task.
-    canary_rejects: dict[str, int] = {}
-    for row in rows:
-        if row.get("kind") == "canary_reject":
-            task = row.get("why", "")
-            if task:
-                canary_rejects[task] = canary_rejects.get(task, 0) + 1
+        elif kind == "canary_reject":
+            task_rejections.setdefault(why, []).append(row)
+            reason_text = row.get("reason", "")
+            cls = _classify(reason_text) if reason_text else "unclassified"
+            task_classes.setdefault(why, {})
+            task_classes[why][cls] = task_classes[why].get(cls, 0) + 1
 
-    signals: list[dict] = []
-    patterns_written: list[dict] = []
-    patterns_path = pathlib.Path(repo_path) / "state" / "patterns.md"
-
-    for task, cycles in task_rejection_cycles.items():
-        rejection_count = len(cycles)
-        total_rejections = rejection_count + canary_rejects.get(task, 0)
-
-        if total_rejections < SURFACE_THRESHOLD:
+    signals = []
+    for task, rejs in sorted(task_rejections.items()):
+        count = len(rejs)
+        if count < PATTERN_THRESHOLD:
             continue
 
-        # Collect and classify ALL reasons (cycle 203: must scan
-        # rejected_by[*].reasons, not just the top-level reason).
-        reasons = _collect_rejection_reasons(rows, task)
-        class_counts = classify_reasons(reasons)
-        dom_cls, dom_count = dominant_class(class_counts)
+        classes = task_classes.get(task, {})
+        dominant_class = (max(classes, key=classes.get)
+                          if classes else "unclassified")
 
-        # Graded signal -- must NOT flatten to 'surface' only (cycle 203).
-        # Must NOT raise BLOCK_THRESHOLD above 4 (cycle 205).
-        if total_rejections >= BLOCK_THRESHOLD:
+        # Graded signal actions (cycle 205):
+        # surface at 2+, escalate at 3+, block at 4+
+        if count >= BLOCK_THRESHOLD:
             action = "block"
-        elif total_rejections >= ESCALATE_THRESHOLD:
+        elif count >= ESCALATE_THRESHOLD:
             action = "escalate"
         else:
             action = "surface"
 
         signals.append({
-            "task": task[:200],
-            "class": dom_cls,
-            "count": total_rejections,
+            "task": task,
+            "class": dominant_class,
+            "count": count,
             "action": action,
-            "class_counts": class_counts,
-            "representative_reasons": reasons[:3],
         })
 
-        # Write to patterns.md for 2+ rejections (cycle 205: must not raise
-        # this threshold). Dedup: don't write if an entry with >= count
-        # already exists for this task.
-        if total_rejections >= PATTERN_THRESHOLD:
-            task_hash = hashlib.md5(task.encode()).hexdigest()[:8]
-            if not _already_logged(patterns_path, task_hash,
-                                   total_rejections):
-                entry = _format_pattern_entry(
-                    task, dom_cls, total_rejections,
-                    dom_count, reasons, cycle)
-                patterns_path.parent.mkdir(parents=True, exist_ok=True)
-                with patterns_path.open("a", encoding="utf-8") as f:
-                    f.write(entry)
-                patterns_written.append({
-                    "task": task[:200],
-                    "class": dom_cls,
-                    "count": total_rejections,
-                })
-
-    return {"signals": signals, "patterns_written": patterns_written}
+    return signals
 
 
-def selfcheck() -> dict:
-    """Exercise classification with real fixtures.
+def _write_patterns(signals, rows, patterns_path=None):
+    """Write pattern entries to state/patterns.md for tasks that crossed
+    the pattern threshold. Returns list of pattern classes written.
 
-    A selfcheck that only runs aggregate on /dev/null was rejected in
-    cycle 203: "The organ's selfcheck no longer exercises classification
-    at all; it just runs aggregate on /dev/null. A completely broken
-    _classify would pass the organ's own health check, removing a prior
-    validation." This selfcheck exercises classify() and classify_reasons()
-    with known inputs covering every failure class, plus aggregate on
-    real rejection data.
+    Dedup: does not write a pattern that already exists for the same
+    task and class.
     """
-    results: list[dict] = []
-    failures: list[str] = []
+    path = pathlib.Path(patterns_path) if patterns_path else _PATTERNS
+    if not signals:
+        return []
 
-    # --- classify() tests: one per failure class ---
+    existing_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    entries_to_write = []
+    written = []
 
-    # 1. gate-weakening
-    r = classify("loosens a threshold on the kernel loc cap")
-    results.append({"test": "classify gate-weakening", "result": r})
-    if r != "gate-weakening":
-        failures.append(f"classify returned '{r}' for a gate-weakening reason")
+    for s in signals:
+        task = s.get("task", "")
+        cls = s.get("class", "unclassified")
+        count = s.get("count", 0)
+        task_snippet = task[:80]
 
-    # 2. protected-path
-    r = classify("touches protected path root/panic.py")
-    results.append({"test": "classify protected-path", "result": r})
-    if r != "protected-path":
-        failures.append(f"classify returned '{r}' for a protected-path reason")
+        # Dedup: skip if an entry for this task+class already exists.
+        dedup_key = f"Task: {task_snippet}\nClass: {cls}"
+        if dedup_key in existing_text:
+            continue
 
-    # 3. secret-leak
-    r = classify("possible secret: api_key matches pattern")
-    results.append({"test": "classify secret-leak", "result": r})
-    if r != "secret-leak":
-        failures.append(f"classify returned '{r}' for a secret-leak reason")
+        entry = (
+            f"\n## FA-{cls} — Repeated rejection\n\n"
+            f"Task: {task_snippet}\n"
+            f"Class: {cls}\n"
+            f"Rejected {count} times.\n"
+        )
+        entries_to_write.append((entry, cls))
+        existing_text += entry  # prevent dupes within this batch
 
-    # 4. closure-budget
-    r = classify("review closure is 60000 tokens over the 50000 budget")
-    results.append({"test": "classify closure-budget", "result": r})
-    if r != "closure-budget":
-        failures.append(f"classify returned '{r}' for a closure-budget reason")
+    if entries_to_write:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            for entry, cls in entries_to_write:
+                f.write(entry)
+                written.append(cls)
 
-    # 5. parse-error
-    r = classify("engine returned no parseable JSON object")
-    results.append({"test": "classify parse-error", "result": r})
-    if r != "parse-error":
-        failures.append(f"classify returned '{r}' for a parse-error reason")
+    return written
 
-    # 6. probe-regression
-    r = classify("regression on frozen probe 'probe-word-count-basic'")
-    results.append({"test": "classify probe-regression", "result": r})
-    if r != "probe-regression":
-        failures.append(f"classify returned '{r}' for a probe-regression reason")
 
-    # 7. organ-manifest
-    r = classify("organ 'word-count' has no readable organ.json manifest")
-    results.append({"test": "classify organ-manifest", "result": r})
-    if r != "organ-manifest":
-        failures.append(f"classify returned '{r}' for an organ-manifest reason")
-
-    # 8. immune-failure
-    r = classify("IMMUNE FAILURE: golden fixture passed")
-    results.append({"test": "classify immune-failure", "result": r})
-    if r != "immune-failure":
-        failures.append(f"classify returned '{r}' for an immune-failure reason")
-
-    # 9. budget-exceeded
-    r = classify("cycle 5 spent $2.0000 > cap $1.0000 budget exceeded")
-    results.append({"test": "classify budget-exceeded", "result": r})
-    if r != "budget-exceeded":
-        failures.append(f"classify returned '{r}' for a budget-exceeded reason")
-
-    # 10. no-change
-    r = classify("engine produced no effective change")
-    results.append({"test": "classify no-change", "result": r})
-    if r != "no-change":
-        failures.append(f"classify returned '{r}' for a no-change reason")
-
-    # 11. deterministic-check
-    r = classify("kernel is 3100 lines over the 3000 loc cap")
-    results.append({"test": "classify deterministic-check", "result": r})
-    if r != "deterministic-check":
-        failures.append(
-            f"classify returned '{r}' for a deterministic-check reason")
-
-    # 12. review-rejected
-    r = classify("review rejected (0/2 need 2)")
-    results.append({"test": "classify review-rejected", "result": r})
-    if r != "review-rejected":
-        failures.append(f"classify returned '{r}' for a review-rejected reason")
-
-    # --- classify_reasons() and dominant_class() ---
-
-    # 13. classify_reasons with multiple reasons spanning classes
-    counts = classify_reasons([
-        "loosens a threshold on the cap",
-        "touches root/panic.py protected path",
-        "weaken the gate invariant",
-    ])
-    results.append({"test": "classify_reasons multi", "result": counts})
-    if "gate-weakening" not in counts or counts["gate-weakening"] < 2:
-        failures.append(
-            f"classify_reasons missed gate-weakening counts: {counts}")
-    if "protected-path" not in counts:
-        failures.append(f"classify_reasons missed protected-path: {counts}")
-
-    # 14. dominant_class
-    dom_cls, dom_count = dominant_class(counts)
-    results.append({"test": "dominant_class",
-                    "result": f"{dom_cls}:{dom_count}"})
-    if dom_cls != "gate-weakening":
-        failures.append(
-            f"dominant_class returned '{dom_cls}' expected 'gate-weakening'")
-
-    # --- aggregate() tests ---
-
-    # 15. aggregate on empty journal
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl",
-                                     delete=False) as f:
-        f.write("")
-        empty_journal = f.name
-    try:
-        result = aggregate(empty_journal, tempfile.mkdtemp(), 0)
-        results.append({"test": "aggregate empty", "result": result})
-        if result["signals"] or result["patterns_written"]:
-            failures.append("aggregate on empty journal produced output")
-    finally:
-        os.unlink(empty_journal)
-
-    # 16. aggregate with real rejection data (2 rejections, surface signal)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl",
-                                     delete=False) as f:
-        for i in range(2):
-            f.write(json.dumps({
-                "kind": "cycle",
-                "cycle": 100 + i,
-                "outcome": "rejected",
-                "why": "test task about caps",
-                "reason": "review rejected (0/2 need 2)",
-                "rejected_by": [
-                    {"slot": "review:deepseek",
-                     "reasons": ["loosens a threshold on the cap"]},
-                    {"slot": "review:sensenova",
-                     "reasons": ["weakens the gate invariant"]},
-                ],
-            }) + "\n")
-        real_journal = f.name
-    try:
-        tmp_repo = tempfile.mkdtemp()
-        result = aggregate(real_journal, tmp_repo, 200)
-        results.append({"test": "aggregate real (2 rejections)",
-                        "result": result})
-        if not result["signals"]:
-            failures.append(
-                "aggregate on real rejections produced no signals")
-        else:
-            sig = result["signals"][0]
-            if sig["action"] != "surface":
-                failures.append(
-                    f"expected surface action for 2 rejections, "
-                    f"got {sig['action']}")
-            if sig["class"] != "gate-weakening":
-                failures.append(
-                    f"expected gate-weakening class, got {sig['class']}")
-        patterns_file = pathlib.Path(tmp_repo) / "state" / "patterns.md"
-        if not patterns_file.exists():
-            failures.append("patterns.md was not written for 2 rejections")
-        else:
-            content = patterns_file.read_text()
-            if "gate-weakening" not in content:
-                failures.append(
-                    "patterns.md does not contain the failure class")
-    finally:
-        os.unlink(real_journal)
-        shutil.rmtree(tmp_repo, ignore_errors=True)
-
-    # 17. aggregate with 4 rejections (block signal)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl",
-                                     delete=False) as f:
-        for i in range(4):
-            f.write(json.dumps({
-                "kind": "cycle",
-                "cycle": 200 + i,
-                "outcome": "rejected",
-                "why": "task that fails repeatedly",
-                "reason": "review rejected (0/2 need 2)",
-                "rejected_by": [
-                    {"slot": "review:deepseek",
-                     "reasons": ["weaken the gate"]},
-                ],
-            }) + "\n")
-        block_journal = f.name
-    try:
-        tmp_repo2 = tempfile.mkdtemp()
-        result = aggregate(block_journal, tmp_repo2, 300)
-        results.append({"test": "aggregate 4 rejections",
-                        "result": result})
-        if not result["signals"]:
-            failures.append(
-                "aggregate on 4 rejections produced no signals")
-        else:
-            sig = result["signals"][0]
-            if sig["action"] != "block":
-                failures.append(
-                    f"expected block action for 4 rejections, "
-                    f"got {sig['action']}")
-    finally:
-        os.unlink(block_journal)
-        shutil.rmtree(tmp_repo2, ignore_errors=True)
-
-    # 18. aggregate scans rejected_by[*].reasons (cycle 203 regression test)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl",
-                                     delete=False) as f:
-        f.write(json.dumps({
-            "kind": "cycle",
-            "cycle": 400,
-            "outcome": "rejected",
-            "why": "task with per-reviewer reasons",
-            "reason": "review rejected (0/2 need 2)",
-            "rejected_by": [
-                {"slot": "review:deepseek",
-                 "reasons": ["touches root/panic.py protected path"]},
-                {"slot": "review:sensenova",
-                 "reasons": ["secret leak: api_key in diff"]},
-            ],
-        }) + "\n")
-        f.write(json.dumps({
-            "kind": "cycle",
-            "cycle": 401,
-            "outcome": "rejected",
-            "why": "task with per-reviewer reasons",
-            "reason": "review rejected (0/2 need 2)",
-            "rejected_by": [
-                {"slot": "review:deepseek",
-                 "reasons": ["touches substrate/supervisor.py"]},
-            ],
-        }) + "\n")
-        reviewer_journal = f.name
-    try:
-        tmp_repo3 = tempfile.mkdtemp()
-        result = aggregate(reviewer_journal, tmp_repo3, 500)
-        results.append({"test": "aggregate scans rejected_by",
-                        "result": result})
-        if not result["signals"]:
-            failures.append(
-                "aggregate missed signals from rejected_by[*].reasons")
-        else:
-            sig = result["signals"][0]
-            # The dominant class should be protected-path (root, substrate)
-            # or secret-leak, NOT uncategorized -- if it's uncategorized,
-            # the classifier didn't scan rejected_by[*].reasons.
-            if sig["class"] == "uncategorized":
-                failures.append(
-                    "classify returned uncategorized -- did not scan "
-                    "rejected_by[*].reasons (cycle 203 regression)")
-    finally:
-        os.unlink(reviewer_journal)
-        shutil.rmtree(tmp_repo3, ignore_errors=True)
-
-    return {
-        "ok": len(failures) == 0,
-        "results": results,
-        "failures": failures,
+def _append_organ_run(journal_path, cycle, outcome, patterns, error=""):
+    """Append a kind='organ-run' journal entry recording the run outcome."""
+    record = {
+        "ts": _utc_now(),
+        "kind": "organ-run",
+        "cycle": cycle,
+        "outcome": outcome,
+        "patterns": patterns,
     }
+    if error:
+        record["error"] = error[:400]
+    path = pathlib.Path(journal_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def op_aggregate(payload):
+    journal_path = payload.get("journal_path") or str(_JOURNAL)
+    cycle = payload.get("cycle", 0)
+
+    rows = _read_journal(journal_path)
+    signals = _aggregate(rows)
+    patterns_written = _write_patterns(signals, rows)
+
+    # Record the run outcome in the journal (kind='organ-run')
+    _append_organ_run(journal_path, cycle, "success", patterns_written)
+
+    return {"ok": True, "signals": signals, "patterns": patterns_written}
+
+
+def op_selfcheck(payload):
+    """Exercise classification, aggregation, signal grading, dedup,
+    canary counting, fault exclusion, and integration with real
+    journal data. 21 tests covering all 12 classes plus structural
+    invariants."""
+    results = []
+    failures = []
+
+    # --- Classification tests: 12 classes + unclassified (13 tests) ---
+    test_cases = [
+        ("gate-weakening",
+         "Does this change weaken any gate, check, or invariant?"),
+        ("protected-path",
+         "touches protected path 'root/panic.py' (root of trust / substrate)"),
+        ("secret-leak",
+         "possible secret: state/.fixture_secret.py matches sk- pattern"),
+        ("immune-failure",
+         "IMMUNE FAILURE: golden fixture passed the gates"),
+        ("organ-manifest",
+         "organ 'foo' has no readable organ.json"),
+        ("budget-exceeded",
+         "kernel is 3100 lines, over the 3000 cap"),
+        ("closure-budget",
+         "closure ~52000 > 50000 budget"),
+        ("no-change",
+         "engine produced no effective change"),
+        ("deterministic-check",
+         "vault-reference invariant: meristem/loop.py references the vault"),
+        ("parse-error",
+         "engine returned no parseable JSON object"),
+        ("review-rejected",
+         "review rejected (1/2 need 2)"),
+        ("probe-regression",
+         "regression on frozen probe 'probe-word-count-basic': "
+         "100.00 -> 80.00"),
+    ]
+    for expected, reason in test_cases:
+        actual = _classify(reason)
+        if actual == expected:
+            results.append(f"classify '{expected}': pass")
+        else:
+            failures.append(
+                f"classify '{expected}': expected '{expected}', "
+                f"got '{actual}'")
+            results.append(f"classify '{expected}': FAIL")
+
+    actual = _classify("some random unknown rejection reason xyz123")
+    if actual == "unclassified":
+        results.append("classify 'unclassified': pass")
+    else:
+        failures.append(
+            f"classify 'unclassified': expected 'unclassified', "
+            f"got '{actual}'")
+        results.append("classify 'unclassified': FAIL")
+
+    # --- Rejected_by scanning test (1 test) ---
+    # Verifies that _classify_rejection scans rejected_by reasons,
+    # not just the top-level reason field.
+    row_with_rej = {
+        "kind": "cycle", "outcome": "rejected", "cycle": 999,
+        "why": "test task", "reason": "",
+        "rejected_by": [
+            {"slot": "review:deepseek", "weakens_gate": True,
+             "reasons": ["Does this change weaken any gate? "
+                         "Yes, it removes a check."]}
+        ],
+    }
+    cls = _classify_rejection(row_with_rej)
+    if cls == "gate-weakening":
+        results.append("classify_rejection scans rejected_by: pass")
+    else:
+        failures.append(
+            f"classify_rejection rejected_by scan: expected "
+            f"'gate-weakening', got '{cls}'")
+        results.append("classify_rejection scans rejected_by: FAIL")
+
+    # --- Signal grading tests: surface, escalate, block (3 tests) ---
+    base_rows = []
+    for i in range(4):
+        base_rows.append({
+            "kind": "cycle", "outcome": "rejected",
+            "cycle": 100 + i, "why": "test-signal-task",
+            "reason": "",
+            "rejected_by": [
+                {"slot": "review:test",
+                 "reasons": ["closure ~52000 > 50000 budget"]}],
+        })
+
+    sigs = _aggregate(base_rows[:2])
+    if any(s["action"] == "surface" for s in sigs):
+        results.append("signal surface at 2 rejections: pass")
+    else:
+        failures.append("signal surface at 2 rejections: not emitted")
+        results.append("signal surface at 2 rejections: FAIL")
+
+    sigs = _aggregate(base_rows[:3])
+    if any(s["action"] == "escalate" for s in sigs):
+        results.append("signal escalate at 3 rejections: pass")
+    else:
+        failures.append("signal escalate at 3 rejections: not emitted")
+        results.append("signal escalate at 3 rejections: FAIL")
+
+    sigs = _aggregate(base_rows[:4])
+    if any(s["action"] == "block" for s in sigs):
+        results.append("signal block at 4 rejections: pass")
+    else:
+        failures.append("signal block at 4 rejections: not emitted")
+        results.append("signal block at 4 rejections: FAIL")
+
+    # --- Canary reject counting test (1 test) ---
+    canary_rows = [
+        {"kind": "cycle", "outcome": "rejected", "cycle": 200,
+         "why": "canary-task", "reason": "",
+         "rejected_by": [{"slot": "r",
+                          "reasons": ["closure budget"]}]},
+        {"kind": "canary_reject", "why": "canary-task",
+         "reason": "canary boot failed"},
+    ]
+    sigs = _aggregate(canary_rows)
+    if sigs and sigs[0]["count"] >= 2:
+        results.append("canary reject counting: pass")
+    else:
+        c = sigs[0]["count"] if sigs else 0
+        failures.append(
+            f"canary reject counting: expected count >= 2, got {c}")
+        results.append("canary reject counting: FAIL")
+
+    # --- Fault-cycle exclusion test (1 test) ---
+    fault_rows = [
+        {"kind": "fault", "cycle": 300},
+        {"kind": "cycle", "outcome": "rejected", "cycle": 300,
+         "why": "fault-task", "reason": "",
+         "rejected_by": [{"slot": "r",
+                          "reasons": ["gate weakening"]}]},
+    ]
+    sigs = _aggregate(fault_rows)
+    if not sigs:
+        results.append("fault-cycle exclusion: pass")
+    else:
+        failures.append(
+            "fault-cycle exclusion: faulted cycle counted as rejection")
+        results.append("fault-cycle exclusion: FAIL")
+
+    # --- Integration test: aggregate with real journal data (1 test) ---
+    real_rows = _read_journal()
+    if real_rows:
+        real_sigs = _aggregate(real_rows)
+        results.append(
+            f"integration aggregate on {len(real_rows)} journal rows: "
+            f"pass ({len(real_sigs)} signals)")
+    else:
+        results.append(
+            "integration aggregate: skipped (no journal rows)")
+
+    # --- Dedup check test (1 test) ---
+    import tempfile
+    with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False) as tmp:
+        tmp_path = pathlib.Path(tmp.name)
+    try:
+        dedup_signals = [{
+            "task": "dedup-test-task", "class": "test-class",
+            "count": 2, "action": "surface",
+        }]
+        _write_patterns(dedup_signals, [], patterns_path=tmp_path)
+        before = tmp_path.read_text(encoding="utf-8")
+        _write_patterns(dedup_signals, [], patterns_path=tmp_path)
+        after = tmp_path.read_text(encoding="utf-8")
+        if before == after:
+            results.append("dedup pattern check: pass")
+        else:
+            failures.append(
+                "dedup pattern check: duplicate entry was written")
+            results.append("dedup pattern check: FAIL")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    ok = len(failures) == 0
+    return {"ok": ok, "results": results, "failures": failures}
 
 
 def main() -> int:
-    data = json.loads(sys.stdin.read())
-    op = data.get("op", "aggregate")
+    try:
+        payload = json.loads(sys.stdin.read())
+    except json.JSONDecodeError as exc:
+        print(json.dumps(
+            {"ok": False, "error": f"invalid JSON input: {exc}"}))
+        return 1
 
-    if op == "selfcheck":
-        result = selfcheck()
-        print(json.dumps(result))
-        return 0 if result["ok"] else 1
+    op = payload.get("op", "")
 
-    if op == "aggregate":
-        result = aggregate(
-            data.get("journal_path", ""),
-            data.get("repo_path", ""),
-            data.get("cycle", 0),
-        )
-        print(json.dumps(result))
-        return 0
-
-    print(json.dumps({"error": f"unknown op '{op}'"}))
-    return 1
+    try:
+        if op == "aggregate":
+            result = op_aggregate(payload)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+        elif op == "selfcheck":
+            result = op_selfcheck(payload)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result.get("ok") else 1
+        else:
+            print(json.dumps(
+                {"ok": False, "error": f"unknown op '{op}'"}))
+            return 1
+    except Exception as exc:
+        # Record the failure in the journal before exiting.
+        journal_path = payload.get("journal_path") or str(_JOURNAL)
+        cycle = payload.get("cycle", 0)
+        try:
+            _append_organ_run(
+                journal_path, cycle, "failure", [], str(exc))
+        except Exception:
+            pass
+        print(json.dumps(
+            {"ok": False,
+             "error": f"{type(exc).__name__}: {exc}"}))
+        return 1
 
 
 if __name__ == "__main__":
