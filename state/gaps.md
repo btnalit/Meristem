@@ -206,3 +206,19 @@ A probe should feed known feasible and infeasible tasks and verify the
 organ's verdict matches expectations.
 
 **Closed by:** body/organs/feasibility-check/ (candidate stage).
+
+## Feasibility-check: probe proposals staged, organ.json update pending
+
+Two probe proposals staged under state/probe-proposals/:
+- probe-feasibility-check-feasible: verifies the organ returns feasible=true
+  for a clearly feasible task (small one-file edit)
+- probe-feasibility-check-infeasible: verifies the organ returns feasible=false
+  for a clearly infeasible task (rewrite entire kernel plus all organs)
+
+To complete the promotion from candidate to calibrate:
+1. Gates must promote the probe proposals to the vault.
+2. organ.json must be updated to add probe ids to its probes list.
+3. Lifecycle must be advanced from candidate to calibrate.
+
+Step 2 requires seeing the current organ.json content, which is not
+available in the mutation context because body/ is in EXCLUDED_DIRS.
