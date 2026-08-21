@@ -1,0 +1,23 @@
+{
+  "id": "feasibility-check",
+  "version": "1",
+  "capability": "Estimate core and closure pressure impact of a proposed task before it enters the agenda, rejecting tasks that would exceed the kernel line cap or closure token budget.",
+  "entrypoint": ["python3", "main.py"],
+  "input_schema": {
+    "op": "string",
+    "task": "string",
+    "repo_path": "string"
+  },
+  "output_schema": {
+    "feasible": "boolean",
+    "core_pressure": "number",
+    "closure_pressure": "number",
+    "estimated_core_loc": "integer",
+    "estimated_closure_tokens": "integer",
+    "reason": "string"
+  },
+  "dependencies": [],
+  "probes": [],
+  "metrics": ["usage", "accuracy"],
+  "lifecycle": "candidate"
+}

@@ -191,3 +191,18 @@ and invoked from `_try_aggregate_failures()` every cycle:
 - `_try_aggregate_failures()` in `meristem/loop.py` catches every exception
   from the aggregator organ, prints to stderr, and returns; no journal
   record is written for either a success or a failure.
+
+## G-FEASIBILITY
+
+**Gap:** No pre-proposal feasibility check exists. Tasks that would exceed
+the kernel line cap or closure token budget are only caught after a model
+call has been made, wasting cycles (FA-016 pattern: 3 rejections for
+closure-budget at cycles 97-99). The existing `estimate_closure` in loop.py
+is a rough inline function, not a proper capability with probes and lifecycle.
+
+**Measuring stick:** The feasibility-check organ at body/organs/feasibility-check/
+estimates core and closure pressure impact before a task enters the agenda.
+A probe should feed known feasible and infeasible tasks and verify the
+organ's verdict matches expectations.
+
+**Closed by:** body/organs/feasibility-check/ (candidate stage).
