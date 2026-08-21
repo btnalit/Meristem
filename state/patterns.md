@@ -1034,3 +1034,9 @@ Rejected 2 times.
 Task: Strengthen the memory-graph selfcheck so it would have caught this. In addition 
 Class: unclassified
 Rejected 2 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR: Fix the failure-aggregator organ's classify.py SyntaxError and its main.
+Class: unclassified
+Rejected 2 times.
