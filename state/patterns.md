@@ -830,3 +830,207 @@ Previous attempts at this exact task were rejected:
 - cycle 336: review:deepseek: The new unavail_only() predicate is keyed to the textual 'reviewer unavailable' prefix, adding a narrow but real bypass: any rejection whose reason begins with that prefix is erased from the judged-rejection count, reducing defence-in-depth.
 - cycle 336: review:deepseek: Independent of gate weakening, the journal.py change corrupts the module docstring: `""Journal-reading...` is not a valid Python string opener, so meristem/journal.py cannot be imported and the diff does not run.
 - cycle 339: review:deepseek: The breaker is a budget/threshold: a task is parked after 3 judged re
+
+## FA-unclassified — Repeated rejection
+
+Task: Add ONE function to body/organs/memory-graph/main.py named pipeline_check(workdi
+Class: unclassified
+Rejected 3 times.
+
+## FA-secret-leak — Repeated rejection
+
+Task: Add a `report` command to meristem/loop.py that writes REPORT.md at the reposito
+Class: secret-leak
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Add a golden fixture to meristem/loop.py golden_fixtures() covering a failure cl
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Add an op "explain" to body/organs/memory-graph/main.py taking args {"id": "..."
+Class: unclassified
+Rejected 2 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Append one new capability gap to state/gaps.md that you observed while running, 
+Class: unclassified
+Rejected 10 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Change the cap. per-file: meristem/loop.py 904, meristem/journal.py 306, meriste
+Class: unclassified
+Rejected 4 times.
+
+## FA-gate-weakening — Repeated rejection
+
+Task: EXTERNALIZE: Move generate_report() formatting logic from meristem/loop.py into 
+Class: gate-weakening
+Rejected 2 times.
+
+## FA-deterministic-check — Repeated rejection
+
+Task: EXTERNALIZE: Move generate_report() from meristem/loop.py into a new organ body/
+Class: deterministic-check
+Rejected 2 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: EXTERNALIZE: Move journal aggregation and task lifecycle (take_task, done_tasks,
+Class: unclassified
+Rejected 2 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Externalize the circuit breaker for repeated review rejections (G-006) into a ne
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Externalize the failure-history aggregation and pattern-class detection logic fr
+Class: unclassified
+Rejected 2 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: GROWTH (G-001): Implement a mailbox acknowledgment protocol with timestamp, stat
+Class: budget-exceeded
+Rejected 2 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: GROWTH (G-002): Add syscall-level dependency observation to strengthen the closu
+Class: budget-exceeded
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: GROWTH (memory-graph edges): Write body/organs/memory-graph/edges.py to compute 
+Class: unclassified
+Rejected 3 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: GROWTH: Add a pre-proposal closure-budget estimator to meristem/loop.py. Before 
+Class: budget-exceeded
+Rejected 2 times.
+
+## FA-probe-regression — Repeated rejection
+
+Task: GROWTH: Add a probe at state/probe-proposals/probe-selfcheck-consumption/ that v
+Class: probe-regression
+Rejected 2 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: GROWTH: Implement a vault-only rubric authoring mechanism for immune-behavior pr
+Class: budget-exceeded
+Rejected 3 times.
+
+## FA-deterministic-check — Repeated rejection
+
+Task: Make meristem/breaker.py delegate counting to the journal-query organ when that 
+Class: deterministic-check
+Rejected 3 times.
+
+## FA-secret-leak — Repeated rejection
+
+Task: Make meristem/breaker.py delegate to the journal-query organ when it is active, 
+Class: secret-leak
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Make the dating in body/organs/memory-graph/extract.py actually take effect: eve
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR (FA-001, FA-005, FA-018): Fix body/organs/memory-graph/main.py op_selfche
+Class: unclassified
+Rejected 3 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: REPAIR (FA-011): Fix meristem/breaker.py should_park to fail loud when the journ
+Class: budget-exceeded
+Rejected 3 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: REPAIR (FA-015/FA-016): Fix breaker.py delegation to journal-query organ. The ta
+Class: budget-exceeded
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR (FA-017): Fix body/organs/memory-graph/extract.py to restore three things
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR (FA-019): Fix the failure-aggregator's selfcheck in body/organs/failure-a
+Class: unclassified
+Rejected 3 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: REPAIR (G-009): Install the selfcheck-runner organ call site in meristem/loop.py
+Class: budget-exceeded
+Rejected 3 times.
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: REPAIR (P-030 enforcement): Scan state/probe-proposals/ for any rubric/check.py 
+Class: budget-exceeded
+Rejected 3 times.
+
+## FA-gate-weakening — Repeated rejection
+
+Task: REPAIR (breaker counting): A reviewer that never read the proposal still casts a
+Class: gate-weakening
+Rejected 3 times.
+
+## FA-secret-leak — Repeated rejection
+
+Task: REPAIR (failure-aggregator broken since cycle 206): Fix the SyntaxError in body/
+Class: secret-leak
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR (failure-aggregator journal path): Fix the failure-aggregator's journal p
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR (failure-aggregator): Fix the SyntaxError in body/organs/failure-aggregat
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR: Fix the SyntaxError in body/organs/failure-aggregator/classify.py at lin
+Class: unclassified
+Rejected 3 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR: In body/organs/failure-aggregator/main.py, fix the exit code to be non-z
+Class: unclassified
+Rejected 2 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: Strengthen the memory-graph selfcheck so it would have caught this. In addition 
+Class: unclassified
+Rejected 2 times.
