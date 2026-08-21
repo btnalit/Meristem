@@ -815,3 +815,68 @@ class TestProbePromotion(unittest.TestCase):
             rec = [r for r in rows if r.get("kind") == "probe_promoted"][0]
             self.assertEqual(rec["score"], 0.0)
             self.assertEqual(len(rec["sha256"]), 64, "the freeze is recorded as a hash")
+
+
+class TestRollbackNoop(unittest.TestCase):
+    """Three failures with nothing to roll back to must not need a human.
+
+    All three keeper stops in this system's life came through one door:
+    rollback() returned non-zero, the keeper read that as a broken heartbeat,
+    and someone had to press start. But when HEAD already IS last-good there
+    is nothing a revert could undo -- the tree is on a canary-proven commit
+    and the failures are environmental. The keeper's own script says it:
+    "stopping there would make a recoverable event need a human, which is the
+    scaffolding this loop is meant to shed."
+    """
+
+    def _rollback(self, root, stamps_text=None):
+        import importlib
+        sup = importlib.import_module("substrate.supervisor")
+        saved = (sup.REPO, sup.JOURNAL)
+        stamps = root.parent / "keeper_rollbacks"
+        if stamps_text is not None:
+            stamps.write_text(stamps_text, encoding="utf-8")
+        sup.REPO = root
+        sup.JOURNAL = root / "state" / "journal.jsonl"
+        try:
+            with patch.object(sup, "resolve", return_value="abc123"), \
+                 patch.object(sup, "git", return_value="abc123"), \
+                 patch.object(sup, "notify"):
+                return sup.rollback("3 consecutive beat failures")
+        finally:
+            sup.REPO, sup.JOURNAL = saved
+
+    def _rows(self, root):
+        p = root / "state" / "journal.jsonl"
+        return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    def test_first_noop_resumes_and_is_journalled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "repo"
+            (root / "state").mkdir(parents=True)
+            self.assertEqual(self._rollback(root, stamps_text=""), 0,
+                             "a first no-op rollback must not stop the keeper")
+            rec = [r for r in self._rows(root) if r.get("kind") == "rollback_noop"]
+            self.assertEqual(len(rec), 1, "the failure must still be recorded")
+            self.assertEqual(rec[0]["prior_24h"], 0)
+
+    def test_second_noop_inside_24h_stops(self):
+        """Recoverable every time but never recovering is worse than stopping."""
+        import time as _t
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "repo"
+            (root / "state").mkdir(parents=True)
+            recent = str(int(_t.time()) - 3600)
+            self.assertEqual(self._rollback(root, stamps_text=recent + "\n"), 1,
+                             "a second no-op inside 24h is systemic and must stop")
+            rec = [r for r in self._rows(root) if r.get("kind") == "rollback_noop"]
+            self.assertEqual(rec[0]["prior_24h"], 1)
+
+    def test_stale_stamp_outside_the_window_does_not_stop(self):
+        import time as _t
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "repo"
+            (root / "state").mkdir(parents=True)
+            old = str(int(_t.time()) - 86400 * 3)
+            self.assertEqual(self._rollback(root, stamps_text=old + "\n"), 0,
+                             "the window is 24h, not forever")

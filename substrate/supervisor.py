@@ -622,8 +622,34 @@ def rollback(reason: str) -> int:
     last_good = resolve(LAST_GOOD)
     head = git("rev-parse", "HEAD")
     if not last_good or last_good == head:
-        print("nothing to roll back to")
-        return 1
+        # Nothing to revert TO: HEAD is already the canary-proven commit, so
+        # the failures are environmental rather than a bad mutation and no
+        # revert can help. Returning 1 made the keeper read "I could not roll
+        # back" as "the heartbeat is broken" and stop for a human -- two
+        # different facts sharing one exit code. Three of the three keeper
+        # stops in this system's life came through that door.
+        #
+        # The failure now goes where failures belong -- the journal and the
+        # webhook -- and the exit code reports process health only. Bounded by
+        # the SAME 24h window the keeper applies to real rollbacks: a second
+        # occurrence inside it is systemic and does stop, because "recoverable
+        # every time but never recovering" is worse than stopping, and quieter.
+        # The keeper cannot see this case itself (it detects rollbacks by
+        # grepping commit subjects, and a no-op writes no commit), so the
+        # bound is enforced here against its own stamp file.
+        stamps, now = REPO.parent / "keeper_rollbacks", int(time.time())
+        prior = sum(1 for s in stamps.read_text(encoding="utf-8").split()
+                    if s.isdigit() and now - int(s) < 86400) if stamps.exists() else 0
+        _journal({"kind": "rollback_noop", "head": head[:12],
+                  "reason": reason, "prior_24h": prior})
+        notify("rollback_noop",
+               f"{reason}, but HEAD is already last-good so there is nothing to "
+               + ("revert. Second time in 24h -- stopping for review."
+                  if prior else "revert. Resuming; no action needed."))
+        with stamps.open("a", encoding="utf-8") as handle:
+            handle.write(f"{now}\n")
+        print(f"nothing to roll back to (prior in 24h: {prior})")
+        return 1 if prior else 0
     git("revert", "--no-edit", "--no-commit", f"{last_good}..HEAD", check=False)
     if not git("diff", "--cached", "--name-only"):
         # An earlier rollback already landed the tree at last-good, so the
