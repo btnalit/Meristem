@@ -1,0 +1,8 @@
+{
+  "id": "mailbox-ack-expiry",
+  "capability_domain": "mailbox-ack",
+  "organ": "mailbox-ack",
+  "description": "Verifies the mailbox-ack organ correctly handles expiry of acknowledged items.",
+  "rubric_location": "vault",
+  "rubric_note": "The scoring rubric for this probe MUST be authored directly in the eval vault, never in this repository. Per P-030, no check.py or scoring logic belongs in state/probe-proposals/. When promoted, the gate layer will create the rubric at <vault>/internal/active/mailbox-ack-expiry/rubric/check.py. The vault rubric receives {\"workdir\": \"...\", \"probe\": \"...\"} on stdin and returns {\"score\": float, \"detail\": \"...\"} on stdout."
+}
