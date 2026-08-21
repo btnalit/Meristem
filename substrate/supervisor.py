@@ -573,19 +573,34 @@ def promote_probes(vault=None, staging=None, workdir=None) -> int:
             refuse = f"probe.json id {manifest.get('id')!r} != directory {pid!r}"
         if refuse is None and not (src / "statement" / "task.md").is_file():
             refuse = "no statement/task.md"
+        # Two forms, because the vault holds two. probe-word-count-basic and
+        # probe-text-stats-basic have carried no check.py since birth, and
+        # run_probe answers that case explicitly: "no executable rubric; probe
+        # is declarative only", score 0. P-062 required check.py because all
+        # eight staged proposals happened to have one -- a validation contract
+        # induced from the sample rather than from the container, which then
+        # refused the first proposal that obeyed P-030 ("no scoring logic in
+        # the repository") by keeping its rubric out. Same error as P-050, one
+        # layer over: there a test generalised from the current value, here a
+        # gate generalised from the current sample.
         check = src / "rubric" / "check.py"
-        if refuse is None and not check.is_file():
-            refuse = "no rubric/check.py"
-        if refuse is None:
+        declarative = not check.is_file()
+        if refuse is None and not declarative:
             try:
                 compile(check.read_text(encoding="utf-8"), str(check), "exec")
             except (OSError, SyntaxError) as exc:
                 refuse = f"rubric does not compile: {exc}"
-        if refuse is None:
+        if refuse is None and not declarative:
             staged = _score_probe(src, pid, workdir)
             if staged is None:
                 refuse = "rubric returned no score"
-        if refuse is None:
+        if refuse is None and declarative:
+            # Nothing to run, so nothing to compare: a declarative probe
+            # records a 0 baseline and gates nothing until a rubric is
+            # authored vault-side. Harmless by construction -- the probe gate
+            # fails on regression, and 0 cannot regress.
+            staged = 0.0
+        if refuse is None and not declarative:
             # Score again from inside the vault. A rubric that reaches for
             # relative paths scores differently once its cwd moves, and a probe
             # whose value depends on where it lives is not frozen -- it would
@@ -599,6 +614,12 @@ def promote_probes(vault=None, staging=None, workdir=None) -> int:
             if vaulted is None or vaulted != staged:
                 shutil.rmtree(dest, ignore_errors=True)
                 refuse = f"location-dependent: staged {staged} vs vault {vaulted}"
+        if refuse is None and declarative:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dest)
+            manifest["frozen"] = True
+            (dest / "probe.json").write_text(
+                json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         if refuse is not None:
             # Refusals are journalled too. A rubric that cannot be promoted
             # would otherwise be re-validated every beat with nobody told why.
@@ -610,7 +631,9 @@ def promote_probes(vault=None, staging=None, workdir=None) -> int:
         # the contents get a fingerprint on the way in -- any later divergence
         # is then detectable, including from a bug of mine.
         _journal({"kind": "probe_promoted", "probe_id": pid, "score": staged,
-                  "sha256": hashlib.sha256(check.read_bytes()).hexdigest()})
+                  "declarative": declarative,
+                  "sha256": None if declarative
+                  else hashlib.sha256(check.read_bytes()).hexdigest()})
         shutil.rmtree(src, ignore_errors=True)
         print(f"probe promoted: {pid} (baseline {staged})")
         promoted += 1

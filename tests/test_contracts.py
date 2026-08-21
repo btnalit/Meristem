@@ -730,19 +730,46 @@ class TestProbePromotion(unittest.TestCase):
             self.assertFalse((root / "state" / "probe-proposals" / "probe-good").exists(),
                              "staging must be cleared: staged-and-promoted is not a state")
 
-    def test_missing_rubric_is_refused_with_a_reason(self):
+    def test_a_declarative_proposal_is_promoted_not_refused(self):
+        """No check.py is a FORM, not a defect.
+
+        probe-word-count-basic and probe-text-stats-basic have sat in the
+        vault since birth with no executable rubric, and run_probe answers
+        that case by name: "no executable rubric; probe is declarative only".
+        P-062 demanded check.py because all eight staged proposals had one --
+        a contract induced from the sample instead of from the container --
+        and it then refused the first proposal that obeyed P-030 by keeping
+        its scoring logic out of the repository entirely.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             (root / "state").mkdir()
-            d = self._stage(root, "probe-norubric", self.GOOD)
+            d = self._stage(root, "probe-declarative", self.GOOD)
             (d / "rubric" / "check.py").unlink()
+            self.assertEqual(self._run(root), 1)
+            landed = root / "vault" / "internal" / "active" / "probe-declarative"
+            self.assertTrue(landed.is_dir())
+            rows = [json.loads(l) for l in
+                    (root / "state" / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
+            rec = [r for r in rows if r.get("kind") == "probe_promoted"][0]
+            self.assertTrue(rec["declarative"])
+            self.assertIsNone(rec["sha256"], "there is no rubric to fingerprint")
+            self.assertEqual(rec["score"], 0.0, "declarative probes gate nothing")
+
+    def test_a_proposal_with_neither_rubric_nor_statement_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            d = self._stage(root, "probe-empty", self.GOOD)
+            (d / "rubric" / "check.py").unlink()
+            (d / "statement" / "task.md").unlink()
             self.assertEqual(self._run(root), 0)
-            self.assertFalse((root / "vault" / "internal" / "active" / "probe-norubric").exists())
+            self.assertFalse((root / "vault" / "internal" / "active" / "probe-empty").exists())
             rows = [json.loads(l) for l in
                     (root / "state" / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
             refused = [r for r in rows if r.get("kind") == "probe_refused"]
             self.assertEqual(len(refused), 1)
-            self.assertIn("rubric", refused[0]["reason"])
+            self.assertIn("statement", refused[0]["reason"])
 
     def test_a_score_that_depends_on_where_it_lives_is_refused(self):
         """A rubric reading its own cwd scores differently once it moves.
