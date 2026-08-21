@@ -68,3 +68,4 @@ boundary is enforced rather than merely stated.
 - [ ] REPAIR: In body/organs/failure-aggregator/main.py, fix the exit code to be non-zero only when the organ fails, and add a journal entry kind 'organ-run' to record the run outcome with success/failure and patterns written.
 - [ ] GROWTH: Implement a pre-proposal feasibility check organ (body/organs/feasibility-check/) that estimates the core and closure pressure impact of a proposed task before it is added to the agenda, and rejects tasks that would exceed the cap, reducing wasted cycles.
 - [ ] REPAIR: Fix the failure-aggregator organ's classify.py SyntaxError and its main.py exit code, and add a journal entry kind for its runs, so that the organ passes selfcheck and its output is traceable.
+- [ ] GROWTH: Author and stage probe proposals for the feasibility-check organ (body/organs/feasibility-check/) to verify its verdict against known feasible and infeasible tasks, promoting it from candidate to calibrate.

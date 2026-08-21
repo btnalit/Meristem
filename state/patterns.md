@@ -1040,3 +1040,15 @@ Rejected 2 times.
 Task: REPAIR: Fix the failure-aggregator organ's classify.py SyntaxError and its main.
 Class: unclassified
 Rejected 2 times.
+
+## G-006 — Repeated rejection
+
+Task: REPAIR: Fix the failure-aggregator organ's classify.py SyntaxError and its main.py exit code, and add a journal entry kind for its runs, so that the organ passes selfcheck and its output is traceable.
+Rejected 4 times.
+Previous attempts at this exact task were rejected:
+- cycle 354: review:deepseek: Reduction of failure classes from 12 to 4, removing detection of protected-path, secret-leak, immune-failure, organ-manifest, budget-exceeded, no-change, deterministic-check, parse-error, review-rejected
+- cycle 354: review:deepseek: Removal of pattern writing to state/patterns.md, reducing traceability of recurring rejections
+- cycle 354: review:deepseek: Removal of canary reject counting, narrowing detection scope
+- cycle 354: review:deepseek: Removal of fault-cycle exclusion, potentially causing false positives or missed signals
+- cycle 354: review:deepseek: Signal grading changes: block action removed, escalate threshold changed from 3 to 2, altering circuit breaker response
+- cycle 354: review:sensenova: Classification surface narrowed from 12 failure classes to 3 (gate-weakening, probe-regression, closure-budget). Nine classes — protected-path, secret-leak, parse-error, organ-manifest, immune-failur
