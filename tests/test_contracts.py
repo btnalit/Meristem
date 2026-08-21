@@ -695,19 +695,25 @@ class TestProbePromotion(unittest.TestCase):
         return d
 
     def _run(self, root):
+        """Paths go in as ARGUMENTS.
+
+        The first version of this helper monkeypatched sup.VAULT and friends,
+        which is the only way to test a function that reads module globals --
+        and on 2026-08-20 a dry run written the same way put six probes into
+        the real vault with no journal record. JOURNAL still needs patching
+        because _journal() is shared with the rest of the supervisor; the
+        paths this function OWNS are now parameters.
+        """
         import importlib
         sup = importlib.import_module("substrate.supervisor")
-        old_repo, old_vault, old_stage, old_journal = (
-            sup.REPO, sup.VAULT, sup.PROBE_STAGING, sup.JOURNAL)
-        sup.REPO = root
-        sup.VAULT = root / "vault"
-        sup.PROBE_STAGING = root / "state" / "probe-proposals"
+        old_journal = sup.JOURNAL
         sup.JOURNAL = root / "state" / "journal.jsonl"
         try:
-            return sup.promote_probes()
+            return sup.promote_probes(vault=root / "vault",
+                                      staging=root / "state" / "probe-proposals",
+                                      workdir=root)
         finally:
-            (sup.REPO, sup.VAULT, sup.PROBE_STAGING, sup.JOURNAL) = (
-                old_repo, old_vault, old_stage, old_journal)
+            sup.JOURNAL = old_journal
 
     GOOD = "import json,sys; sys.stdin.read(); print(json.dumps({'score': 42.0}))"
 
@@ -766,6 +772,30 @@ class TestProbePromotion(unittest.TestCase):
             self.assertEqual(self._run(root), 1)
             self._stage(root, "probe-once", self.GOOD)
             self.assertEqual(self._run(root), 0, "already in the vault; must not re-promote")
+
+    def test_explicit_paths_never_reach_the_live_vault(self):
+        """The regression that made P-063 necessary.
+
+        promote_probes once read module globals, so exercising it meant
+        monkeypatching them, and a patch that did not hold wrote six probes
+        into the real vault -- no journal row, no fingerprint, staging left
+        behind. Passing the paths in makes that failure unrepresentable.
+        """
+        import importlib
+        sup = importlib.import_module("substrate.supervisor")
+        live_vault, live_staging = sup.VAULT, sup.PROBE_STAGING
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "state").mkdir()
+            self._stage(root, "probe-isolated", self.GOOD)
+            self.assertEqual(self._run(root), 1)
+            self.assertTrue((root / "vault" / "internal" / "active"
+                             / "probe-isolated").is_dir())
+        self.assertEqual((sup.VAULT, sup.PROBE_STAGING), (live_vault, live_staging),
+                         "module globals must be untouched by a parameterised run")
+        self.assertFalse((live_vault / "internal" / "active"
+                          / "probe-isolated").exists(),
+                         "a parameterised run must not reach the live vault")
 
     def test_zero_score_is_promoted_not_refused(self):
         """A probe measuring something that does not work yet scores 0.

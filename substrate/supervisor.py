@@ -510,7 +510,7 @@ VAULT = pathlib.Path(os.environ.get("MERISTEM_VAULT", REPO.parent / "meristem-va
 PROBE_STAGING = REPO / "state" / "probe-proposals"
 
 
-def _score_probe(probe_dir, probe_id: str):
+def _score_probe(probe_dir, probe_id: str, workdir):
     """Run one rubric the way the kernel does -- without importing the kernel.
 
     Substrate mirrors the contract instead of calling meristem.gates.probes,
@@ -518,12 +518,14 @@ def _score_probe(probe_dir, probe_id: str):
     mutate the kernel, and a promotion path that asked the kernel whether a
     probe is sound would let the seed answer for itself. Returns None when the
     rubric cannot produce a score at all.
+
+    workdir is passed, never read from the module: see promote_probes.
     """
     check = probe_dir / "rubric" / "check.py"
     try:
         result = subprocess.run(
             [sys.executable, str(check)],
-            input=json.dumps({"workdir": str(REPO), "probe": probe_id}),
+            input=json.dumps({"workdir": str(workdir), "probe": probe_id}),
             capture_output=True, text=True, timeout=120, cwd=str(probe_dir))
         return float(json.loads(result.stdout or "{}").get("score", 0.0))
     except (subprocess.SubprocessError, ValueError, OSError,
@@ -531,8 +533,18 @@ def _score_probe(probe_dir, probe_id: str):
         return None
 
 
-def promote_probes() -> int:
+def promote_probes(vault=None, staging=None, workdir=None) -> int:
     """Validated staged proposals become frozen vault probes.
+
+    Every path is a PARAMETER, defaulting to the live one. The first version
+    read the module globals, so the only way to exercise it was to monkeypatch
+    them -- and on 2026-08-20 a dry run whose patch did not hold copied six
+    seed-authored probes into the real vault with no journal record and no
+    fingerprint. The rule was already written down, in gates/closure.py:
+    "EVERY function takes the tree it is inspecting. A gate that reads a path
+    constant instead of the candidate it was handed is inspecting the wrong
+    tree." A promotion path that can only be tested by reaching into the
+    module is a promotion path that can only be tested dangerously.
 
     A probe that scores 0 is NOT refused. The probe gate fails on REGRESSION
     (probes.run: score < previous), and a probe with no history cannot fail
@@ -541,12 +553,15 @@ def promote_probes() -> int:
     called; that zero is the point. It is the first time "not wired" becomes
     a number instead of a paragraph.
     """
-    if not PROBE_STAGING.is_dir():
+    vault = pathlib.Path(vault) if vault is not None else VAULT
+    staging = pathlib.Path(staging) if staging is not None else PROBE_STAGING
+    workdir = pathlib.Path(workdir) if workdir is not None else REPO
+    if not staging.is_dir():
         return 0
     promoted = 0
-    for src in sorted(p for p in PROBE_STAGING.iterdir() if p.is_dir()):
+    for src in sorted(p for p in staging.iterdir() if p.is_dir()):
         pid = src.name
-        dest = VAULT / "internal" / "active" / pid
+        dest = vault / "internal" / "active" / pid
         if dest.exists():
             continue
         refuse, manifest, staged = None, {}, None
@@ -567,7 +582,7 @@ def promote_probes() -> int:
             except (OSError, SyntaxError) as exc:
                 refuse = f"rubric does not compile: {exc}"
         if refuse is None:
-            staged = _score_probe(src, pid)
+            staged = _score_probe(src, pid, workdir)
             if staged is None:
                 refuse = "rubric returned no score"
         if refuse is None:
@@ -580,7 +595,7 @@ def promote_probes() -> int:
             manifest["frozen"] = True
             (dest / "probe.json").write_text(
                 json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-            vaulted = _score_probe(dest, pid)
+            vaulted = _score_probe(dest, pid, workdir)
             if vaulted is None or vaulted != staged:
                 shutil.rmtree(dest, ignore_errors=True)
                 refuse = f"location-dependent: staged {staged} vs vault {vaulted}"
