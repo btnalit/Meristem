@@ -131,8 +131,14 @@ class TestReportCommand(unittest.TestCase):
     def test_agr_self_proposed_over_total(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = pathlib.Path(tmp)
-            proposals = "- [ ] self-proposed task\n- [ ] another proposal\n"
+            # Provenance comes from the append-only auto_promote history, not
+            # from proposals.md. A task that is still an OPEN proposal cannot
+            # also be an accepted cycle -- winning consumes the proposal -- so
+            # the old fixture staged a state the running system never reaches,
+            # and a numerator that is structurally always zero looked correct.
+            proposals = "- [ ] another proposal\n"
             journal, scoreboard = self._setup(tmpdir, journal_entries=[
+                {"kind": "auto_promote", "task": "self-proposed task"},
                 {"kind": "cycle", "cycle": 1, "outcome": "candidate",
                  "why": "self-proposed task"},
                 {"kind": "cycle", "cycle": 2, "outcome": "candidate",

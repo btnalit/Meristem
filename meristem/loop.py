@@ -712,9 +712,9 @@ def generate_report() -> int:
     core_p, closure_p = deterministic.kernel_loc() / deterministic.KERNEL_LOC_CAP, closure_mod.compute([]).tokens / deterministic.CLOSURE_TOKEN_CAP
     last_rep = next((r for r in reversed(rows) if r.get("kind") == "report"), None)
     proposals = read_text(REPO / "state" / "proposals.md")
-    pt = {l.strip()[6:].strip() for l in proposals.splitlines() if l.strip().startswith("- [ ] ")}
+    pt = {r.get("task", "")[:200] for r in rows if r.get("kind") == "auto_promote"}
     n_acc = sum(1 for c in cycles if c.get("outcome") == "candidate")
-    agr = f"{sum(1 for c in cycles if c.get('outcome') == 'candidate' and c.get('why', '') in pt)}/{n_acc}" if n_acc else "0/0"
+    agr = f"{sum(1 for c in cycles if c.get('outcome') == 'candidate' and c.get('why', '')[:200] in pt)}/{n_acc}" if n_acc else "0/0"
     data = {"workdir": str(REPO), "generated_at": utc_now(), "core_pressure": core_p,
             "closure_pressure": closure_p, "core_cap": deterministic.KERNEL_LOC_CAP,
             "closure_cap": deterministic.CLOSURE_TOKEN_CAP, "kernel_loc": deterministic.kernel_loc(),
