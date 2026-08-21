@@ -798,3 +798,14 @@ and worktree. The staging proposal notes this explicitly.
 for the same failure class: first for staging rubric/check.py, then for
 embedding the rubric logic in task.md prose. Both were the same class:
 scoring logic visible to the engine.
+
+## G-006 — Repeated rejection circuit breaker
+
+When a task is rejected 3 consecutive times (judged rejections, not faults),
+the circuit breaker parks it: the task is set aside in state/mailbox.md
+until a human clears it, and a pattern entry is appended here with the
+rejection reasons aggregated from failure_history() across cycles.
+
+This is a stopgap. The full externalization (body/organs/circuit-breaker/)
+will own rejection aggregation, per-task retry counting, and escalation
+policy outside the kernel.

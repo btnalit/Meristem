@@ -45,10 +45,7 @@ def done_tasks(journal_path) -> set[str]:
 
 def failure_history(journal_path, task: str, limit: int = 3) -> str:
     """Past rejection reasons for the same task, most recent first.
-
-    Returns a formatted string suitable for engine.propose(extra=...).
-    Empty string when no prior failures exist for this task.
-    """
+    Empty string when no prior failures exist."""
     entries, faulted = [], {r.get("cycle") for r in read_jsonl(journal_path) if r.get("kind") == "fault"}
     for row in read_jsonl(journal_path):
         kind = row.get("kind", "")
@@ -89,14 +86,10 @@ def failure_history(journal_path, task: str, limit: int = 3) -> str:
 
 
 def parked_tasks(journal_path, repo_path) -> set[str]:
-    """Tasks that are parked: have a 'parked' journal cycle record AND still
-    appear in state/mailbox.md.
-
-    A human clears parking by removing the mailbox entry. The journal record
-    persists (append-only, never rewritten) but the task is then unparked and
-    can be retried. Without this check, take_task would re-take a parked task
-    every cycle, so parking would stall the agenda instead of advancing it.
-    """
+    """Parked tasks: have a 'parked' journal record AND still appear in
+    state/mailbox.md. A human clears parking by removing the mailbox entry;
+    the journal record persists (append-only). Without this check, take_task
+    would re-take a parked task every cycle."""
     parked_in_journal = {
         row.get("why", "")
         for row in read_jsonl(journal_path)
@@ -133,14 +126,11 @@ def take_task(journal_path, repo_path, control_path) -> str | None:
 
 
 def park_task(task: str, journal_path, repo_path) -> str:
-    """Park a task that has been rejected too many times.
+    """Park a task rejected too many times. Writes mailbox, patterns.md
+    (G-006 stopgap), and journal record. Returns reason for notification.
 
-    Writes the mailbox entry and the journal record. Returns the reason
-    string so the caller can notify (webhook) and print.
-
-    Unbounded retry on the same task is not progress, it is a loop -- the
-    breaker turns that loop into a stop. This function is the write half;
-    the decision to park lives in breaker.should_park().
+    Unbounded retry is a loop, not progress; the breaker turns it into a
+    stop. The decision to park lives in breaker.should_park().
     """
     rejection_cycles = [
         row.get("cycle")
@@ -161,6 +151,11 @@ def park_task(task: str, journal_path, repo_path) -> str:
     mailbox.parent.mkdir(parents=True, exist_ok=True)
     with mailbox.open("a", encoding="utf-8") as handle:
         handle.write(f"- PARKED: {task} ({reason_str})\n")
+    # G-006 stopgap: write rejection pattern to state/patterns.md
+    with (repo_path / "state" / "patterns.md").open("a", encoding="utf-8") as h:
+        h.write(f"\n## G-006 — Repeated rejection\n\nTask: {task[:200]}\n"
+                f"Rejected {len(rejection_cycles)} times.\n"
+                f"{failure_history(journal_path, task)[:1000]}\n")
     append_jsonl(journal_path, {
         "kind": "cycle",
         "cycle": cycle,
