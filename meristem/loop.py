@@ -873,6 +873,14 @@ def main(argv=None) -> int:
         print(f"open agenda item: {take_task() or '(none)'}")
         return 0
 
+    # Core-pressure monitor: suggest externalization when kernel exceeds the cap.
+    _loc = deterministic.kernel_loc()
+    if _loc > deterministic.KERNEL_LOC_CAP:
+        _ag = CONTROL / "agenda.md"
+        if "EXTERNALIZE: kernel at" not in read_text(_ag):
+            with _ag.open("a", encoding="utf-8") as _h:
+                _h.write(f"- [ ] EXTERNALIZE: kernel at {_loc}/{deterministic.KERNEL_LOC_CAP} lines -- externalize capability from meristem/ into an organ.\n")
+
     task = args.task or take_task()
     if not task:
         print("agenda is empty; nothing to do")
