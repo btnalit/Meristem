@@ -1,12 +1,12 @@
 {
   "id": "journal-query",
   "version": "1",
-  "capability": "Answers questions about state/journal.jsonl: counts judged rejections and mechanism faults per task, distinguishing the two as the circuit breaker requires.",
+  "capability": "Cross-cycle task aggregation: groups journal entries by task text and returns counts, rejection reasons, and timestamps, enabling the circuit breaker to detect repeated rejection patterns.",
   "entrypoint": ["python3", "main.py"],
-  "input_schema": {"op": "string", "args": "object"},
-  "output_schema": {"ok": "boolean", "result": "object"},
+  "input_schema": {"op": "string", "journal_path": "string", "task": "string?"},
+  "output_schema": {"ok": "boolean", "tasks": "array"},
   "dependencies": [],
   "probes": ["probe-journal-query-basic"],
   "metrics": ["usage", "success_rate"],
-  "lifecycle": "candidate"
+  "lifecycle": "active"
 }
