@@ -809,3 +809,14 @@ rejection reasons aggregated from failure_history() across cycles.
 This is a stopgap. The full externalization (body/organs/circuit-breaker/)
 will own rejection aggregation, per-task retry counting, and escalation
 policy outside the kernel.
+
+## G-006 — Repeated rejection
+
+Task: REPAIR (P-030 enforcement): Scan state/probe-proposals/ for any rubric/check.py files in immune-behavior probes and remove them, moving rubric logic to the vault.
+Rejected 5 times.
+Previous attempts at this exact task were rejected:
+- cycle 331: deterministic: kernel is 3002 lines, over the 3000 cap; closure ~50004 > 50000 budget. Kernel+control ~39156 always counted. Droppable: state/patterns.md ~9948, control/probe-protocol.md ~888, state/decisions.jsonl ~12
+- cycle 333: deterministic: kernel is 3002 lines, over the 3000 cap
+- cycle 334: review:deepseek: reviewer unavailable: review:deepseek failed after 4 attempts: empty content (finish_reason=length); raise max_tokens -- reasoning consumed the budget
+
+Study these objections carefully. Do NOT repeat these mistakes.
