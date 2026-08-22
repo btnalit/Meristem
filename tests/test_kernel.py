@@ -955,6 +955,61 @@ class TestLedger(unittest.TestCase):
         self.assertGreater(budget.campaign_usd, budget.cycle_usd)
 
 
+class TestCampaignBudgetIsAWindow(unittest.TestCase):
+    """campaign_calls counted every model call the system had ever made.
+
+    At cycle 392 the count reached 1003 against a cap of 1000, ledger.check()
+    raised, and it raises from loop.py:231 in every cycle and loop.py:643 in
+    every reflection. The loop could not produce another verdict, so the seed
+    could never propose the repair -- the only party able to fix the gate was
+    locked out by it. And check() runs AFTER propose(), so each beat spent
+    model calls to be told it was over its call budget, pushing the count
+    further past a line it could never come back under.
+
+    A cap that must eventually fire and never resets is not a budget. It is an
+    expiry date. Runaway protection lives in cycle_calls=12 and campaign_usd,
+    both untouched; this one only bounded how long the system was allowed to
+    exist.
+    """
+
+    def _journal(self, tmp, rows):
+        path = pathlib.Path(tmp) / "journal.jsonl"
+        with path.open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        return path
+
+    def test_calls_outside_the_window_do_not_count(self):
+        from unittest.mock import patch
+        rows = ([{"kind": "usage", "cycle": c} for c in range(1, 51)]
+                + [{"kind": "usage", "cycle": c} for c in range(900, 910)])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._journal(tmp, rows)
+            with patch.object(ledger, "JOURNAL", path):
+                self.assertEqual(ledger.calls(), 60, "all time still counts all time")
+                self.assertEqual(ledger.calls(window=300), 10,
+                                 "only the last 300 cycles bind the campaign cap")
+
+    def test_a_dead_loop_can_come_back(self):
+        """The property the old counter could not have: after a quiet stretch,
+        the campaign count falls again."""
+        from unittest.mock import patch
+        rows = [{"kind": "usage", "cycle": c} for c in range(1, 400)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._journal(tmp, rows)
+            with patch.object(ledger, "JOURNAL", path):
+                before = ledger.calls(window=100)
+            rows += [{"kind": "usage", "cycle": 900}]
+            path = self._journal(tmp, rows)
+            with patch.object(ledger, "JOURNAL", path):
+                self.assertLess(ledger.calls(window=100), before,
+                                "the window must be able to empty")
+
+    def test_the_per_cycle_guard_is_untouched(self):
+        """cycle_calls is what stops a runaway, and it did not move."""
+        self.assertEqual(ledger.load_budget().cycle_calls, 12)
+
+
 class TestConfig(unittest.TestCase):
     def test_models_toml_has_no_secrets(self):
         text = (KERNEL_REPO / "control" / "models.toml").read_text(encoding="utf-8")

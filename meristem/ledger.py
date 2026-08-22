@@ -72,12 +72,13 @@ def record(cycle: int, role: str, completion, models: dict | None = None,
     return cost
 
 
+#: Campaign calls bind over a rolling window of cycles, never over all time.
+CAMPAIGN_WINDOW = 300
+
+
 def _rows(cycle: int | None = None) -> list[dict]:
-    return [
-        row
-        for row in read_jsonl(JOURNAL)
-        if row.get("kind") == "usage" and (cycle is None or row.get("cycle") == cycle)
-    ]
+    return [r for r in read_jsonl(JOURNAL) if r.get("kind") == "usage"
+            and (cycle is None or r.get("cycle") == cycle)]
 
 
 def spent(cycle: int | None = None) -> float:
@@ -85,9 +86,11 @@ def spent(cycle: int | None = None) -> float:
     return sum(float(row.get("usd", 0.0)) for row in _rows(cycle))
 
 
-def calls(cycle: int | None = None) -> int:
+def calls(cycle: int | None = None, window: int = 0) -> int:
     """Model calls made -- the binding constraint on quota-limited endpoints."""
-    return len(_rows(cycle))
+    rows = _rows(cycle)
+    last = max((r.get("cycle", 0) for r in rows), default=0)
+    return len([r for r in rows if not window or r.get("cycle", 0) > last - window])
 
 
 def drain_attempts(cycle: int, models: dict | None = None) -> float:
@@ -117,7 +120,7 @@ def check(cycle: int, budget: Budget | None = None) -> None:
     """Deterministic budget gate. Raises when any cap is exceeded."""
     budget = budget or load_budget()
     this_cycle, total = spent(cycle), spent()
-    cycle_calls, total_calls = calls(cycle), calls()
+    cycle_calls, total_calls = calls(cycle), calls(window=CAMPAIGN_WINDOW)
     if this_cycle > budget.cycle_usd:
         raise MeristemError(
             f"cycle {cycle} spent ${this_cycle:.4f} > cap ${budget.cycle_usd:.4f}"
@@ -132,5 +135,5 @@ def check(cycle: int, budget: Budget | None = None) -> None:
         )
     if total_calls > budget.campaign_calls:
         raise MeristemError(
-            f"campaign made {total_calls} calls > cap {budget.campaign_calls}"
+            f"campaign made {total_calls} calls in the last {CAMPAIGN_WINDOW} cycles > cap {budget.campaign_calls}"
         )
