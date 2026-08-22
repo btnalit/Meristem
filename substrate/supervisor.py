@@ -830,6 +830,15 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             # for the three-strike path is what caught it.
             if result.returncode == 0:
                 failures = 0
+            # Publish whenever main has moved, not only when a promotion
+            # moved it. publish() was reachable from promote() alone, so a
+            # soil commit or a beat's bookkeeping sat unpushed for as long
+            # as the seed went without landing a change -- seven commits
+            # and most of a day, the last time. The server is where commits
+            # and pushes happen and GitHub is the mirror; a mirror that
+            # only updates on promotion is not a mirror. Env-gated,
+            # idempotent when there is nothing to send, never fatal.
+            publish()
         except Exception as exc:
             # Exception, never BaseException: SystemExit and KeyboardInterrupt
             # must still pass through. No `continue` either -- the sleep below

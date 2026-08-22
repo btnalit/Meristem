@@ -188,6 +188,24 @@ class TestBeatFirewall(unittest.TestCase):
         finally:
             sv.JOURNAL = orig
 
+    def test_publish_runs_every_beat_not_only_on_promotion(self):
+        """publish() was reachable from promote() and nowhere else.
+
+        Promotions are sparse -- cycle 375 was the last one before this was
+        written -- so every soil commit and every beat's bookkeeping sat on
+        main unpushed for as long as the seed went without landing a change.
+        Seven commits had accumulated when it was noticed, and clearing them
+        took a human running git push, which is the one thing this system is
+        not supposed to need.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            sv = self._sv()
+            with patch.object(sv, "publish") as pub:
+                rc, _ = self._run_beats(3, [None, None, None], journal)
+        self.assertEqual(rc, 0)
+        self.assertEqual(pub.call_count, 3, "one publish per beat, promotion or not")
+
     def test_one_exception_costs_a_beat_not_the_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             journal = pathlib.Path(tmp) / "journal.jsonl"
