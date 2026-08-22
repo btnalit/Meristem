@@ -1075,3 +1075,9 @@ Previous attempts at this exact task were rejected:
 Task: GROWTH: Implement cross-task failure aggregation query in the journal-query orga
 Class: unclassified
 Rejected 2 times.
+
+## FA-unclassified — Repeated rejection
+
+Task: REPAIR (failure-aggregator SyntaxError, confirmed by selfcheck-runner): Fix the 
+Class: unclassified
+Rejected 2 times.
