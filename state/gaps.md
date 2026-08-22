@@ -230,3 +230,34 @@ repository (P-030). The rubric-author organ writes rubrics directly into
 the vault, closing the class structurally. Measuring stick:
 probe-rubric-author-vault verifies a generated rubric is in the vault
 and no check.py appears in body/.
+
+## G-032 — Gitignored runtime records are counted in the review closure
+
+Cycle 388 was refused by the deterministic gate:
+
+    closure ~52704 > 50000 budget. Kernel+control ~39180 always counted.
+    Droppable: state/patterns.md ~13512, state/decisions.jsonl ~12...
+
+state/decisions.jsonl is not tracked by git. It sits in .gitignore beside
+journal.jsonl and scoreboard.jsonl, under the note that runtime records are
+per-deployment state rather than source. closure.compute walks the filesystem
+rather than the index, so a mutation that touches one of these carries its
+whole size into the review context.
+
+Measured 2026-08-23, on main:
+
+    kernel + control baseline   39180 tokens of a 50000 cap
+    state/decisions.jsonl        1128
+    state/scoreboard.jsonl       3108
+    state/journal.jsonl         21060
+
+The closure invariant itself is not in question: any single mutation's review
+closure must fit in one review context, and that is what the cap enforces. The
+observation is narrower -- that files which are deliberately not part of the
+source tree are being charged against it.
+
+What should change is not stated here, and one constraint on any answer is
+worth knowing in advance: narrowing what the closure calculator counts is
+literally "shrinks what reviewers or the closure calculator can see", which is
+a terminal question in section 1 of the review checklist. Any proposal on this
+ground meets the panel on exactly that question.

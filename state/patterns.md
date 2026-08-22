@@ -349,3 +349,13 @@ Previous attempts at this exact task were rejected:
 Task: REPAIR (G-008, failure-aggregator traceability): In body/organs/failure-aggregat
 Class: protected-path
 Rejected 2 times.
+
+## G-006 — Repeated rejection
+
+Task: EXTERNALIZE: Move the review gate from meristem/gates/review.py (196 LOC) into body/organs/review-gate/. The review gate evaluates candidate mutations against review criteria and returns structured pa
+Rejected 3 times.
+Previous attempts at this exact task were rejected:
+- cycle 387: review:deepseek: The kernel no longer guarantees the full weakening-detection prompt; it only checks for the WEAKENING_QUESTION substring. The 'How to decide' criteria, budget-exception rules, and refactor-vs-relaxation guidance now live in a mutable organ, so a future mutation can strip or weaken them without tripping any kernel invariant.
+- cycle 387: review:deepseek: organ.json declares `dependencies: []` while main.py reads `control/constitution.md` and `control/checklists.md` and is consumed by `meristem/gates/review.py`; this is a hidden dependency and can shrink future review closures.
+- cycle 387: review:deepseek: The new `_read_text` silently returns '' on FileNotFoundError, so a missing constitution or checklist would produce a review prompt without those documents. The old kernel `read_text` would fail loudly; this converts a hard failure into a silent default-continue.
+- cycle 387: review:deepseek: Fail-closed
