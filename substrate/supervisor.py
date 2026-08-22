@@ -335,6 +335,14 @@ def notify(event: str, message: str) -> None:
         print(f"notify failed ({event}): {exc}", file=sys.stderr)
 
 
+def _append(path, record: dict) -> None:
+    """Append one record to an append-only register, timestamped."""
+    record = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), **record}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def _journal(record: dict) -> None:
     """Append one record to the journal. The substrate writes its own records
     without importing kernel code -- the structural separation is load-bearing."""
@@ -452,6 +460,36 @@ def probe_scores(tree: str) -> dict:
         return json.loads(result.stdout.strip().splitlines()[-1])
     except (subprocess.SubprocessError, OSError, ValueError, IndexError):
         return {}
+
+
+SCOREBOARD = REPO / "state" / "scoreboard.jsonl"
+
+
+def record_scoreboard(commit: str) -> int:
+    """Write the whole frozen set's score ON MAIN, so the scoreboard stops lying.
+
+    probes.baseline() returns the LAST recorded score per probe, and a cycle
+    records only the three it sampled -- so up to thirteen of sixteen entries
+    are however old that probe's last draw happened to be.
+    probe-journal-query-basic sat at 100.00 in the scoreboard while scoring
+    0.00 on main, and BOTH the report's probe_scores and the in-cycle
+    regression check read that stale number as the truth. A memory that is
+    silently thirteen-sixteenths out of date is worse than no memory: the gate
+    fires on phantom regressions and misses real ones.
+
+    Written after the ff-merge, so these are the scores of MAIN, not of a
+    candidate: complete, current, and attributable to the commit that produced
+    them. The kernel keeps writing its per-cycle sample rows; this adds the
+    full picture at the one moment the tree changes.
+
+    The same separation as probe_scores(): rubrics from the vault, runner from
+    HEAD, subject the tree just promoted.
+    """
+    scores = probe_scores(str(REPO))
+    for pid, score in sorted(scores.items()):
+        _append(SCOREBOARD, {"kind": "probe", "probe_id": pid, "score": score,
+                             "commit": commit[:12], "source": "promotion-full-set"})
+    return len(scores)
 
 
 def canary(commit: str) -> tuple[bool, str]:
@@ -623,6 +661,12 @@ def promote() -> int:
     git("update-ref", LAST_GOOD, candidate)
     git("update-ref", "-d", CANDIDATE_REF, check=False)
     _journal({"kind": "promoted", "commit": candidate[:12], "why": why})
+    # The tree just changed; the scoreboard's memory of it is now provably
+    # current instead of up to thirteen-sixteenths stale.
+    recorded = record_scoreboard(candidate)
+    if not recorded:
+        _journal({"kind": "probe_unmeasured", "commit": candidate[:12],
+                  "note": "scoreboard not refreshed after promotion"})
     print(f"promoted {candidate[:12]} -> main; last-good updated")
     publish()
     return 0

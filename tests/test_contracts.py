@@ -398,6 +398,59 @@ class TestStaleCandidateIsNamedForWhatItIs(unittest.TestCase):
             self.assertEqual(gp.call_count, 1)
 
 
+class TestScoreboardIsRefreshedOnPromotion(unittest.TestCase):
+    """A cycle samples three probes of sixteen and records only those.
+
+    Everything downstream reads the result as current: probes.baseline() for
+    the regression check, and the report's probe_scores for the seed's own
+    view of its measuring sticks. probe-journal-query-basic sat at 100.00 in
+    that memory while scoring 0.00 on main.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def test_the_whole_frozen_set_is_written_after_promotion(self):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            board = pathlib.Path(tmp) / "scoreboard.jsonl"
+            orig = sv.SCOREBOARD
+            try:
+                sv.SCOREBOARD = board
+                with patch.object(sv, "probe_scores",
+                                  return_value={"p-a": 100.0, "p-b": 0.0}):
+                    n = sv.record_scoreboard("c" * 40)
+            finally:
+                sv.SCOREBOARD = orig
+            rows = read_jsonl(board)
+        self.assertEqual(n, 2)
+        self.assertEqual({r["probe_id"]: r["score"] for r in rows},
+                         {"p-a": 100.0, "p-b": 0.0},
+                         "a probe that failed must be recorded as failing, not omitted")
+        self.assertTrue(all(r["kind"] == "probe" for r in rows),
+                        "baseline() only reads rows whose kind is probe")
+        self.assertTrue(all(r["commit"] == "c" * 12 for r in rows),
+                        "a score with no commit cannot be attributed to a tree")
+
+    def test_a_failed_measurement_writes_nothing_rather_than_zeroes(self):
+        """Recording an unmeasurable set as all-zero would invent a regression
+        on every probe at once -- the overclaim of P-078 with the sign flipped."""
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            board = pathlib.Path(tmp) / "scoreboard.jsonl"
+            orig = sv.SCOREBOARD
+            try:
+                sv.SCOREBOARD = board
+                with patch.object(sv, "probe_scores", return_value={}):
+                    n = sv.record_scoreboard("c" * 40)
+            finally:
+                sv.SCOREBOARD = orig
+            self.assertEqual(n, 0)
+            self.assertFalse(board.exists() and board.read_text(encoding="utf-8").strip())
+
+
 class TestFrozenSetGuardsPromotion(unittest.TestCase):
     """probes.py has said "the full frozen set runs before promotion" since P0.
 
