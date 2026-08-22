@@ -1081,3 +1081,14 @@ Rejected 2 times.
 Task: REPAIR (failure-aggregator SyntaxError, confirmed by selfcheck-runner): Fix the 
 Class: unclassified
 Rejected 2 times.
+
+## G-006 — Repeated rejection
+
+Task: REPAIR (failure-aggregator SyntaxError, confirmed by selfcheck-runner): Fix the SyntaxError in body/organs/failure-aggregator/classify.py at line 21. The selfcheck-runner organ (body/organs/selfcheck-
+Rejected 3 times.
+Previous attempts at this exact task were rejected:
+- cycle 378: review:deepseek: Removes 8 of 12 failure classes (protected-path, secret-leak, parse-error, organ-manifest, immune-failure, budget-exceeded, no-change, deterministic-check, review-rejected) and their associated keywords, narrowing the classifier's detection capability
+- cycle 378: review:deepseek: Deletes the `classify_reasons` and `dominant_class` functions, eliminating aggregate analysis that was critical for detecting repeated failure classes across cycles
+- cycle 378: review:deepseek: Reduces the classifier from 12 classes with broad keyword coverage to 4 classes, directly contradicting the original design intent and explicit instructions in the previous code to not narrow the coverage
+- cycle 378: review:deepseek: The new code only classifies single reasons, losing the ability to output structured entries to `state/patterns.md` for G-006 and G-007 detection, which was the organ's purpose
+- cycle 378: review:deepseek:
