@@ -718,6 +718,35 @@ class TestEngine(unittest.TestCase):
                 files = engine.mutable_files()
         self.assertEqual(files, ["meristem/loop.py"])
 
+    def test_the_author_is_told_its_remaining_kernel_budget(self):
+        """The reflector's digest carries "core {loc}/{cap}"; the mutation
+        prompt carried the cap (via the constitution) and never the count.
+
+        Cycles 362 and 365 are what that costs. The seed had diagnosed its own
+        blindness to body/ correctly and reached for a whitelist mechanism:
+        +17 lines, refused by the deterministic gate at 3010; then +10, refused
+        at 3003. The minimal answer -- mirror the tests/ conditional already in
+        the same function -- was four lines and would have fit. It was
+        descending a gradient made of rejection text because it was never given
+        the number that forces parsimony. It parked at 366 still correct.
+        """
+        from unittest.mock import patch
+
+        seen = {}
+
+        def _capture(role, messages, config=None):
+            seen["prompt"] = messages[-1]["content"]
+            return llm.Completion(
+                text=json.dumps({"rationale": "r",
+                                 "files": {"meristem/dummy.py": "# x\n"}}),
+                model="test",
+            )
+
+        with patch.object(llm, "complete", _capture):
+            engine.propose("test task")
+        self.assertIn(f"{deterministic.kernel_loc()} of {deterministic.KERNEL_LOC_CAP} lines used",
+                      seen["prompt"], "the author cannot see the budget it is held to")
+
     def test_parse_tolerates_fenced_json(self):
         self.assertEqual(engine._parse('```json\n{"a": 1}\n```'), {"a": 1})
 

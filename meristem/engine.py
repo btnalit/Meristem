@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 from . import CONTROL, REPO, MeristemError, read_text
 from . import llm as llm_mod
+from .gates import deterministic as det_mod
 
 #: Kept out of the mutation context wholesale; body/ enters when a task names an organ.
 EXCLUDED_DIRS = {".git", ".claude", "__pycache__", "state", "body", "docs"}
@@ -175,6 +176,7 @@ def propose(task: str, *, config=None, extra: str = "") -> Mutation:
                 f"# Constitution\n{constitution}\n\n"
                 f"# Checklist\n{checklists}\n\n"
                 f"# Task\n{task}\n\n"
+                f"# Kernel budget\n{det_mod.kernel_loc()} of {det_mod.KERNEL_LOC_CAP} lines used; a change that exceeds the cap is refused before any reviewer sees it.\n\n"
                 + (f"# Additional context\n{extra}\n\n" if extra else "")
                 + f"# Current mutable source\n{build_context(task)}"
             ),
