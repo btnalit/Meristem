@@ -1,10 +1,26 @@
 {
   "id": "journal-query",
   "version": "1",
-  "capability": "Cross-cycle task aggregation: groups journal entries by task text and returns counts, rejection reasons, and timestamps, enabling the circuit breaker to detect repeated rejection patterns.",
+  "capability": "Query the journal for failure patterns: per-task rejection counts, per-task summaries, and cross-task failure class aggregation.",
   "entrypoint": ["python3", "main.py"],
-  "input_schema": {"op": "string", "journal_path": "string", "task": "string?"},
-  "output_schema": {"ok": "boolean", "tasks": "array"},
+  "input_schema": {
+    "op": "string (query|aggregate_by_task|aggregate_cross_task|selfcheck)",
+    "journal_path": "string (path to journal.jsonl, relative to repo root)",
+    "task": "string (for query op)",
+    "task_filter": "string (optional, for aggregate_by_task op)",
+    "min_tasks": "integer (optional, for aggregate_cross_task op, default 2)"
+  },
+  "output_schema": {
+    "ok": "boolean",
+    "rejections": "integer (query op)",
+    "faults": "integer (query op)",
+    "canary_rejects": "integer (query op)",
+    "tasks": "array (aggregate_by_task op)",
+    "classes": "array (aggregate_cross_task op)",
+    "results": "array (selfcheck op)",
+    "failures": "array (selfcheck op)",
+    "error": "string (on failure)"
+  },
   "dependencies": [],
   "probes": ["probe-journal-query-basic"],
   "metrics": ["usage", "success_rate"],

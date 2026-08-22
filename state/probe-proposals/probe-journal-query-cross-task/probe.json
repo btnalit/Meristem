@@ -1,0 +1,6 @@
+{
+  "id": "probe-journal-query-cross-task",
+  "capability_domain": "journal-query",
+  "organ": "journal-query",
+  "description": "Verifies cross-task failure aggregation across two distinct tasks"
+}
