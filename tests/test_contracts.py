@@ -298,6 +298,33 @@ class TestPublishIsNeverFatal(unittest.TestCase):
         self.assertEqual(self._publish_with(returncode=0), [])
 
 
+class TestReviewChecklistNamesItsEnforcement(unittest.TestCase):
+    """Cycle 363 refused a correct diagnosis on a misread of one line.
+
+    "Does it grant the mutation engine access it did not have" says access and
+    means two different things with two different enforcement points. A
+    reviewer applied it to a proposal that asked to SEE body/organs/*.json and
+    refused it for making organ self-promotion possible -- which write access,
+    never withheld by _validate_paths, had already made possible and which
+    refusing that proposal did nothing about.
+
+    The checklist is the reviewers' only reference. If the names of the real
+    enforcement points drift out of it, or a rewrite drops the distinction,
+    the panel goes back to guessing from a word.
+    """
+
+    def test_checklist_names_where_write_authority_is_enforced(self):
+        text = (REPO / "control" / "checklists.md").read_text(encoding="utf-8")
+        for name in ("EXCLUDED_DIRS", "EXCLUDED_PREFIXES", "guard_lifecycle"):
+            self.assertIn(name, text,
+                          f"reviewers cannot check {name} without being told it exists")
+        self.assertIn("Read and write are separate", text)
+
+    def test_checklist_states_the_lifecycle_rule(self):
+        text = (REPO / "control" / "checklists.md").read_text(encoding="utf-8")
+        self.assertIn("one stage per promotion", text)
+
+
 class TestOrganLifecycleCannotSkip(unittest.TestCase):
     """germline.advance() refuses to skip a stage and has no callers.
 

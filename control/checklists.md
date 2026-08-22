@@ -10,7 +10,12 @@ there rejects the change regardless of quorum.
 - [ ] Does it loosen a threshold, cap, quorum, or budget?
 - [ ] Does it shrink what reviewers or the closure calculator see?
 - [ ] Does it grant the mutation engine access it did not have —
-      especially any path toward the eval vault?
+      especially any path toward the eval vault? Read and write are separate
+      questions with separate enforcement. What the engine may SEE is
+      `engine.EXCLUDED_DIRS`, a context-budget list. What it may WRITE is
+      `engine.EXCLUDED_PREFIXES`, the deterministic protected-path check, and
+      `supervisor.guard_lifecycle`. Widening sight is not widening authority,
+      and refusing a change to one does nothing about the other.
 - [ ] Does it make a failure mode harder to detect or attribute?
 - [ ] Does it touch `root/` or `substrate/`?
 - [ ] Does it relax organ-manifest validation or narrow the closure union?
@@ -40,6 +45,9 @@ toward reject.
 ## 4. Growth hygiene (organ changes)
 
 - [ ] Manifest complete and honest; entrypoint real; probes present.
+- [ ] Lifecycle advances at most one stage per promotion, forward, and a new
+      organ enters at `candidate`. The substrate refuses a skip; a diff that
+      needs one is asking for the wrong thing, not for an exception.
 - [ ] Did a measuring stick exist before the capability did?
 - [ ] Utility measure defined, and a retirement path stated.
 - [ ] If `internalize`: is it budget-neutral — did equal complexity leave?
