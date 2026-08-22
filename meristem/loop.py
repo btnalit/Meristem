@@ -340,10 +340,8 @@ def print_spend() -> int:
 
 
 #: Guarded ground: proposals naming these go to the mailbox, not the queue.
-PROPOSAL_GUARDED = (
-    "root/", "substrate/", "meristem/gates/",
-    "control/constitution.md", "control/checklists.md",
-)
+PROPOSAL_GUARDED = re.compile(r"(?:root|substrate)/[\w./-]*\w+\.\w+|meristem/gates/"
+                              r"[\w./-]*\w+\.py|control/(?:constitution|checklists)\.md")
 
 #: Cap changes need a complete case and approval; never ride in as ordinary
 #: mutations. The seat demotes on evidence, but the argued-case requirement
@@ -433,8 +431,8 @@ def route_proposal(text: str) -> str:
         # the mandate demands that breakdown and four kernel files sit under
         # meristem/gates/, so an honest case always named guarded ground.
         rest = CAP_CITE.sub("", lowered).replace(CAP_HOME, "")
-        return "mailbox" if any(p in rest for p in PROPOSAL_GUARDED) else "agenda"
-    if any(p in CAP_CITE.sub("", lowered) for p in PROPOSAL_GUARDED):
+        return "mailbox" if PROPOSAL_GUARDED.search(rest) else "agenda"
+    if PROPOSAL_GUARDED.search(CAP_CITE.sub("", lowered)):
         return "mailbox"
     return "agenda"
 
@@ -685,7 +683,7 @@ def run_reflect(*, config=None, pressure: bool = False) -> int:
                           + ", ".join(cap_case_missing(text))})
             refused += 1
         elif route == "mailbox":
-            hit = next((p for p in PROPOSAL_GUARDED if p in CAP_CITE.sub("", text.lower())), "?")
+            hit = (m.group(0) if (m := PROPOSAL_GUARDED.search(CAP_CITE.sub("", text.lower()))) else "?")
             with mailbox_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"- PROPOSAL (held, names guarded ground {hit!r}): {text}\n")
             all_dedup_lines.append(f"- [ ] {text}")

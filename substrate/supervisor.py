@@ -47,10 +47,16 @@ JOURNAL = REPO / "state" / "journal.jsonl"
 PROPOSALS = REPO / "state" / "proposals.md"
 AGENDA = REPO / "control" / "agenda.md"
 
-PROPOSAL_GUARDED_SUBSTRATE = (
-    "root/", "substrate/", "meristem/gates/",
-    "control/constitution.md", "control/checklists.md",
-)
+#: Keep in sync with meristem.loop.PROPOSAL_GUARDED by hand, like every other
+#: mirrored constant here: the seed may legally mutate loop.py, so importing
+#: the fence from the kernel would let it relax the soil's copy too.
+#: A FILE in guarded ground holds a proposal; a bare directory mention does
+#: not. Cycle 385's ring audit found four proposals held for listing
+#: "protected/root/substrate/closure" among a classifier's keywords, or for
+#: quoting `grep -rn ... meristem/ substrate/` as evidence. Neither asked to
+#: change anything in the soil, and a held proposal has no way back.
+PROPOSAL_GUARDED_SUBSTRATE = re.compile(r"(?:root|substrate)/[\w./-]*\w+\.\w+|meristem/gates/"
+                                        r"[\w./-]*\w+\.py|control/(?:constitution|checklists)\.md")
 #: Keep in sync with meristem.loop.CAP_PROPOSAL_MARKERS by hand. Duplicated
 #: on purpose (the seed may mutate loop.py) which means the two can DRIFT --
 #: and a marker the soil lacks is a hole in the very copy that exists to
@@ -152,8 +158,8 @@ def _is_guarded_proposal(text: str) -> bool:
         # sit under meristem/gates/, so an honest case always cited guarded
         # ground. Strip citations (path + line count) only.
         rest = CAP_CITE_SUBSTRATE.sub("", lowered).replace(CAP_HOME_SUBSTRATE, "")
-        return any(p in rest for p in PROPOSAL_GUARDED_SUBSTRATE)
-    return any(p in lowered for p in PROPOSAL_GUARDED_SUBSTRATE)
+        return bool(PROPOSAL_GUARDED_SUBSTRATE.search(rest))
+    return bool(PROPOSAL_GUARDED_SUBSTRATE.search(lowered))
 
 
 SEAT_LOCK = REPO / "state" / "approval_seat.rung1.lock"

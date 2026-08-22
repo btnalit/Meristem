@@ -201,6 +201,37 @@ class TestProposalGuard(unittest.TestCase):
                 loop.route_proposal(f"Fix the thing in {path} so it behaves"),
                 "mailbox", f"{path} was not held for review")
 
+    def test_prose_mentioning_guarded_ground_is_not_held(self):
+        """A held proposal has no way back, so a false positive is permanent.
+
+        The ring audit found four of the seven held proposals had never asked
+        to touch the soil. One was a repair to
+        body/organs/failure-aggregator/classify.py that listed the classifier's
+        own keywords -- "weaken/gate/invariant/secret/protected/root/substrate/
+        closure" -- and "root/" and "substrate/" are substrings of that list.
+        Two more quoted `grep -rn 'selfcheck-runner' meristem/ substrate/` as
+        evidence that an organ was never wired up. The guard was reading data
+        and shell commands as intent.
+
+        A proposal that means to change guarded ground names a FILE in it.
+        """
+        for text in (
+            "Restore the classifier keywords weaken/gate/invariant/secret/"
+            "protected/root/substrate/closure in body/organs/x/classify.py",
+            "grep -rn 'selfcheck-runner' meristem/ substrate/ returns nothing;"
+            " add a call site in meristem/loop.py",
+            "Grow an organ at body/organs/summarise/ that reads control/ files",
+        ):
+            self.assertEqual(loop.route_proposal(text), "agenda",
+                             f"held on prose, and holding has no exit: {text[:60]}")
+
+    def test_naming_a_file_in_guarded_ground_is_still_held(self):
+        for text in ("Fix substrate/supervisor.py promote()",
+                     "Patch root/panic.py",
+                     "Rewrite meristem/gates/review.py",
+                     "Update control/constitution.md"):
+            self.assertEqual(loop.route_proposal(text), "mailbox", text)
+
     def test_ordinary_proposal_reaches_the_queue(self):
         self.assertEqual(
             loop.route_proposal("Add a utility command to meristem/loop.py"),
