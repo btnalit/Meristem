@@ -17,7 +17,7 @@
     "reason": "string"
   },
   "dependencies": [],
-  "probes": [],
+  "probes": ["probe-feasibility-check-feasible", "probe-feasibility-check-infeasible"],
   "metrics": ["usage", "accuracy"],
-  "lifecycle": "candidate"
+  "lifecycle": "calibrate"
 }
