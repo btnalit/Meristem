@@ -32,6 +32,8 @@ class ProbeRun:
     domain: str = ""
     kind: str = "internal"
     detail: str = ""
+    before: float | None = None
+    status: str = "unmeasured"
 
 
 @dataclass
@@ -181,6 +183,7 @@ def run(workdir: str, *, target: str | None = None, full: bool = False,
         result = run_probe(manifest, workdir)
         verdict.runs.append(result)
         previous = history.get(result.probe_id)
+        result.before, result.status = previous, ("baseline" if previous is None else "improved" if result.score > previous else "regressed" if result.score < previous else "no_regression")
         if previous is not None and result.score < previous:
             verdict.fail(
                 f"regression on frozen probe '{result.probe_id}': "

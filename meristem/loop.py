@@ -297,9 +297,7 @@ def run_cycle(task: str, cycle: int, *, config=None) -> CycleResult:
             "why": task,
             "rationale": result.rationale,
             "what": result.changed,
-            "proved_better_by": [r["probe_id"] for r in result.probe_runs
-                                 if r.get("score", 0) > 0],
-            "no_regression_on": [r["probe_id"] for r in result.probe_runs],
+            "fitness": [{"probe": r["probe_id"], "before": r["before"], "after": r["score"], "status": r["status"]} for r in result.probe_runs],
             "usd": round(result.usd, 6),
             "approved_by": [v.get("slot") for v in result.votes
                             if v.get("verdict") == "approve"],

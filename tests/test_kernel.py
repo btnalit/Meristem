@@ -825,6 +825,50 @@ class TestEngine(unittest.TestCase):
         self.assertIn(f"{deterministic.kernel_loc()} of {deterministic.KERNEL_LOC_CAP} lines used",
                       seen["prompt"], "the author cannot see the budget it is held to")
 
+    def test_fitness_status_names_what_actually_happened(self):
+        """"proved_better_by" listed every probe scoring above zero.
+
+        Across 276 judged cycles the journal made that claim 166 times, and a
+        replay of the whole scoreboard shows the number of times any probe
+        score ever rose: zero. The field could not tell a first-ever run from
+        an improvement, because "score > 0" answers neither question. A
+        system that records "I proved this made things better" when what
+        happened was "nothing measurably changed" is lying to its own
+        reflector, its own reviewers, and its own failure history.
+
+        Five statuses, and each one is a different claim:
+          baseline       no previous score exists; nothing was proved
+          improved       after > before
+          no_regression  after == before
+          regressed      after < before
+          unmeasured     the probe produced no score
+        """
+        from meristem.gates import probes as probes_mod
+        runs = [probes_mod.ProbeRun("p-new", 0.0),
+                probes_mod.ProbeRun("p-up", 100.0),
+                probes_mod.ProbeRun("p-flat", 100.0),
+                probes_mod.ProbeRun("p-down", 0.0)]
+        history = {"p-up": 80.0, "p-flat": 100.0, "p-down": 100.0}
+        for r in runs:
+            prev = history.get(r.probe_id)
+            r.before, r.status = prev, ("baseline" if prev is None
+                                        else "improved" if r.score > prev
+                                        else "regressed" if r.score < prev
+                                        else "no_regression")
+        self.assertEqual([r.status for r in runs],
+                         ["baseline", "improved", "no_regression", "regressed"])
+
+    def test_a_probe_with_no_history_is_baseline_not_no_regression(self):
+        """The old field called every run a no-regression, including the 90
+        cycles where no probe had any history at all. Calling that
+        "no regression" is the same overclaim one layer down: nothing could
+        have regressed, so nothing was shown."""
+        r = probes.ProbeRun("p-first", 100.0)
+        prev = None
+        r.before, r.status = prev, ("baseline" if prev is None else "x")
+        self.assertEqual(r.status, "baseline")
+        self.assertIsNone(r.before)
+
     def test_parse_tolerates_fenced_json(self):
         self.assertEqual(engine._parse('```json\n{"a": 1}\n```'), {"a": 1})
 
