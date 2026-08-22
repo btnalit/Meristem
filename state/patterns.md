@@ -1069,3 +1069,9 @@ Previous attempts at this exact task were rejected:
 - cycle 363: review:deepseek: It grants the mutation engine access to files it did not have, and the task explicitly states this unblocks the loop from updating organ lifecycle fields such as advancing an organ from candidate to calibrate.
 - cycle 363: review:deepseek: Allowing the mutation engine to modify organ manifests creates a path for self-promotion of organs outside the substrate's promotion authority, making a previously loud structural boundary silently permissive for a whitelisted class.
 - cycle 365: deterministic: kernel is 3003 lines, over the 3000 cap; closure ~52020 > 50000 budget. Kernel+control ~39168 always counted. Droppable: state/patterns.m
+
+## FA-unclassified — Repeated rejection
+
+Task: GROWTH: Implement cross-task failure aggregation query in the journal-query orga
+Class: unclassified
+Rejected 2 times.
