@@ -222,3 +222,11 @@ To complete the promotion from candidate to calibrate:
 
 Step 2 requires seeing the current organ.json content, which is not
 available in the mutation context because body/ is in EXCLUDED_DIRS.
+
+## G-031 — Vault-only rubric authoring
+
+Rubric scoring logic for immune-behavior probes must not reside in the
+repository (P-030). The rubric-author organ writes rubrics directly into
+the vault, closing the class structurally. Measuring stick:
+probe-rubric-author-vault verifies a generated rubric is in the vault
+and no check.py appears in body/.
