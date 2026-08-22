@@ -174,6 +174,8 @@ class TestBeatFirewall(unittest.TestCase):
             with patch.object(sv, "panic") as pan, \
                  patch.object(sv, "core_pressure", return_value=0.5), \
                  patch.object(sv, "pending_task", return_value=True), \
+                 patch.object(sv, "rotate_patterns", return_value=0), \
+                 patch.object(sv, "promote_probes", return_value=0), \
                  patch.object(sv, "_commit_state"), \
                  patch.object(sv, "subprocess") as sp, \
                  patch.object(sv, "resolve", return_value="c" * 40), \
@@ -187,6 +189,33 @@ class TestBeatFirewall(unittest.TestCase):
             return rc, rb
         finally:
             sv.JOURNAL = orig
+
+    def test_heartbeat_never_touches_production_state_from_a_test(self):
+        """The third time this shape has appeared in one day.
+
+        P-080 added record_scoreboard() to promote() and a test that drove
+        promote() to completion ran the real probe set against the live
+        scoreboard. The guard written for it covered promote() and not
+        heartbeat() -- so P-083 added rotate_patterns() to the beat, _run_beats
+        drove it three times, and state/patterns.md really was rotated: 88
+        headings became 47 live and 41 archived, on the production tree, from a
+        test run. Nothing was lost, which is luck about this particular side
+        effect and not a property of the arrangement.
+
+        Every side effect the beat performs must be patched by anything that
+        drives it, and the assertion has to be structural or it will be
+        forgotten again the next time.
+        """
+        sv = self._sv()
+        import inspect
+        body = inspect.getsource(sv.heartbeat)
+        writers = [n for n in ("rotate_patterns", "_commit_state", "promote",
+                               "promote_probes", "publish", "rollback")
+                   if n + "(" in body]
+        source = inspect.getsource(type(self))
+        for name in writers:
+            self.assertIn(f'patch.object(sv, "{name}"', source,
+                          f"heartbeat() calls {name}() and _run_beats does not patch it")
 
     def test_publish_runs_every_beat_not_only_on_promotion(self):
         """publish() was reachable from promote() and nowhere else.
@@ -480,6 +509,82 @@ class TestScoreboardIsRefreshedOnPromotion(unittest.TestCase):
                 sv.SCOREBOARD = orig
             self.assertEqual(n, 0)
             self.assertFalse(board.exists() and board.read_text(encoding="utf-8").strip())
+
+
+class TestPatternRegisterRotation(unittest.TestCase):
+    """Cycle 388: "closure ~52704 > 50000 budget", touching patterns.md.
+
+    The register had reached 13512 tokens against a headroom near 10820, so
+    every mutation that wrote a pattern was refused for the size of the file
+    it was appending to. Moving old entries to an archive is not losing them:
+    the headings stay greppable in the tree, in the same commit.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _rotate(self, text, keep_tokens):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = pathlib.Path(tmp) / "patterns.md"
+            arch = pathlib.Path(tmp) / "patterns-archive.md"
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            live.write_text(text, encoding="utf-8")
+            saved = (sv.PATTERNS, sv.PATTERNS_ARCHIVE, sv.JOURNAL)
+            try:
+                sv.PATTERNS, sv.PATTERNS_ARCHIVE, sv.JOURNAL = live, arch, journal
+                n = sv.rotate_patterns(keep_tokens)
+            finally:
+                sv.PATTERNS, sv.PATTERNS_ARCHIVE, sv.JOURNAL = saved
+            return (n, live.read_text(encoding="utf-8"),
+                    arch.read_text(encoding="utf-8") if arch.is_file() else "")
+
+    BODY = "\nline\n" * 9
+
+    def test_oldest_entries_move_and_newest_stay(self):
+        text = "".join(f"## P-{i:03d} old\n{self.BODY}" for i in range(1, 11))
+        n, live, arch = self._rotate(text, keep_tokens=12 * 20)
+        self.assertGreater(n, 0)
+        self.assertIn("## P-010", live, "the newest entry must stay")
+        self.assertNotIn("## P-001", live, "the oldest must have moved")
+        self.assertIn("## P-001", arch, "and it must still be findable")
+
+    def test_every_archived_heading_is_still_in_the_tree(self):
+        text = "".join(f"## P-{i:03d} old\n{self.BODY}" for i in range(1, 11))
+        _, live, arch = self._rotate(text, keep_tokens=12 * 20)
+        for i in range(1, 11):
+            self.assertIn(f"## P-{i:03d}", live + arch,
+                          "a heading present before rotation must be present after")
+
+    def test_g006_entries_are_never_archived(self):
+        """park_task writes these, and they are the carrier of the
+        park-regeneration path: 21 of 32 parked tasks came back through
+        patterns.md and the reflect digest. Archiving one cuts a parked task's
+        only way back."""
+        text = ("## G-006 parked one\n" + self.BODY
+                + "".join(f"## P-{i:03d} filler\n{self.BODY}" for i in range(1, 11)))
+        _, live, _ = self._rotate(text, keep_tokens=12 * 20)
+        self.assertIn("## G-006", live)
+
+    def test_a_register_already_small_enough_is_left_alone(self):
+        text = "## P-001 only\n" + self.BODY
+        n, live, arch = self._rotate(text, keep_tokens=12 * 100)
+        self.assertEqual(n, 0)
+        self.assertEqual(live, text, "no rewrite when nothing needs to move")
+        self.assertEqual(arch, "")
+
+    def test_rotation_rides_the_bookkeeping_commit(self):
+        """A rotation that committed on its own would move HEAD while a cycle
+        was in flight, and P-074 would refuse that candidate as stale -- the
+        automated form of the accident that cost cycle 384."""
+        sv = self._sv()
+        import inspect
+        body = inspect.getsource(sv.heartbeat)
+        self.assertLess(body.index("rotate_patterns()"),
+                        body.index('_commit_state(f"beat'),
+                        "rotate before the commit, so it rides that commit")
 
 
 class TestFrozenSetGuardsPromotion(unittest.TestCase):

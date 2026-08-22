@@ -505,6 +505,68 @@ def record_scoreboard(commit: str) -> int:
     return sum(1 for s in scores.values() if s is not None)
 
 
+PATTERNS = REPO / "state" / "patterns.md"
+PATTERNS_ARCHIVE = REPO / "state" / "patterns-archive.md"
+#: Tokens of pattern register a mutation may be asked to carry into its review
+#: closure. 4000 leaves room beside a ~39k kernel+control baseline under the
+#: 50000 cap; 13512 did not.
+PATTERNS_KEEP_TOKENS = 4000
+
+
+def rotate_patterns(keep_tokens: int = PATTERNS_KEEP_TOKENS) -> int:
+    """Move the oldest pattern entries to an archive so the live file fits.
+
+    Cycle 388 was refused by the deterministic gate with "closure ~52704 >
+    50000 budget", and the two files it touched were state/patterns.md and
+    state/decisions.jsonl. patterns.md had reached 13512 tokens against a
+    headroom of about 10820 -- so ANY mutation touching it was refused
+    automatically, whatever it said. The register that records failures had
+    grown until writing to it was a budget violation.
+
+    Moving is not losing. memory_integrity refuses a mutation that DROPS
+    "## X-NNN" headings from a state/*.md it changed, and the docstring says
+    what it is for: accidental erasure during a whole-file rewrite. Every
+    heading rotated out is still greppable in the tree afterwards, in
+    patterns-archive.md, in the same commit. The decision is recorded in
+    decisions.jsonl because this is the first reading given to that invariant.
+
+    G-006 entries are exempt, all of them. They are what park_task writes, and
+    they are the carrier of the park-regeneration path: of thirty-two parked
+    tasks, twenty-one came back in a new form, and the route is
+    park -> G-006 in patterns.md -> the reflect digest -> a reworded task.
+    Archiving one would cut a parked task's only way back. Six entries is a
+    cheap exemption for a live loop.
+
+    Returns the number of entries archived. Called from the beat, before
+    _commit_state, so it rides that commit -- a rotation of its own would move
+    HEAD mid-cycle and P-074 would refuse the candidate in flight as stale,
+    which is exactly the accident that cost cycle 384.
+    """
+    if not PATTERNS.is_file():
+        return 0
+    chunks = re.split(r"(?m)^(?=## )", PATTERNS.read_text(encoding="utf-8"))
+    head, entries = chunks[0], chunks[1:]
+    keep, archive, budget = [], [], keep_tokens
+    for chunk in reversed(entries):
+        cost = len(chunk.splitlines()) * 12
+        if chunk.lstrip().startswith("## G-006") or budget - cost >= 0:
+            keep.append(chunk)
+            budget -= cost
+        else:
+            archive.append(chunk)
+    if not archive:
+        return 0
+    keep.reverse()
+    archive.reverse()
+    with PATTERNS_ARCHIVE.open("a", encoding="utf-8") as f:
+        f.write("".join(archive))
+    PATTERNS.write_text(head + "".join(keep), encoding="utf-8")
+    _journal({"kind": "register_rotated", "register": "state/patterns.md",
+              "archived": len(archive), "kept": len(keep),
+              "archive": "state/patterns-archive.md"})
+    return len(archive)
+
+
 def canary(commit: str) -> tuple[bool, str]:
     """Boot the candidate in an isolated worktree and prove it is alive.
 
@@ -1033,6 +1095,10 @@ def heartbeat(beats: int, dry: bool = False) -> int:
             # Clean the tree BEFORE the work starts, so a cycle branches from a
             # commit that already carries the previous beat's bookkeeping and
             # the ff-merge at promotion has nothing to collide with.
+            # Before the bookkeeping commit, never after and never on its
+            # own: a rotation that moved HEAD by itself would orphan a
+            # candidate in flight exactly as a manual commit did at cycle 384.
+            rotate_patterns()
             _commit_state(f"beat {beat} bookkeeping")
             result = subprocess.run([sys.executable, "-m", "meristem.loop", *argv],
                                     cwd=str(REPO),
