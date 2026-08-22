@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from . import CONTROL, REPO, MeristemError, read_text
 from . import llm as llm_mod
 
-#: Never included in the mutation context and never writable by a mutation.
+#: Kept out of the mutation context wholesale; body/ enters when a task names an organ.
 EXCLUDED_DIRS = {".git", ".claude", "__pycache__", "state", "body", "docs"}
 EXCLUDED_PREFIXES = ("root/", "substrate/")
 INCLUDED_SUFFIXES = {".py", ".md", ".toml", ".json"}
@@ -107,6 +107,10 @@ def build_context(task: str = "") -> str:
                           " chars of tests; name a test in the task to see them)")
             continue
         chunks.append(f"=== FILE: {rel} ===\n{read_text(REPO / rel)}")
+    organs = REPO / "body" / "organs"
+    for path in sorted(organs.rglob("*")):
+        if path.suffix in INCLUDED_SUFFIXES and path.relative_to(organs).parts[0] in task:
+            chunks.append(f"=== FILE: {path.relative_to(REPO).as_posix()} ===\n{read_text(path)}")
     return "\n\n".join(chunks)
 
 
