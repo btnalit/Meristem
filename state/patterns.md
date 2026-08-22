@@ -359,3 +359,32 @@ Previous attempts at this exact task were rejected:
 - cycle 387: review:deepseek: organ.json declares `dependencies: []` while main.py reads `control/constitution.md` and `control/checklists.md` and is consumed by `meristem/gates/review.py`; this is a hidden dependency and can shrink future review closures.
 - cycle 387: review:deepseek: The new `_read_text` silently returns '' on FileNotFoundError, so a missing constitution or checklist would produce a review prompt without those documents. The old kernel `read_text` would fail loudly; this converts a hard failure into a silent default-continue.
 - cycle 387: review:deepseek: Fail-closed
+
+## P-025 — Immune-tier code cannot be externalized to mutable organs
+
+**Class:** Gate weakening via externalization of admission-defining code.
+
+**Instance:** The deterministic gate (meristem/gates/deterministic.py, 245
+LOC) was proposed for externalization to body/organs/deterministic-gate/ to
+relieve core pressure (2996/3000). Refused: the gate that checks mutations
+cannot itself be mutable by mutations. An organ in body/ is on the mutation
+surface; a mutation could weaken the organ's checks, and the modified organ
+would run against the candidate tree (which includes the modified organ),
+passing its own weakening. No deterministic check would catch it because the
+deterministic check IS the weakened organ.
+
+**Structural reason:** meristem/gates/__init__.py states 'Everything under
+this package is admission-defining.' Moving admission-defining code to
+body/ removes it from the immune tier and places it on the mutation surface.
+The vault-reference invariant would also need widening (the organ must
+reference VAULT but is not in meristem/gates/), organ_manifests() would
+become circular (the organ validating its own manifest), and engine.py's
+dependency on kernel_loc()/KERNEL_LOC_CAP at context-build time cannot be
+satisfied by an organ call.
+
+**Resolution:** Core pressure must be relieved by other means — externalizing
+non-immune kernel code (loop.py is the largest file), pruning stale code, or
+an argued cap case. No subset of the deterministic gate can be safely
+externalized: every check it performs is security-critical, and a thin
+re-verification shim in the kernel would need to contain all checks, saving
+zero lines.
