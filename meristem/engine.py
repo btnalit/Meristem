@@ -80,7 +80,7 @@ def mutable_files() -> list[str]:
         if not path.is_file() or path.suffix not in INCLUDED_SUFFIXES:
             continue
         rel = path.relative_to(REPO).as_posix()
-        if any(part in EXCLUDED_DIRS for part in path.relative_to(REPO).parts):
+        if any(p in EXCLUDED_DIRS or p[0] == "." for p in rel.split("/")):
             continue
         if rel.startswith(EXCLUDED_PREFIXES):
             continue

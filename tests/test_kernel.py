@@ -696,6 +696,28 @@ class TestEngine(unittest.TestCase):
         self.assertFalse(named, f"the test string accidentally names {named}")
         self.assertNotIn("=== FILE: body/", engine.build_context(task))
 
+    def test_a_stray_dot_directory_stays_out_of_the_context(self):
+        """EXCLUDED_DIRS names .git and .claude, so dot-directories were
+        considered -- but only the ones that existed when it was written.
+        .pytest_cache walked into the live mutation context the moment a test
+        run left one in the repo root, and .gitignore lists .venv, which
+        mutable_files() would have walked file by file into the prompt.
+
+        The rule is the shape, not the list: nothing dot-prefixed is source.
+        """
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "meristem").mkdir()
+            (root / "meristem" / "loop.py").write_text("x = 1\n", encoding="utf-8")
+            for junk in (".pytest_cache", ".venv", ".ruff_cache"):
+                (root / junk).mkdir()
+                (root / junk / "README.md").write_text("junk\n", encoding="utf-8")
+            with patch.object(engine, "REPO", root):
+                files = engine.mutable_files()
+        self.assertEqual(files, ["meristem/loop.py"])
+
     def test_parse_tolerates_fenced_json(self):
         self.assertEqual(engine._parse('```json\n{"a": 1}\n```'), {"a": 1})
 
