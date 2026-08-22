@@ -325,6 +325,79 @@ class TestReviewChecklistNamesItsEnforcement(unittest.TestCase):
         self.assertIn("one stage per promotion", text)
 
 
+class TestStaleCandidateIsNamedForWhatItIs(unittest.TestCase):
+    """Cycle 384 changed two files under body/organs/failure-aggregator, was
+    approved 2/2, and was refused with "touches protected paths:
+    ['substrate/supervisor.py']".
+
+    It had never opened that file. main gained three commits while the cycle
+    was in flight, HEAD..candidate rendered them as reversals, and
+    guard_protected could not tell a reversal from an edit. The candidate was
+    unpromotable either way -- the merge is --ff-only -- but the reason was
+    false, and a false reason does not stop at the log: it reaches the mailbox,
+    the webhook, and the next mutation prompt through failure_history().
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _promote(self, merge_base, head, journal):
+        sv = self._sv()
+        calls = []
+
+        def _git(*args, **kwargs):
+            calls.append(args)
+            if args[0] == "merge-base":
+                return merge_base
+            if args[0] == "rev-parse":
+                return head
+            return "cycle 9: do a thing"
+
+        orig = sv.JOURNAL
+        try:
+            sv.JOURNAL = journal
+            with patch.object(sv, "panic") as pan, \
+                 patch.object(sv, "resolve", return_value="c" * 40), \
+                 patch.object(sv, "guard_protected", return_value=[]) as gp, \
+                 patch.object(sv, "guard_lifecycle", return_value=[]), \
+                 patch.object(sv, "canary", return_value=(True, "")), \
+                 patch.object(sv, "publish"), \
+                 patch.object(sv, "git", _git), \
+                 patch.object(sv, "notify"):
+                pan.engaged.return_value = False
+                rc = sv.promote()
+        finally:
+            sv.JOURNAL = orig
+        return rc, calls, gp
+
+    def test_a_stale_candidate_is_refused_by_its_own_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            rc, calls, gp = self._promote("older", "newer", journal)
+            self.assertEqual(rc, 7)
+            self.assertEqual(gp.call_count, 0,
+                             "every gate below compares against HEAD and is"
+                             " meaningless once HEAD has moved")
+            rows = read_jsonl(journal)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["kind"], "canary_reject",
+                             "any other kind marks the task done forever (P-026)")
+            self.assertIn("fast-forward", rows[0]["reason"])
+            self.assertNotIn("protected", rows[0]["reason"],
+                             "the old wording blamed a file the seed never opened")
+            self.assertTrue(any(a[:2] == ("update-ref", "-d") for a in calls),
+                            "an uncleared ref wedges every later beat")
+
+    def test_a_current_candidate_still_reaches_the_other_gates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            rc, _, gp = self._promote("same", "same", journal)
+            self.assertEqual(rc, 0)
+            self.assertEqual(gp.call_count, 1)
+
+
 class TestOrganLifecycleCannotSkip(unittest.TestCase):
     """germline.advance() refuses to skip a stage and has no callers.
 

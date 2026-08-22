@@ -467,6 +467,43 @@ def promote() -> int:
     m = re.match(r"cycle\s+\d+:\s*", subject)
     why = subject[m.end():] if m else ""
 
+    # Staleness first, because every gate below it compares against HEAD and
+    # answers nonsense once HEAD has moved. Cycle 384 is what that looks like:
+    # a mutation that touched two files under body/organs/failure-aggregator,
+    # approved 2/2 by the panel, refused with "touches protected paths:
+    # ['substrate/supervisor.py']" -- a file it never opened. main had gained
+    # three commits while the cycle was in flight, so HEAD..candidate rendered
+    # them as reversals and guard_protected read the reversal as an edit.
+    #
+    # The candidate was doomed either way: the merge below is --ff-only and a
+    # candidate that no longer descends from HEAD cannot fast-forward. What
+    # was wrong was the reason. It goes to the mailbox, to the webhook, and
+    # through failure_history() into the next mutation prompt, where it would
+    # have taught the seed to avoid a path it had not touched.
+    #
+    # Unattended, HEAD does not move mid-cycle: _commit_state runs at the top
+    # of the beat and the cycle is a blocking subprocess. It moves when a
+    # human commits to main during a beat, which is how this was found.
+    #
+    # Refused, not rebased. Replaying the diff onto the new HEAD would promote
+    # a tree the panel never saw in the form it would land in.
+    if git("merge-base", "HEAD", candidate) != git("rev-parse", "HEAD"):
+        reason = ("REFUSED: candidate branched from an earlier HEAD and can no "
+                  "longer fast-forward -- main moved while the cycle was in "
+                  "flight. Nothing is wrong with the change itself.")
+        print(reason, file=sys.stderr)
+        # canary_reject for the same reason as every other refusal here: any
+        # other kind marks the task done forever (P-026). The task reopens and
+        # the seed does the work again against the tree that exists now.
+        _journal({"kind": "canary_reject", "commit": candidate[:12],
+                  "why": why, "reason": reason})
+        notify("stale_candidate",
+               "Candidate refused: main moved while the cycle was in flight, so "
+               "it can no longer fast-forward. The change itself passed review. "
+               "Task reopened for retry.")
+        git("update-ref", "-d", CANDIDATE_REF, check=False)
+        return 7
+
     offenders = guard_protected("HEAD", candidate)
     if offenders:
         # Journal it and CLEAR the ref. Neither used to happen: the refusal
