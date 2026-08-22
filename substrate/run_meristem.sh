@@ -45,6 +45,20 @@ ROLLBACK_LOG=/RSI/keeper_rollbacks
 ROLLBACK_WINDOW=86400
 ROLLBACK_COOLDOWN=1800
 
+# A non-zero exit is not automatically a reason to stop. A SIGNAL is: 128+n
+# means a human or the OS intervened, and intervention wins. Panic (3) is the
+# latch. Everything else is the run FAILING, and a failure that halts the loop
+# until somebody notices is exactly the scaffolding this system exists to
+# shed. The three keeper stops on record were all "exited 1", after runs of
+# 72, 120 and 129 minutes, and every one of them sat waiting for a person to
+# press start. Bounded resume instead, counted in the same 24h window the
+# rollback guard already uses: isolated failures cost a cooldown, a systemic
+# one still stops.
+FAILURE_LOG=/RSI/keeper_failures
+FAILURE_WINDOW=86400
+FAILURE_LIMIT=3
+FAILURE_COOLDOWN=600
+
 # A complete run cannot be short: thirteen sleeps of 15-45 minutes each put
 # the floor above three hours. Anything under thirty minutes means the run
 # died rather than finished, and relaunching it would be a crash loop.
@@ -88,8 +102,31 @@ while true; do
     # The latch may have been engaged while the run was in flight.
     [ -f "$LATCH" ] && stop "panic latch engaged during run -- full stop" 3
 
-    # A human killing the heartbeat lands here too: intervention wins.
-    [ $rc -ne 0 ] && stop "heartbeat exited $rc after ${dur}s -- stopped" "$rc"
+    # Intervention wins, and only intervention. A signal means a human or the
+    # OS ended this run on purpose; the latch means panic. Neither resumes.
+    [ $rc -ge 128 ] && stop "heartbeat killed by signal $(( rc - 128 )) after ${dur}s -- intervention wins" "$rc"
+    [ $rc -eq 3 ] && stop "heartbeat reported the panic latch -- full stop" 3
+
+    # Any other non-zero exit is a failure, not a verdict. Resume, bounded.
+    if [ $rc -ne 0 ]; then
+        now=$(date +%s)
+        recent=0
+        if [ -f "$FAILURE_LOG" ]; then
+            while read -r stamp; do
+                case "$stamp" in ''|*[!0-9]*) continue;; esac
+                [ $(( now - stamp )) -lt $FAILURE_WINDOW ] && recent=$(( recent + 1 ))
+            done < "$FAILURE_LOG"
+        fi
+        echo "$now" >> "$FAILURE_LOG"
+        recent=$(( recent + 1 ))
+        if [ "$recent" -ge $FAILURE_LIMIT ]; then
+            stop "heartbeat exited $rc; ${recent} failures inside 24h -- systemic, stopped for review" "$rc"
+        fi
+        notify "heartbeat exited $rc after ${dur}s (failure ${recent}/${FAILURE_LIMIT} in 24h). Cooling down ${FAILURE_COOLDOWN}s then resuming. No action needed unless it recurs."
+        echo "$(date '+%F %T') heartbeat exited $rc after ${dur}s; failure ${recent}/${FAILURE_LIMIT}; cooldown then resume" >> "$LOG"
+        sleep $FAILURE_COOLDOWN
+        continue
+    fi
 
     if git log --format=%s "${head_before}..HEAD" | grep -q auto-rollback; then
         now=$(date +%s)
