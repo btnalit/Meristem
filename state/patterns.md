@@ -1052,3 +1052,9 @@ Previous attempts at this exact task were rejected:
 - cycle 354: review:deepseek: Removal of fault-cycle exclusion, potentially causing false positives or missed signals
 - cycle 354: review:deepseek: Signal grading changes: block action removed, escalate threshold changed from 3 to 2, altering circuit breaker response
 - cycle 354: review:sensenova: Classification surface narrowed from 12 failure classes to 3 (gate-weakening, probe-regression, closure-budget). Nine classes — protected-path, secret-leak, parse-error, organ-manifest, immune-failur
+
+## FA-budget-exceeded — Repeated rejection
+
+Task: GROWTH: Add a mechanism to allow the loop to read specific metadata files (like 
+Class: budget-exceeded
+Rejected 2 times.
