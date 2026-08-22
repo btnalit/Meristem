@@ -398,6 +398,65 @@ class TestStaleCandidateIsNamedForWhatItIs(unittest.TestCase):
             self.assertEqual(gp.call_count, 1)
 
 
+class TestFrozenSetGuardsPromotion(unittest.TestCase):
+    """probes.py has said "the full frozen set runs before promotion" since P0.
+
+    full=True had no caller anywhere in the tree. A cycle draws three probes of
+    sixteen at random, so thirteen frozen probes went unexamined every beat,
+    and probe-journal-query-basic has been scoring 0 on main where the
+    scoreboard remembers 100 without a single cycle noticing.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _canary(self, before, after):
+        sv = self._sv()
+        ok = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        scores = iter([before, after])
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            orig = sv.JOURNAL
+            try:
+                sv.JOURNAL = journal
+                with patch.object(sv, "git"), \
+                     patch.object(sv, "subprocess") as sp, \
+                     patch.object(sv, "probe_scores", side_effect=lambda t: next(scores)):
+                    sp.run.return_value = ok
+                    result = sv.canary("c" * 40)
+            finally:
+                sv.JOURNAL = orig
+            rows = read_jsonl(journal)
+        return result, rows
+
+    def test_a_new_regression_refuses_the_candidate(self):
+        (ok, why), _ = self._canary({"p-a": 100.0}, {"p-a": 0.0})
+        self.assertFalse(ok)
+        self.assertIn("frozen set regressed", why)
+        self.assertIn("p-a", why)
+
+    def test_a_probe_already_broken_on_head_does_not_refuse(self):
+        """Otherwise every candidate is punished for damage it did not do, and
+        the one task that could repair it never gets to run."""
+        (ok, why), rows = self._canary({"p-a": 0.0}, {"p-a": 0.0})
+        self.assertTrue(ok, why)
+        broken = [r for r in rows if r.get("kind") == "probe_broken"]
+        self.assertEqual(len(broken), 1, "a pre-existing failure must still be visible")
+        self.assertEqual(broken[0]["probes"], ["p-a"])
+
+    def test_an_improvement_is_never_a_regression(self):
+        (ok, _), _ = self._canary({"p-a": 0.0}, {"p-a": 100.0})
+        self.assertTrue(ok)
+
+    def test_a_failed_measurement_is_not_read_as_no_regression(self):
+        (ok, _), rows = self._canary({}, {})
+        self.assertTrue(ok, "an unmeasurable set must not block promotion")
+        self.assertTrue([r for r in rows if r.get("kind") == "probe_unmeasured"],
+                        "but silence about it would be the overclaim P-078 removed")
+
+
 class TestOrganLifecycleCannotSkip(unittest.TestCase):
     """germline.advance() refuses to skip a stage and has no callers.
 

@@ -428,6 +428,32 @@ def guard_lifecycle(base: str, candidate: str) -> list[str]:
     return problems
 
 
+def probe_scores(tree: str) -> dict:
+    """The full frozen probe set against one tree, scored by HEAD's runner.
+
+    probes.run() takes the tree it measures as an argument, so the measurement
+    and its subject can be separated: the rubrics stay in the vault where P-030
+    put them, the runner stays at HEAD in the production checkout, and the tree
+    under examination is whatever is handed in. Launched as a subprocess with
+    cwd=REPO so `from meristem.gates import probes` resolves to production even
+    when the subject is a candidate that has rewritten probes.py -- a candidate
+    must not be allowed to grade itself with its own ruler.
+
+    An empty dict means the measurement itself failed. The caller treats that
+    as "no evidence", never as "no regression".
+    """
+    argv = [sys.executable, "-c",
+            "import json,sys;sys.path.insert(0,'.');from meristem.gates import probes;"
+            "print(json.dumps({r.probe_id: r.score for r in"
+            " probes.run(sys.argv[1], full=True).runs}))", tree]
+    try:
+        result = subprocess.run(argv, cwd=str(REPO), capture_output=True,
+                                text=True, timeout=600)
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    except (subprocess.SubprocessError, OSError, ValueError, IndexError):
+        return {}
+
+
 def canary(commit: str) -> tuple[bool, str]:
     """Boot the candidate in an isolated worktree and prove it is alive.
 
@@ -451,7 +477,31 @@ def canary(commit: str) -> tuple[bool, str]:
                                     text=True, timeout=600, env=env)
             if result.returncode != 0:
                 return False, f"{label} failed:\n{(result.stdout + result.stderr)[-600:]}"
-        return True, "canary alive: immune self-test and kernel tests both pass"
+        # The frozen set, at last. probes.py has documented "the full frozen
+        # set runs before promotion" since P0 and full=True had no caller
+        # anywhere in the tree -- declared, unasserted. A cycle samples three
+        # of sixteen, so thirteen frozen probes went unexamined every beat.
+        #
+        # Measured against HEAD, not against the scoreboard. A probe already
+        # failing on main is not this candidate's regression, and refusing
+        # every candidate for damage it did not do would park the agenda while
+        # the one task that could fix it never ran. Right now that is not
+        # hypothetical: probe-journal-query-basic scores 0 on main where the
+        # scoreboard remembers 100, and no cycle has ever noticed, because the
+        # rotating sample never drew it.
+        before, after = probe_scores(str(REPO)), probe_scores(str(path))
+        broken = sorted(p for p, s in before.items() if s <= 0)
+        if broken:
+            _journal({"kind": "probe_broken", "commit": commit[:12],
+                      "probes": broken, "note": "already failing on HEAD"})
+        fell = sorted(f"{p} {before[p]:.2f} -> {after[p]:.2f}"
+                      for p in before if p in after and after[p] < before[p])
+        if fell:
+            return False, "full frozen set regressed: " + "; ".join(fell)
+        if not before:
+            _journal({"kind": "probe_unmeasured", "commit": commit[:12]})
+        return True, ("canary alive: immune self-test, kernel tests, and "
+                      f"{len(after)} frozen probes with no regression")
     except (subprocess.SubprocessError, OSError) as exc:
         return False, f"canary boot failed: {exc}"
     finally:
