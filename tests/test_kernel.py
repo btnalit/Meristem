@@ -658,6 +658,44 @@ class TestEngine(unittest.TestCase):
     def test_kernel_included_in_mutable_surface(self):
         self.assertIn("meristem/loop.py", engine.mutable_files())
 
+    def test_a_named_organ_is_visible_to_the_author(self):
+        """P-067: the engine could write body/ and was shown none of it.
+
+        EXCLUDED_DIRS held "body" while _validate_paths refused only root/ and
+        substrate/, so an organ repair was a blind rewrite. Cycles 377-381
+        refused one such repair five times while the author reconstructed a
+        twelve-class file from the reviewers' objections, landing closer each
+        round and never right. The reviewers read the original as the '-' side
+        of the diff; without this the author never reads it at all.
+
+        There is no other guard on these four lines. The weakening rule covers
+        what REVIEWERS can see, not what the AUTHOR can see, so a mutation that
+        deletes them to reclaim kernel budget would pass review. This test is
+        the only thing standing between the seed and re-blinding itself.
+        """
+        organs = engine.REPO / "body" / "organs"
+        sources = sorted(organs.rglob("*.py"))
+        if not sources:
+            self.skipTest("no organs installed")
+        target = sources[0]
+        oid = target.relative_to(organs).parts[0]
+        body = target.read_text(encoding="utf-8").splitlines()
+        line = next(l for l in body if len(l.strip()) > 20)
+        rel = target.relative_to(engine.REPO).as_posix()
+        context = engine.build_context(f"REPAIR: fix the SyntaxError in {rel}")
+        self.assertIn(f"=== FILE: {rel} ===", context,
+                      f"task names organ {oid} and still cannot see its source")
+        self.assertIn(line, context, "organ source is listed but not included verbatim")
+
+    def test_body_stays_out_of_an_unrelated_context(self):
+        """The whole point of naming: an organ costs prompt budget only when
+        the task is about it. tests/ carries the same conditional (P-023)."""
+        organs = engine.REPO / "body" / "organs"
+        task = "Raise the deterministic ceiling per the governance ladder"
+        named = [p.name for p in organs.iterdir() if p.is_dir() and p.name in task]
+        self.assertFalse(named, f"the test string accidentally names {named}")
+        self.assertNotIn("=== FILE: body/", engine.build_context(task))
+
     def test_parse_tolerates_fenced_json(self):
         self.assertEqual(engine._parse('```json\n{"a": 1}\n```'), {"a": 1})
 
