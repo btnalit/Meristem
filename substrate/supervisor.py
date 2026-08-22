@@ -363,6 +363,66 @@ def guard_protected(base: str, candidate: str) -> list[str]:
     return [path for path in changed if path.startswith(PROTECTED)]
 
 
+#: Keep in sync with meristem.germline.LIFECYCLE by hand. Duplicated on
+#: purpose, like CAP_PROPOSAL_MARKERS above: this file MUST NOT import from
+#: the kernel, which the seed may legally mutate.
+LIFECYCLE_STAGES = ("candidate", "calibrate", "register", "active",
+                    "deprecating", "archive")
+
+
+def guard_lifecycle(base: str, candidate: str) -> list[str]:
+    """An organ advances one lifecycle stage per promotion, and never skips.
+
+    germline.advance() enforces exactly this and has never been called, by
+    anything, including tests. Every lifecycle change in this system's history
+    happened the other way: a mutation rewriting organ.json directly, on a
+    path where nothing checked step order. Cycle 383 moved feasibility-check
+    from candidate to calibrate that way, correctly. Nothing would have
+    stopped it going to active in the same commit.
+
+    So the rule lived in the kernel and was never applied to the only route
+    that used it -- declared, unasserted, which is the failure this whole
+    architecture exists to refuse.
+
+    Review saw the shape of this at cycle 363 and attached it to the wrong
+    object: it refused a proposal asking for READ access to organ.json on the
+    grounds that organs could then self-promote past the substrate. Refusing
+    that proposal did nothing, because WRITE access is what creates the risk
+    and _validate_paths has never withheld it. The concern was right and this
+    is where it belongs -- in the soil, where promotion authority lives.
+
+    Both trees are read through git, never from disk: a beat's bookkeeping
+    may already have moved the working copy.
+    """
+    problems = []
+    for rel in git("diff", "--name-only", f"{base}..{candidate}").splitlines():
+        if not rel.startswith("body/organs/") or not rel.endswith("/organ.json"):
+            continue
+        try:
+            new = json.loads(git("show", f"{candidate}:{rel}")).get("lifecycle")
+        except (RuntimeError, ValueError):
+            continue  # deleted or unparseable; the manifest gates own that
+        before = git("show", f"{base}:{rel}", check=False)
+        if not before:
+            if new != "candidate":
+                problems.append(
+                    f"{rel}: a new organ enters at 'candidate', not '{new}'")
+            continue
+        try:
+            old = json.loads(before).get("lifecycle")
+        except ValueError:
+            continue
+        if old == new:
+            continue
+        if old not in LIFECYCLE_STAGES or new not in LIFECYCLE_STAGES:
+            problems.append(f"{rel}: unknown lifecycle stage '{old}' -> '{new}'")
+        elif LIFECYCLE_STAGES.index(new) != LIFECYCLE_STAGES.index(old) + 1:
+            problems.append(
+                f"{rel}: '{old}' -> '{new}' skips the lifecycle;"
+                " one stage per promotion, forward only")
+    return problems
+
+
 def canary(commit: str) -> tuple[bool, str]:
     """Boot the candidate in an isolated worktree and prove it is alive.
 
@@ -431,6 +491,23 @@ def promote() -> int:
                f"Task reopened for retry. No action needed.")
         git("update-ref", "-d", CANDIDATE_REF, check=False)
         return 4
+
+    jumps = guard_lifecycle("HEAD", candidate)
+    if jumps:
+        # Same refusal idiom as the protected-path branch above, and the same
+        # kind on purpose: canary_reject reopens the task, hands the seed the
+        # real reason through failure_history(), and lets the breaker park it
+        # after three tries. Refused BEFORE the canary boot, which is the
+        # expensive step.
+        reason = f"REFUSED: organ lifecycle skips a stage: {jumps}"
+        print(reason, file=sys.stderr)
+        _journal({"kind": "canary_reject", "commit": candidate[:12],
+                  "why": why, "reason": reason[:400]})
+        notify("lifecycle_refusal",
+               f"Candidate refused, an organ lifecycle skipped a stage: {jumps}. "
+               f"Task reopened for retry. No action needed.")
+        git("update-ref", "-d", CANDIDATE_REF, check=False)
+        return 6
 
     ok, output = canary(candidate)
     if not ok:

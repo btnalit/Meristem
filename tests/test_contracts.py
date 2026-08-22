@@ -298,6 +298,99 @@ class TestPublishIsNeverFatal(unittest.TestCase):
         self.assertEqual(self._publish_with(returncode=0), [])
 
 
+class TestOrganLifecycleCannotSkip(unittest.TestCase):
+    """germline.advance() refuses to skip a stage and has no callers.
+
+    Every lifecycle change this system has ever made was a mutation rewriting
+    organ.json, where nothing checked step order at all. Cycle 383 did it
+    correctly, candidate -> calibrate. Nothing would have stopped it writing
+    "active" in the same commit and landing an organ that never met a probe.
+    """
+
+    def _sv(self):
+        sys.path.insert(0, str(REPO / "substrate"))
+        import supervisor as sv  # noqa: E402
+        return sv
+
+    def _git(self, changed, trees):
+        def _fake(*args, **kwargs):
+            if args[0] == "diff":
+                return "\n".join(changed)
+            if args[0] == "show":
+                ref, _, path = args[1].partition(":")
+                return trees.get(ref, {}).get(path, "")
+            return ""
+        return _fake
+
+    REL = "body/organs/feasibility-check/organ.json"
+
+    def _check(self, old, new, present=True):
+        sv = self._sv()
+        trees = {"cand": {self.REL: json.dumps({"lifecycle": new})}}
+        if present:
+            trees["HEAD"] = {self.REL: json.dumps({"lifecycle": old})}
+        with patch.object(sv, "git", self._git([self.REL], trees)):
+            return sv.guard_lifecycle("HEAD", "cand")
+
+    def test_one_stage_forward_is_allowed(self):
+        """Cycle 383's real promotion. The gate must not break it."""
+        self.assertEqual(self._check("candidate", "calibrate"), [])
+
+    def test_skipping_a_stage_is_refused(self):
+        problems = self._check("candidate", "active")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("skips the lifecycle", problems[0])
+
+    def test_moving_backward_is_refused(self):
+        problems = self._check("active", "calibrate")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("skips the lifecycle", problems[0])
+
+    def test_an_unchanged_lifecycle_is_not_a_transition(self):
+        """organ.json changes for many reasons -- adding probe ids, for one,
+        which is most of what cycle 383's task was about."""
+        self.assertEqual(self._check("calibrate", "calibrate"), [])
+
+    def test_a_new_organ_must_enter_at_candidate(self):
+        self.assertEqual(self._check(None, "candidate", present=False), [])
+        problems = self._check(None, "active", present=False)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("enters at 'candidate'", problems[0])
+
+    def test_the_refusal_journals_and_clears_the_ref(self):
+        sv = self._sv()
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = pathlib.Path(tmp) / "journal.jsonl"
+            calls = []
+            orig = sv.JOURNAL
+            try:
+                sv.JOURNAL = journal
+                with patch.object(sv, "panic") as pan, \
+                     patch.object(sv, "resolve", return_value="c" * 40), \
+                     patch.object(sv, "guard_protected", return_value=[]), \
+                     patch.object(sv, "guard_lifecycle",
+                                  return_value=["organ.json: skips"]), \
+                     patch.object(sv, "canary") as can, \
+                     patch.object(sv, "git",
+                                  side_effect=lambda *a, **k: calls.append(a)
+                                  or "cycle 9: do a thing"), \
+                     patch.object(sv, "notify"):
+                    pan.engaged.return_value = False
+                    rc = sv.promote()
+            finally:
+                sv.JOURNAL = orig
+            self.assertEqual(rc, 6)
+            self.assertEqual(can.call_count, 0,
+                             "the canary boot is expensive; refuse before it")
+            rows = read_jsonl(journal)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["kind"], "canary_reject",
+                             "any other kind marks the task done forever (P-026)")
+            self.assertEqual(rows[0]["why"], "do a thing", "the task must reopen")
+            self.assertTrue(any(a[:2] == ("update-ref", "-d") for a in calls),
+                            "an uncleared ref wedges every later beat")
+
+
 class TestProtectedRefusalIsNotSilent(unittest.TestCase):
     """A candidate touching guarded ground used to wedge the loop forever.
 
