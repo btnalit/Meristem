@@ -1092,3 +1092,9 @@ Previous attempts at this exact task were rejected:
 - cycle 378: review:deepseek: Reduces the classifier from 12 classes with broad keyword coverage to 4 classes, directly contradicting the original design intent and explicit instructions in the previous code to not narrow the coverage
 - cycle 378: review:deepseek: The new code only classifies single reasons, losing the ability to output structured entries to `state/patterns.md` for G-006 and G-007 detection, which was the organ's purpose
 - cycle 378: review:deepseek:
+
+## FA-protected-path — Repeated rejection
+
+Task: REPAIR (G-008, failure-aggregator traceability): In body/organs/failure-aggregat
+Class: protected-path
+Rejected 2 times.
