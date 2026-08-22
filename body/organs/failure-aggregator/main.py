@@ -7,6 +7,10 @@ a threshold is crossed, and emits graded signals (surface/escalate/block)
 for the circuit breaker.
 
 ABI: stdin JSON -> stdout JSON, exit 0 on success, non-zero on failure.
+
+Every code path through main() journals its outcome with kind='organ-run'
+(G-008): success, failure, bad input, and unknown op all leave a trace,
+so a successful run and a crashed run are distinguishable in the journal.
 """
 
 from __future__ import annotations
@@ -242,7 +246,13 @@ def _write_patterns(signals, rows, patterns_path=None):
 
 
 def _append_organ_run(journal_path, cycle, outcome, patterns, error=""):
-    """Append a kind='organ-run' journal entry recording the run outcome."""
+    """Append a kind='organ-run' journal entry recording the run outcome.
+
+    G-008: every code path through main() journals its outcome so that
+    success and failure are distinguishable in the journal. This is the
+    organ-level complement to the kernel's kind='aggregation' record:
+    the kernel records what it observed, the organ records what it did.
+    """
     record = {
         "ts": _utc_now(),
         "kind": "organ-run",
@@ -274,11 +284,29 @@ def op_aggregate(payload):
 
 def op_selfcheck(payload):
     """Exercise classification, aggregation, signal grading, dedup,
-    canary counting, fault exclusion, and integration with real
-    journal data. 21 tests covering all 12 classes plus structural
+    canary counting, fault exclusion, module import, and integration
+    with real journal data. Tests cover all 12 classes plus structural
     invariants."""
     results = []
     failures = []
+
+    # --- Module import and exercise test (1 test) ---
+    # Per the germline protocol: "imports each of its own modules."
+    # classify.py was broken by a SyntaxError (cycle 206) that went
+    # undetected because the selfcheck never imported it (FA-019).
+    try:
+        import classify as classify_mod
+        cls_result = classify_mod.classify(
+            "Does this change weaken any gate?")
+        if cls_result == "gate-weakening":
+            results.append("classify module import and exercise: pass")
+        else:
+            failures.append(
+                f"classify module exercise: expected 'gate-weakening', "n                f"got '{cls_result}'")
+            results.append("classify module import and exercise: FAIL")
+    except Exception as exc:
+        failures.append(f"classify module import: {exc}")
+        results.append("classify module import and exercise: FAIL")
 
     # --- Classification tests: 12 classes + unclassified (13 tests) ---
     test_cases = [
@@ -457,6 +485,15 @@ def main() -> int:
     try:
         payload = json.loads(sys.stdin.read())
     except json.JSONDecodeError as exc:
+        # G-008: journal every error path so success and failure are
+        # distinguishable. No payload means no cycle/journal_path, so
+        # we use defaults.
+        try:
+            _append_organ_run(
+                str(_JOURNAL), 0, "failure", [],
+                f"invalid JSON input: {exc}")
+        except Exception:
+            pass
         print(json.dumps(
             {"ok": False, "error": f"invalid JSON input: {exc}"}))
         return 1
@@ -473,6 +510,15 @@ def main() -> int:
             print(json.dumps(result, ensure_ascii=False))
             return 0 if result.get("ok") else 1
         else:
+            # G-008: journal unknown-op failures too.
+            journal_path = payload.get("journal_path") or str(_JOURNAL)
+            cycle = payload.get("cycle", 0)
+            try:
+                _append_organ_run(
+                    journal_path, cycle, "failure", [],
+                    f"unknown op '{op}'")
+            except Exception:
+                pass
             print(json.dumps(
                 {"ok": False, "error": f"unknown op '{op}'"}))
             return 1

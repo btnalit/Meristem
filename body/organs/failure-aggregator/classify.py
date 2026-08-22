@@ -18,7 +18,7 @@ import re
 # Order matters for classify(): the first matching class wins.
 # But classify_reasons() scans ALL reasons and counts every match,
 # so the order only affects single-reason classification, not aggregate
-dominant-class detection.
+# dominant-class detection.
 #
 # DO NOT narrow this list. Removing classes or keywords was a rejection
 # in cycle 205 ("old classes such as parse-error, closure-budget,
