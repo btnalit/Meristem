@@ -364,6 +364,7 @@ class TestStaleCandidateIsNamedForWhatItIs(unittest.TestCase):
                  patch.object(sv, "guard_lifecycle", return_value=[]), \
                  patch.object(sv, "canary", return_value=(True, "")), \
                  patch.object(sv, "publish"), \
+                 patch.object(sv, "record_scoreboard", return_value=16), \
                  patch.object(sv, "git", _git), \
                  patch.object(sv, "notify"):
                 pan.engaged.return_value = False
@@ -389,6 +390,35 @@ class TestStaleCandidateIsNamedForWhatItIs(unittest.TestCase):
                              "the old wording blamed a file the seed never opened")
             self.assertTrue(any(a[:2] == ("update-ref", "-d") for a in calls),
                             "an uncleared ref wedges every later beat")
+
+    def test_promote_never_touches_production_state_from_a_test(self):
+        """P-080 added record_scoreboard() to the end of promote(), and the
+        test above drives promote() all the way through. It ran the real
+        sixteen-probe set and appended sixteen rows to the PRODUCTION
+        scoreboard, attributed to commit "cccccccccccc".
+
+        Same family as the two vault incidents: a test reaching live state
+        because the code under test resolves its paths from REPO. Nothing
+        about the values was wrong -- probe_scores really did measure the tree
+        -- but a register that records a commit which does not exist is a
+        register telling a small lie, and it got there from a test run.
+
+        Every side effect promote() performs must be patched by anything that
+        drives it to completion.
+        """
+        sv = self._sv()
+        import inspect
+        body = inspect.getsource(sv.promote)
+        effects = [name for name in ("record_scoreboard", "publish", "_journal")
+                   if name + "(" in body]
+        self.assertIn("record_scoreboard", effects,
+                      "if this call is gone the test above needs its patch removed")
+        source = inspect.getsource(type(self))
+        for name in effects:
+            if name == "_journal":
+                continue  # journalling is redirected by JOURNAL, not by a patch
+            self.assertIn(f'patch.object(sv, "{name}"', source,
+                          f"promote() calls {name}() and no test here patches it")
 
     def test_a_current_candidate_still_reaches_the_other_gates(self):
         with tempfile.TemporaryDirectory() as tmp:
