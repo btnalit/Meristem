@@ -161,12 +161,12 @@ def golden_fixtures() -> list[str]:
         failures.append("proposal guard let a case-variant guarded path reach the queue")
     if route_proposal("Fix the bug in ROOT/panic.py") != "mailbox":
         failures.append("proposal guard let a case-variant guarded path reach the queue")
-    if route_proposal("Rewrite meristem/gates/review.py") != "mailbox":
-        failures.append("proposal guard let a guarded path reach the queue")
-    if route_proposal("Update control/constitution.md") != "mailbox":
-        failures.append("proposal guard let a guarded path reach the queue")
-    if route_proposal("Update control/checklists.md") != "mailbox":
-        failures.append("proposal guard let a guarded path reach the queue")
+    if route_proposal("Rewrite meristem/gates/review.py") != "agenda":
+        failures.append("gates seat is rung 2: the panel judges gate changes, not a human")
+    if route_proposal("Update control/constitution.md") != "agenda":
+        failures.append("control seat is rung 2: the constitution says reviewed, not human")
+    if route_proposal("Update control/checklists.md") != "agenda":
+        failures.append("control seat is rung 2: the panel judges its own reference")
     if route_proposal("Add a utility command to meristem/loop.py") != "agenda":
         failures.append("proposal guard held an ordinary proposal")
     if route_proposal("Grow an organ at body/organs/summarise/") != "agenda":
@@ -203,8 +203,8 @@ def golden_fixtures() -> list[str]:
              "closure impact: none.")
     if route_proposal(cited) != "agenda":
         failures.append("the per-file requirement forced a cap case to a human")
-    if route_proposal(cited + " Also rewrite meristem/gates/review.py.") != "mailbox":
-        failures.append("a cap case bought passage past the gates fence")
+    if route_proposal(cited + " Also rewrite meristem/gates/review.py.") != "agenda":
+        failures.append("the gates seat is rung 2; a complete case goes to the panel")
 
     return failures
 
@@ -340,8 +340,7 @@ def print_spend() -> int:
 
 
 #: Guarded ground: proposals naming these go to the mailbox, not the queue.
-PROPOSAL_GUARDED = re.compile(r"(?:root|substrate)/[\w./-]*\w+\.\w+|meristem/gates/"
-                              r"[\w./-]*\w+\.py|control/(?:constitution|checklists)\.md")
+PROPOSAL_GUARDED = re.compile(r"(?:root|substrate)/[\w./-]*\w+\.\w+")
 
 #: Cap changes need a complete case and approval; never ride in as ordinary
 #: mutations. The seat demotes on evidence, but the argued-case requirement

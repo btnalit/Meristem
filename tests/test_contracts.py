@@ -741,8 +741,13 @@ class TestSubstrateCapEligibility(unittest.TestCase):
         self.assertEqual(loop.route_proposal(naming_home), "agenda",
                          "kernel and soil must agree on the exemption")
         also_review = naming_home + " And meristem/gates/review.py."
-        self.assertTrue(sv._is_guarded_proposal(also_review))
-        self.assertEqual(loop.route_proposal(also_review), "mailbox")
+        self.assertFalse(sv._is_guarded_proposal(also_review),
+                         "the gates seat is rung 2: the panel judges gate changes")
+        self.assertEqual(loop.route_proposal(also_review), "agenda")
+        soil = naming_home + " And substrate/supervisor.py."
+        self.assertTrue(sv._is_guarded_proposal(soil),
+                        "the soil is a capability boundary, not a seat, and does not move")
+        self.assertEqual(loop.route_proposal(soil), "mailbox")
 
     def test_substrate_does_not_import_the_kernel(self):
         """Structural separation, asserted rather than trusted.

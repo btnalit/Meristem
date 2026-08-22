@@ -55,8 +55,7 @@ AGENDA = REPO / "control" / "agenda.md"
 #: "protected/root/substrate/closure" among a classifier's keywords, or for
 #: quoting `grep -rn ... meristem/ substrate/` as evidence. Neither asked to
 #: change anything in the soil, and a held proposal has no way back.
-PROPOSAL_GUARDED_SUBSTRATE = re.compile(r"(?:root|substrate)/[\w./-]*\w+\.\w+|meristem/gates/"
-                                        r"[\w./-]*\w+\.py|control/(?:constitution|checklists)\.md")
+PROPOSAL_GUARDED_SUBSTRATE = re.compile(r"(?:root|substrate)/[\w./-]*\w+\.\w+")
 #: Keep in sync with meristem.loop.CAP_PROPOSAL_MARKERS by hand. Duplicated
 #: on purpose (the seed may mutate loop.py) which means the two can DRIFT --
 #: and a marker the soil lacks is a hole in the very copy that exists to

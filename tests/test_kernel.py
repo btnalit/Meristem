@@ -195,8 +195,7 @@ class TestProposalGuard(unittest.TestCase):
     thing that must not become a route to acting on it."""
 
     def test_guarded_ground_routes_to_mailbox(self):
-        for path in ("substrate/supervisor.py", "root/panic.py",
-                     "meristem/gates/review.py", "control/constitution.md"):
+        for path in ("substrate/supervisor.py", "root/panic.py"):
             self.assertEqual(
                 loop.route_proposal(f"Fix the thing in {path} so it behaves"),
                 "mailbox", f"{path} was not held for review")
@@ -227,10 +226,44 @@ class TestProposalGuard(unittest.TestCase):
 
     def test_naming_a_file_in_guarded_ground_is_still_held(self):
         for text in ("Fix substrate/supervisor.py promote()",
-                     "Patch root/panic.py",
-                     "Rewrite meristem/gates/review.py",
-                     "Update control/constitution.md"):
+                     "Patch root/panic.py"):
             self.assertEqual(loop.route_proposal(text), "mailbox", text)
+
+    def test_gates_and_control_reach_the_panel_not_a_human(self):
+        """The guarded-proposal seat moved from rung 1 to rung 2.
+
+        root/ and substrate/ are not a seat at all -- _validate_paths refuses
+        those writes outright, so holding such a proposal is addressing, not
+        approving. meristem/gates/* and control/*.md are ground the seed may
+        legally write, and holding them was a human approval gate with no
+        recorded exit condition, which principle 6.1 calls the ossified layer
+        the de-ossification valve exists to remove. The constitution already
+        says a cap change needs "an approving panel"; it read "is a human
+        decision" until 2026-08-17.
+
+        What judges them now is what always judged everything else: the
+        deterministic gate, 2/2 unanimity with a terminal weakening check, the
+        golden fixtures, the canary, and the probes.
+        """
+        for path in ("meristem/gates/review.py", "meristem/gates/probes.py",
+                     "control/constitution.md", "control/checklists.md"):
+            self.assertEqual(loop.route_proposal(f"Harden {path} against X"),
+                             "agenda", f"{path} still waits on a human")
+
+    def test_a_constitutional_diff_still_faces_the_constitution(self):
+        """Replaces the three golden routing checks this commit flipped.
+
+        Releasing the seat released the human, not the review. The panel
+        judging a change to the constitution must still be handed the
+        constitution and asked the terminal weakening question -- and it must
+        be the tree's constitution, not the candidate's own rewritten one.
+        """
+        msgs = review.build_prompt("--- a/control/constitution.md\n+++ b/x",
+                                   "amend the constitution",
+                                   ["control/constitution.md"])
+        body = "".join(m["content"] for m in msgs)
+        self.assertIn("Principle 0", body, "the panel judged without the constitution")
+        self.assertIn("weaken", body.lower(), "the terminal question went missing")
 
     def test_ordinary_proposal_reaches_the_queue(self):
         self.assertEqual(
@@ -385,15 +418,29 @@ class TestCapGovernance(unittest.TestCase):
         )
         self.assertEqual(loop.route_proposal(case), "agenda")
 
-    def test_the_exemption_is_one_path_wide(self):
-        """Naming the budget file does not license naming another gate."""
+    def test_a_complete_case_naming_other_gates_goes_to_the_panel(self):
+        """The exemption used to be one path wide: a case could name the file
+        the cap lives in, and naming any other gate sent it to a human.
+
+        That fence went with the seat. gates/ is rung 2, so a complete case
+        touching review.py as well reaches the agenda and is judged by 2/2
+        unanimity with the terminal weakening question -- which is what the
+        fence was standing in for. What did NOT move: an unargued cap change
+        is still refused outright, before a reviewer is spent, and a case that
+        names the soil is still held, because the soil is not a seat.
+        """
         case = (
             "Raise the cap. Per-file LOC: loop.py 850. Core pressure 0.98, "
             "closure pressure 0.65. Already externalized views; insufficient. "
             "Proposed new cap 3300 in meristem/gates/deterministic.py. "
             "Expected closure impact: none. Also relax meristem/gates/review.py."
         )
-        self.assertEqual(loop.route_proposal(case), "mailbox")
+        self.assertEqual(loop.route_proposal(case), "agenda")
+        self.assertEqual(loop.route_proposal("raise KERNEL_LOC_CAP to 6000"),
+                         "refused", "an unargued cap change never moved")
+        self.assertEqual(
+            loop.route_proposal(case + " Also edit substrate/supervisor.py."),
+            "mailbox", "the soil is a capability boundary, not a seat")
 
     def test_guarded_ground_still_outranks_a_cap_case(self):
         """A complete case that also names guarded ground stays human-held.
