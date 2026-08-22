@@ -447,12 +447,19 @@ def probe_scores(tree: str) -> dict:
     when the subject is a candidate that has rewritten probes.py -- a candidate
     must not be allowed to grade itself with its own ruler.
 
+    A score of None means the probe is DECLARATIVE: it carries a statement and
+    no rubric, so it has nothing to run and cannot be compared. P-066 admits
+    that form to the vault with a 0 baseline on purpose. Reporting it as a
+    zero would be the same overclaim P-078 removed one layer up -- "this probe
+    is failing" when the truth is "nothing has been written to measure it yet".
+
     An empty dict means the measurement itself failed. The caller treats that
     as "no evidence", never as "no regression".
     """
     argv = [sys.executable, "-c",
             "import json,sys;sys.path.insert(0,'.');from meristem.gates import probes;"
-            "print(json.dumps({r.probe_id: r.score for r in"
+            "print(json.dumps({r.probe_id: (None if 'no executable rubric' in"
+            " (r.detail or '') else r.score) for r in"
             " probes.run(sys.argv[1], full=True).runs}))", tree]
     try:
         result = subprocess.run(argv, cwd=str(REPO), capture_output=True,
@@ -487,9 +494,15 @@ def record_scoreboard(commit: str) -> int:
     """
     scores = probe_scores(str(REPO))
     for pid, score in sorted(scores.items()):
+        # A declarative probe records nothing. Writing 0.0 would make
+        # baseline() hand the gate a number that was never measured, and the
+        # first real rubric written for it would then read as an improvement
+        # against a score nobody ever took.
+        if score is None:
+            continue
         _append(SCOREBOARD, {"kind": "probe", "probe_id": pid, "score": score,
                              "commit": commit[:12], "source": "promotion-full-set"})
-    return len(scores)
+    return sum(1 for s in scores.values() if s is not None)
 
 
 def canary(commit: str) -> tuple[bool, str]:
@@ -528,12 +541,19 @@ def canary(commit: str) -> tuple[bool, str]:
         # scoreboard remembers 100, and no cycle has ever noticed, because the
         # rotating sample never drew it.
         before, after = probe_scores(str(REPO)), probe_scores(str(path))
-        broken = sorted(p for p, s in before.items() if s <= 0)
-        if broken:
+        # Three different states, and calling them all "broken" would be the
+        # P-078 overclaim again: a probe with no rubric has not failed, it has
+        # never been asked anything.
+        unmeasurable = sorted(p for p, s in before.items() if s is None)
+        broken = sorted(p for p, s in before.items() if s is not None and s <= 0)
+        if broken or unmeasurable:
             _journal({"kind": "probe_broken", "commit": commit[:12],
-                      "probes": broken, "note": "already failing on HEAD"})
+                      "probes": broken, "note": "already failing on HEAD",
+                      "unmeasurable": unmeasurable,
+                      "unmeasurable_note": "declarative: statement, no rubric"})
         fell = sorted(f"{p} {before[p]:.2f} -> {after[p]:.2f}"
-                      for p in before if p in after and after[p] < before[p])
+                      for p in before if before[p] is not None
+                      and after.get(p) is not None and after[p] < before[p])
         if fell:
             return False, "full frozen set regressed: " + "; ".join(fell)
         if not before:

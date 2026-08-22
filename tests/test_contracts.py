@@ -450,12 +450,13 @@ class TestScoreboardIsRefreshedOnPromotion(unittest.TestCase):
             try:
                 sv.SCOREBOARD = board
                 with patch.object(sv, "probe_scores",
-                                  return_value={"p-a": 100.0, "p-b": 0.0}):
+                                  return_value={"p-a": 100.0, "p-b": 0.0,
+                                                "p-d": None}):
                     n = sv.record_scoreboard("c" * 40)
             finally:
                 sv.SCOREBOARD = orig
             rows = read_jsonl(board)
-        self.assertEqual(n, 2)
+        self.assertEqual(n, 2, "a declarative probe records no score at all")
         self.assertEqual({r["probe_id"]: r["score"] for r in rows},
                          {"p-a": 100.0, "p-b": 0.0},
                          "a probe that failed must be recorded as failing, not omitted")
@@ -513,6 +514,23 @@ class TestFrozenSetGuardsPromotion(unittest.TestCase):
                 sv.JOURNAL = orig
             rows = read_jsonl(journal)
         return result, rows
+
+    def test_a_declarative_probe_is_not_broken(self):
+        """mailbox-ack-basic and mailbox-ack-expiry carry a statement and no
+        rubric. P-066 admits that form to the vault with a 0 baseline on
+        purpose. Reporting them as "already failing on HEAD" says the seed
+        broke something, when the truth is that nobody has written the ruler
+        yet -- the P-078 overclaim, one layer over."""
+        (ok, _), rows = self._canary({"p-decl": None, "p-real": 0.0},
+                                     {"p-decl": None, "p-real": 0.0})
+        self.assertTrue(ok)
+        rec = [r for r in rows if r.get("kind") == "probe_broken"][0]
+        self.assertEqual(rec["probes"], ["p-real"])
+        self.assertEqual(rec["unmeasurable"], ["p-decl"])
+
+    def test_a_declarative_probe_cannot_trigger_a_regression(self):
+        (ok, why), _ = self._canary({"p-decl": None}, {"p-decl": None})
+        self.assertTrue(ok, why)
 
     def test_a_new_regression_refuses_the_candidate(self):
         (ok, why), _ = self._canary({"p-a": 100.0}, {"p-a": 0.0})
