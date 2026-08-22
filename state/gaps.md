@@ -261,3 +261,24 @@ worth knowing in advance: narrowing what the closure calculator counts is
 literally "shrinks what reviewers or the closure calculator can see", which is
 a terminal question in section 1 of the review checklist. Any proposal on this
 ground meets the panel on exactly that question.
+
+## G-033 — The call budget is checked after the calls are already spent
+
+ledger.check(cycle) is called from loop.py:231, which is after
+engine.propose() has run, and from loop.py:643 in the reflection path. A cap
+on model calls is therefore enforced only once the calls it limits have been
+made and billed.
+
+Cycle 392 is the record of what that costs. The campaign call count crossed
+its cap; every subsequent beat then spent a mutation call in order to be told
+it was over its call budget, and each of those calls was itself counted. The
+enforcement mechanism was feeding the counter it enforces.
+
+That particular cap now measures a rolling window, so it can recover, and only
+two calls were spent this way before it was repaired -- small because the beat
+is slow, not because the ordering is safe. cycle_calls=12 has the same shape:
+it can only refuse a cycle after that cycle has already made its calls.
+
+Not stated here: what should change. The pre-proposal closure estimate at
+loop.py:898 is an existing example of a cap consulted before the model call
+rather than after, and it parks the task instead of failing the cycle.
