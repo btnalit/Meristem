@@ -132,13 +132,12 @@ def park_task(task: str, journal_path, repo_path) -> str:
     Unbounded retry is a loop, not progress; the breaker turns it into a
     stop. The decision to park lives in breaker.should_park().
     """
-    rejection_cycles = [
-        row.get("cycle")
-        for row in read_jsonl(journal_path)
-        if row.get("kind") == "cycle"
-        and row.get("why") == task
-        and row.get("outcome") == "rejected"
-    ]
+    rows = list(read_jsonl(journal_path))
+    faulted = {r.get("cycle") for r in rows if r.get("kind") == "fault"}
+    rejection_cycles = [r.get("cycle") for r in rows
+                        if r.get("kind") == "cycle" and r.get("why") == task
+                        and r.get("outcome") == "rejected"
+                        and r.get("cycle") not in faulted]
     canary_count = breaker_mod.canary_rejects_for(task)
     cycle = next_cycle(journal_path)
     parts = []
