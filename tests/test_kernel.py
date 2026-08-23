@@ -1010,6 +1010,55 @@ class TestCampaignBudgetIsAWindow(unittest.TestCase):
         self.assertEqual(ledger.load_budget().cycle_calls, 12)
 
 
+class TestReviewerBudgetIsNotTheBindingConstraint(unittest.TestCase):
+    """A reviewer that cannot finish its answer is not a stricter gate.
+
+    Measured over cycles 350-395: review:sensenova failed 8 of 31 calls and
+    review:deepseek 3 of 27. The failures all read the same way --
+
+        empty content (finish_reason=length); raise max_tokens --
+        reasoning consumed the budget
+
+    -- and sensenova's last eight completions were
+    [3430, 789, 16000, 8444, 16000, 16000, 16000, 16000]: five of them stopped
+    exactly at the ceiling with nothing left to say the answer in.
+
+    Quorum is 2/2, so an unavailable reviewer rejects the candidate. About one
+    review in four was therefore decided by a token ceiling rather than by the
+    diff. That is not conservatism, it is noise wearing conservatism's clothes,
+    and the panel silently degrades to one reviewer plus a random veto.
+
+    Nothing was bought by the ceiling: models.toml records that quotas on this
+    endpoint are per-CALL, not per-token.
+
+    Asserted relationally rather than against a fixed number, because a test
+    that nails today's value into its arithmetic is P-050. Review reads the
+    constitution, the checklist, the diff and the closure list; scoring runs
+    one rubric. Whatever budget scoring needs, review needs at least as much.
+    """
+
+    def _slots(self, role):
+        cfg = llm.load_models()
+        return [s for s in cfg.get("roles", {}).get(role, {}).get("slots", [])]
+
+    def test_review_is_given_at_least_what_scoring_is_given(self):
+        review = [s.get("max_tokens", 0) for s in self._slots("review")]
+        score = [s.get("max_tokens", 0) for s in self._slots("score")]
+        self.assertTrue(review, "no review slots configured")
+        if not score:
+            self.skipTest("no score slots configured")
+        self.assertGreaterEqual(
+            min(review), max(score),
+            "a reviewer with less room to think than a scorer will run out"
+            " mid-answer, and an unanswered review is a reject")
+
+    def test_every_review_slot_has_the_same_budget(self):
+        """Heterogeneity is the point of the panel; an asymmetric budget makes
+        one lineage systematically likelier to fail to answer."""
+        budgets = {s.get("max_tokens", 0) for s in self._slots("review")}
+        self.assertEqual(len(budgets), 1, f"review budgets differ: {budgets}")
+
+
 class TestConfig(unittest.TestCase):
     def test_models_toml_has_no_secrets(self):
         text = (KERNEL_REPO / "control" / "models.toml").read_text(encoding="utf-8")
