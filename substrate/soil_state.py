@@ -1,7 +1,8 @@
-"""土壤持久状态：唯一权威台账 · 记分板 · 跨进程晋升锁 · vault 定位。
+"""土壤持久状态：唯一权威台账 · 记分板 · 冻结登记 · 跨进程晋升锁 · vault 定位。
 
 §8.2（`state/soil-ledger.jsonl`）· §8.3（`state/soil-scoreboard.jsonl`）·
-§8.1.5（前缀族命名与属主规则）· §10.2（`ctx.*` 的实际归属）
+§8.1.5（前缀族命名与属主规则）· §10.2（`ctx.*` 的实际归属）·
+§15 C1（`soil/frozen-probe-registry.json`，冻结登记）
 
 **为什么这是一个独立模块（§18 v5.10 勘误行）。** §10.2 的 pipeline 伪代码通篇使用
 `ctx.ledger.append(...)` / `ctx.scoreboard.write(...)` / `with ctx.promotion_lock`，
@@ -51,6 +52,14 @@ MANDATORY_FITNESS_FIELDS = ("task_id", "primary_probe", "generation",
 
 #: 带上述六个强制字段的两类事件（§8.2 的两阶段事件，C2）。
 FITNESS_KINDS = frozenset({"observed_fitness", "accepted_fitness"})
+
+#: C1（§15）冻结登记单条记录必须携带的字段，`frozen_at` 除外——那个字段由
+#: `FrozenProbeRegistry.freeze()` 自己注入（与 `Ledger.append()` 注入 `ts` /
+#: `event_id` 同一纪律：持久层生成的字段不该要求每个调用方都记得填）。
+#: **逐字取自 §15 C1 的登记示例，不多不少。**
+FROZEN_REGISTRY_REQUIRED_ON_INPUT = ("probe_id", "status", "created_by",
+                                     "proposed_commit", "frozen_tree_sha",
+                                     "frozen_probe_manifest_sha", "eligible_after")
 
 
 class SoilStateError(RuntimeError):
@@ -351,6 +360,127 @@ class Scoreboard(_AppendOnlyJsonl):
         return len(runs)
 
 
+class FrozenProbeRegistry:
+    """`soil/frozen-probe-registry.json` —— C1 冻结登记（§15 C1），土壤私有,
+    只由土壤写入（`author_probe` 能力的土壤半，§7：「种子写
+    `seed/probe-proposals/<id>.json`；**土壤校验后写冻结登记与 vault
+    manifest**」）。
+
+    **住在 `soil/`，不是 `state/`，也不是 vault 的一部分：**
+    - 不是 `state/` 前缀族成员——§8.1.5 的 `^soil-[a-z0-9-]+\\.jsonl$` 只管
+      `state/` 目录；这份登记与 `soil/model-policy.toml`、`soil/report-facts.json`
+      同级（§10 目录清单：`soil/` 下已有的土壤私有 JSON/TOML 都是这个形状）。
+    - 不是 vault：vault 放**冻结内容**（manifest 本身，含种子冻结后永不可见的
+      `input`/`expect`，§8.1.2）；这里只放 **C1 要求的冻结事实**——谁 / 何时 /
+      在哪棵树上 / 对应哪份 manifest 的 sha / 从哪个 soil_cycle 起才可被声明为
+      `primary_probe`。`validate_task()` 只需要这些元数据就能判定
+      `eligible_after`，不需要也不该读整份 manifest（那正是 §8.1.2 的可见性
+      边界——读 manifest 内容的权限只属于 `probe_runner`）。
+
+    **格式是 JSON 对象、以 probe_id 为键，不是 JSONL。** 每个 probe 一条终身
+    记录（冻结之后 `frozen_probe_manifest_sha` 不得再变，§15 C1），不是一条
+    不断增长的事件流——`Ledger` 的追加写模型是为「写了就不会再动」的事件设计
+    的，这里的记录**同一个 key 终身只能被创建一次**，形状更接近一份小型索引。
+
+    **一次写入即定案。** 同一 `probe_id` 只能出现一次——重复冻结同一个 id
+    （即便内容逐字相同）也拒绝，见 `freeze()` 的理由。**本类目前只支持创建，
+    不支持状态迁移**（`active -> degenerate_suspected -> retired`，§6.2）：
+    I3 的退役路径需要「人工确认」且不属于本任务范围（C1 只要求冻结与
+    eligible_after），故意留空，不是遗漏。
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def read(self) -> dict:
+        """全量读回，`probe_id -> 登记项`。文件不存在是合法的初始状态
+        （还没冻结过任何 probe），返回 `{}`，不是错误。"""
+        if not self.path.is_file():
+            return {}
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise SoilStateError(
+                f"{self.path}: 顶层必须是 JSON 对象（probe_id -> 登记项），"
+                f"收到 {type(raw).__name__}")
+        return raw
+
+    def get(self, probe_id: str):
+        """单条登记项；不存在返回 `None`（**不是**抛错——「这个 probe 还没
+        冻结过」是 `validate_task()` 的一个正常输入，由调用方决定怎么处置，
+        不该由本层替它做判断）。"""
+        return self.read().get(probe_id)
+
+    def freeze(self, entry: dict) -> dict:
+        """写入一条新登记项。`frozen_at` 由本方法注入，返回写入的完整登记项
+        （含注入的 `frozen_at`）。
+
+        **拒绝条件**：字段不全（`FROZEN_REGISTRY_REQUIRED_ON_INPUT`）、
+        `eligible_after` 形状不对、`probe_id` 已存在。**已存在即拒绝，不比较
+        内容是否相同**——C1 逐字写着「同一 `probe_id` 的
+        `frozen_probe_manifest_sha` 不得变化——否则种子可以保持 id 不变、
+        偷换 vault 内容。改 active probe 必须新建 `probe_id`」。冻结是一次性
+        事件，不是幂等的 upsert：即便种子提交了逐字节相同的内容，重复冻结
+        同一个 id 仍然拒绝，因为「相同」这件事本身就不该由种子说了算。
+        """
+        missing = [f for f in FROZEN_REGISTRY_REQUIRED_ON_INPUT if f not in entry]
+        if missing:
+            raise SoilStateError(f"冻结登记缺字段 {missing}（§15 C1）")
+        probe_id = entry["probe_id"]
+        if not isinstance(probe_id, str) or not probe_id:
+            raise SoilStateError(f"probe_id 必须是非空字符串，收到 {probe_id!r}")
+        if entry["status"] != "active":
+            # freeze() 只做「首次冻结」这一件事（§6.2：draft --土壤 schema 校验
+            # (I2)--> active 正是这个方法在做的事）。degenerate_suspected /
+            # retired 是之后的状态迁移，不经过这个入口——本类故意不支持，
+            # 见类 docstring。
+            raise SoilStateError(
+                f"{probe_id}: freeze() 只接受 status='active'（§6.2 的首次冻结"
+                f"转移），收到 {entry['status']!r}")
+        eligible_after = entry["eligible_after"]
+        if (not isinstance(eligible_after, dict)
+                or not isinstance(eligible_after.get("generation"), str)
+                or not eligible_after.get("generation")
+                or isinstance(eligible_after.get("soil_cycle"), bool)
+                or not isinstance(eligible_after.get("soil_cycle"), int)):
+            raise SoilStateError(
+                f"{probe_id}: eligible_after 必须是 "
+                '{"generation": 非空字符串, "soil_cycle": int}，收到 '
+                f"{eligible_after!r}")
+
+        registry = self.read()
+        if probe_id in registry:
+            raise SoilStateError(
+                f"{probe_id}: 冻结登记已存在，拒绝覆盖（C1：同一 probe_id 的 "
+                "frozen_probe_manifest_sha 不得变化；改 active probe 必须新建 "
+                "probe_id）")
+
+        record = dict(entry)
+        record["frozen_at"] = _utcnow()
+        registry[probe_id] = record
+        self._write_all(registry)
+        return record
+
+    def _write_all(self, registry: dict) -> None:
+        """整份重写。**登记条目按 probe 计数，量级远小于台账**（每个 probe
+        一条，不是每次晋升一条）——不需要 `Ledger` 的追加写机制。但仍需避免
+        半截写坏文件：写到同目录的临时文件，再 `os.replace()` 原子换入。
+        这不是 §8.1.5 那条「`state/` 下不得存在临时文件」的要求（那条规则
+        只管 `state/`），是这里自己需要的、独立的崩溃安全考虑。
+        """
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.is_symlink():
+            raise SoilStateError(f"{self.path} 是 symlink，拒绝写入")
+        tmp_path = self.path.with_name(self.path.name + ".tmp")
+        text = json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(tmp_path), flags, 0o644)
+        try:
+            os.write(fd, text.encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, self.path)
+
+
 @dataclasses.dataclass
 class SoilContext:
     """§10.2 的 `ctx`：pipeline 的全部外部依赖，**无隐式全局**。
@@ -364,6 +494,7 @@ class SoilContext:
     vault: Path
     ledger: Ledger
     scoreboard: Scoreboard
+    frozen_registry: FrozenProbeRegistry
     promotion_lock: PromotionLock
     generation: str
     soil_cycle: int
@@ -372,16 +503,22 @@ class SoilContext:
 
     @classmethod
     def open(cls, repo, *, generation: str, soil_cycle: int,
-             calibration: bool = False, vault=None, state_dir=None) -> "SoilContext":
+             calibration: bool = False, vault=None, state_dir=None,
+             soil_dir=None) -> "SoilContext":
         repo = Path(repo)
         state = Path(state_dir) if state_dir is not None else repo / "state"
+        soil = Path(soil_dir) if soil_dir is not None else repo / "soil"
         return cls(
             repo=repo,
             vault=resolve_vault(vault),
             ledger=Ledger(state / "soil-ledger.jsonl"),
             scoreboard=Scoreboard(state / "soil-scoreboard.jsonl"),
-            # 锁文件刻意放在 state/ 之外（见 PromotionLock 的 docstring）。
-            promotion_lock=PromotionLock(repo / "soil" / ".promotion.lock"),
+            # C1（§15）：冻结登记，soil/frozen-probe-registry.json（本模块
+            # docstring 的「土壤持久状态」清单新增第三个成员）。
+            frozen_registry=FrozenProbeRegistry(soil / "frozen-probe-registry.json"),
+            # 锁文件放在 soil/ 下（见 PromotionLock 的 docstring）——现在与
+            # 冻结登记共用同一个 `soil` 变量，不再各写各的 `repo / "soil"`。
+            promotion_lock=PromotionLock(soil / ".promotion.lock"),
             generation=generation,
             soil_cycle=soil_cycle,
             calibration=calibration,

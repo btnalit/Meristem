@@ -1,9 +1,20 @@
-"""土壤探针运行器（S3, v5 §9.2 / §10.2 / §15.6 C6）。
+"""土壤探针运行器（S3, v5 §9.2 / §10.2 / §15.6 C6 / §15 C1）。
 
 土壤读 vault、执行声明式 Internal Probe manifest、算 passed/total。种子侧不得出现
-任何探针运行代码或 vault 路径常量 —— 本模块是唯一读 vault 的地方。
+任何探针运行代码或 vault 路径常量 —— 本模块是唯一读写 vault 的地方（原先只读；
+`validate_proposal()` / `freeze_into_vault()` 加入之后也写——见两者各自的
+docstring：写入动作仍然只在本模块内部发生，「vault 路径只有一个入口」这条边界
+没有因为多了写入而松动，只是那个入口现在既读也写）。
 
 判定路径：input -> organ ABI (subprocess) -> output -> cmp(output, expect)。
+
+**C1 冻结契约的土壤半**（§15 C1）：`validate_proposal()` 校验 seed 提案
+（§8.1.1 schema + I2 的 ≥5 检查数），`freeze_into_vault()` 把校验通过的
+manifest 写进 vault 并返回 `probe_manifest_sha`。冻结登记本身（谁/何时/
+`eligible_after`）不在本模块——那是 `substrate/soil_state.FrozenProbeRegistry`
+的职责（登记是「土壤持久状态」，不是「vault 内容」，见其 docstring）；
+把两件事的编排串起来（读提案文件 -> 校验 -> 写 vault -> 写登记）的是
+`substrate/pipeline.freeze_proposal()`。
 
 执行契约（§15.6 C6，P0-a 只做「最小完整性隔离」，不做 namespace/seccomp）：
 organ 是种子拥有的代码，不得直接跑在土壤权威进程内 —— subprocess + 严格 JSON ABI +
@@ -368,8 +379,12 @@ def _checks_well_formed(checks: list) -> bool:
     「土壤对 seed 提案文件做 schema 校验」（§5 的 I2 行、§7 的 `author_probe`），
     也就是**冻结路径**，不是运行时。在 runner 入口再加一道数量检查，会把
     「这把尺不合法」与「这把尺这次测不出来」两件事混成同一个出口，
-    而它们对应完全不同的处置。**I2 目前确实没有执行点** —— 冻结路径尚未实现，
-    这是未闭合项，不是本函数该顺手替它补的。
+    而它们对应完全不同的处置。**I2 的执行点是 `validate_proposal()`**
+    （见下方，C1 冻结契约的一部分）；本函数继续只做逐 check 的形状校验，
+    两者的字段/白名单规则共用同一份（`validate_proposal` 直接调用本函数），
+    但「数量」这条只在冻结路径查一次，不在这里查——运行时不该因为一把已经
+    冻结过的尺凑巧少了一个 check（不该发生，但不该在这里假设它不会发生）
+    就把「这次测不出来」误判成别的东西。
     """
     seen = set()
     for check in checks:
@@ -384,6 +399,108 @@ def _checks_well_formed(checks: list) -> bool:
         if not isinstance(check.get("expect"), str):
             return False
     return True
+
+
+#: I2（§5）：一个 Probe 必须声明 ≥5 个子检查，且分数 = 通过数/总数×100。
+#: **执行点是 `validate_proposal()`**（冻结路径），不是运行时——见
+#: `_checks_well_formed` 的 docstring。
+MIN_CHECKS = 5
+
+
+class ProbeProposalError(ValueError):
+    """提案不满足 §8.1.1 的种子可写 schema，或不满足 I2 的 ≥5 检查数，
+    土壤在**冻结点**拒绝（C1：`author_probe` 能力的土壤半）。
+
+    与 `OrganRefused` 是两个不同的拒绝：`OrganRefused` 是「这把已经冻结过的
+    尺，这一次测不出来」（运行时，走 unmeasured 出口，不是错误）；
+    `ProbeProposalError` 是「这份提案本身不合法，永远不会成为一把尺」
+    （冻结时，是真的错误，调用方应当拒绝整个冻结请求）。
+    """
+
+
+def validate_proposal(manifest) -> None:
+    """§8.1.1 的种子可写 schema 校验 + I2 的 ≥5 检查数校验。**这是 I2 的
+    唯一执行点**（`_checks_well_formed` 故意不做这件事，见其 docstring；
+    §5 的 I2 行、§7 的 `author_probe`：「土壤校验后写冻结登记与 vault
+    manifest」——这里就是那个「校验」）。
+
+    与 `catalogue()` 对**已冻结** manifest 的校验共享 `_checks_well_formed()`
+    （同一份 cmp 白名单、同一份 check 形状规则，不各写各的），但本函数额外做
+    两件 `catalogue()` 不做的事：
+
+    1. **数量检查（I2）**——`catalogue()` 信任已经通过过一次冻结校验的 vault
+       内容，只查 entrypoint 与 checks 的形状；提案还没有这层信任，必须在
+       这里把 I2 的门槛真正挡住。
+    2. **顶层字段完整性**（`id` / `capability` / `organ` 必须是非空字符串）
+       ——`catalogue()` 的 manifest 已经是「曾经通过冻结」的产物，这些字段
+       不会缺；提案可能缺，必须现查。
+
+    **不返回 bool，直接抛 `ProbeProposalError`**：冻结路径没有「这次测不出来，
+    先记 unmeasured，下次再试」这种中间状态——提案不合法就是不合法，拒绝
+    整个冻结请求即可，异常携带的原因文本比一个 `False` 更有用（调用方是人
+    或种子，都需要知道具体哪条不满足，而不是自己重新猜一遍）。
+    """
+    if not isinstance(manifest, dict):
+        raise ProbeProposalError(f"提案不是 JSON 对象，收到 {type(manifest).__name__}")
+    probe_id = manifest.get("id")
+    if not isinstance(probe_id, str) or not probe_id:
+        raise ProbeProposalError(f"提案缺 id 或 id 不是非空字符串，收到 {probe_id!r}")
+    if not isinstance(manifest.get("capability"), str) or not manifest.get("capability"):
+        raise ProbeProposalError(f"{probe_id}: 缺 capability 或不是非空字符串")
+    if not isinstance(manifest.get("organ"), str) or not manifest.get("organ"):
+        raise ProbeProposalError(f"{probe_id}: 缺 organ 或不是非空字符串")
+    if "entrypoint" in manifest:
+        # CA-5 的语义是「出现即拒绝」（§8.1.1）：种子可写 schema 里没有这个
+        # 字段，出现即说明提案在申请一条种子在土壤内执行任意代码的入口。
+        raise ProbeProposalError(
+            f"{probe_id}: 含 entrypoint 字段，种子可写 schema 里不存在这个字段（§8.1.1）")
+    checks = manifest.get("checks")
+    if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
+        raise ProbeProposalError(f"{probe_id}: checks 必须是对象数组")
+    if not _checks_well_formed(checks):
+        raise ProbeProposalError(
+            f"{probe_id}: 存在不合规的 check（字段缺失、id 重复，或 cmp 不在白名单，§8.1.1）")
+    if len(checks) < MIN_CHECKS:
+        raise ProbeProposalError(
+            f"{probe_id}: 只有 {len(checks)} 个 check，I2 要求 ≥{MIN_CHECKS} 个"
+            "（§5 I2；冻结路径是 I2 唯一的执行点）")
+
+
+def freeze_into_vault(vault, manifest: dict) -> str:
+    """把**已校验**的 manifest 写进 `vault/internal/active/<id>/probe.json`。
+    调用方须先调用 `validate_proposal()`——本函数不重复那份校验，只做
+    「写入 + 拒绝重复」，理由见下方对 `probe_id` 前置检查的说明。
+
+    返回 `probe_manifest_sha`（`_manifest_sha(manifest)`）——**与 `run_probe()`
+    测量时对同一份 manifest 计算 `ProbeRun.probe_manifest_sha` 用的是同一个
+    函数**。C1 要求「冻结登记的 `frozen_probe_manifest_sha` 必须等于该 probe
+    每一次 Measurement 的 `probe_manifest_sha`」（CA-9）；这里让两处调用同一个
+    纯函数对同一份数据求值，是这条相等成立的**构造性保证**，不是写完之后
+    再核对出来的巧合——即便 vault 上落盘的 JSON 格式（indent、字段顺序）与
+    调用方内存里的 manifest 不完全一样，`_manifest_sha()` 内部用
+    `sort_keys=True` 规范化后再取哈希，格式差异不影响结果。
+
+    **拒绝覆盖已存在的 probe_id。** C1：同一 probe_id 的 manifest 不得变化；
+    改 active probe 必须新建 probe_id。这里用「vault 目录已存在即拒绝」实现，
+    **不比较内容是否相同**——冻结是一次性事件，不是幂等的 upsert：即便种子
+    提交了逐字节相同的内容，重复冻结同一个 id 仍然拒绝，因为「内容相同」
+    这件事本身就不该由种子的提案来主张。
+    """
+    probe_id = manifest.get("id") if isinstance(manifest, dict) else None
+    if not isinstance(probe_id, str) or not probe_id:
+        raise ProbeProposalError(
+            "freeze_into_vault 需要一个已通过 validate_proposal() 校验的 manifest")
+    probe_dir = Path(vault) / "internal" / "active" / probe_id
+    if probe_dir.exists():
+        raise ProbeProposalError(
+            f"{probe_id}: vault 中已存在该 probe_id，拒绝再次冻结"
+            "（C1：同一 probe_id 的 manifest 不得变化；改 active probe 必须新建 probe_id）")
+    probe_dir.mkdir(parents=True)
+    manifest_path = probe_dir / "probe.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8")
+    return _manifest_sha(manifest)
 
 
 def run_probe(manifest: dict, tree):

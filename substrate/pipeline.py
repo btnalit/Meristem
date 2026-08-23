@@ -1,4 +1,6 @@
-"""候选处理流水线（S2+S4+S5, §10.2）与出生判据谓词（§1.2）。
+"""候选处理流水线（S2+S4+S5, §10.2）与出生判据谓词（§1.2）；也是 C1 冻结
+契约（§15 C1）的编排层（`validate_task()` 的 active/eligible_after 校验、
+`freeze_proposal()`）。
 
 v3.1 把 deterministic + probes + review 做在 `meristem.loop cycle` 内部；v5 把这三件
 事全部判给土壤，于是需要这条流水线。**种子只产出候选，不测量、不判决、不写分数。**
@@ -42,6 +44,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import io
+import json
 import os
 import subprocess
 import sys
@@ -245,6 +248,13 @@ def validate_task(task: Task, ctx) -> None:
     open item），所以这条检查现在等价于「probe 必须是已冻结的 internal probe」。
     anchor 进入被测集合之后，判别必须改为按来源目录区分，**而不是靠「找不到」**——
     靠缺席做判别，正是 anchor 一旦加入就会静默失效的那种写法。
+
+    **C1（§8.1.4 硬约束表第二行）**：「该 probe 须处于 `active`，且已过 C1 的
+    `eligible_after`」。上面那条 catalogue 检查只问「vault 里有没有这把尺」，
+    从不问「这把尺什么时候起才能用」——这正是 C1 要挡的攻击：「同一个 Change
+    里先写尺、再写刚好通过这把尺的能力」。这条检查读 `ctx.frozen_registry`
+    （C1 的登记，见 `substrate/soil_state.FrozenProbeRegistry`），不是 vault：
+    「什么时候起可用」是登记记的事实，不是 manifest 内容的一部分。
     """
     if task.expected not in EXPECTED_VALUES:
         raise TaskDeclarationError(f"expected={task.expected!r} 不在 §8.1.4 枚举内")
@@ -259,6 +269,117 @@ def validate_task(task: Task, ctx) -> None:
         raise TaskDeclarationError(
             f"primary_probe={task.primary_probe!r} 不是已冻结的 internal probe"
             f"（vault/internal/active 里有 {sorted(i for i in internal_ids if i)}）")
+
+    # ── C1：active + eligible_after（§8.1.4 硬约束表第二行；§15 C1）──────
+    entry = ctx.frozen_registry.get(task.primary_probe)
+    if entry is None:
+        # 正常不会发生：能通过上面 catalogue 检查的 probe，冻结时
+        # `pipeline.freeze_proposal()` 在同一把锁内同时写了 vault 与登记。
+        # 到这里说明 vault 与登记不一致（例如：vault 里的条目是绕开
+        # `freeze_into_vault()` 手工放进去的，或崩在两次写入之间，见
+        # `freeze_proposal()` 的「已知未闭合项」）——**同样是拒绝**，不猜。
+        raise TaskDeclarationError(
+            f"primary_probe={task.primary_probe!r} 在 vault 里找得到，却没有冻结登记 "
+            "—— vault 与冻结登记不一致，拒绝（C1）")
+    if entry.get("status") != "active":
+        raise TaskDeclarationError(
+            f"primary_probe={task.primary_probe!r} 的冻结登记状态为 "
+            f"{entry.get('status')!r}，须为 'active' 才可被声明为 primary_probe"
+            "（§8.1.4；C1）")
+    eligible_after = entry.get("eligible_after") or {}
+    eligible_generation = eligible_after.get("generation")
+    eligible_cycle = eligible_after.get("soil_cycle")
+    # **generation 必须相等，不只是 soil_cycle 更大**——世代变化（§7.1 的
+    # soil_recovery：「冻结自主运行，等待重新点火」）之后旧的 soil_cycle 计数
+    # 是否仍可比是规格未言明的一点；本实现采取与 §4.1 Fitness 三维度配对
+    # 同一条纪律：任一维度不等就不可信，fail closed，不假设跨世代可比。
+    is_eligible = (
+        ctx.generation == eligible_generation
+        and isinstance(eligible_cycle, int) and not isinstance(eligible_cycle, bool)
+        and ctx.soil_cycle > eligible_cycle
+    )
+    if not is_eligible:
+        raise TaskDeclarationError(
+            f"primary_probe={task.primary_probe!r} 尚未过 eligible_after —— "
+            f"冻结于 generation={eligible_generation!r} soil_cycle={eligible_cycle!r}，"
+            f"当前 generation={ctx.generation!r} soil_cycle={ctx.soil_cycle!r}；"
+            "必须隔至少一个独立 cycle 才可针对它提能力变更（C1：防「同一 Change 里"
+            "先写尺、再写刚好通过这把尺的能力」）")
+
+
+# ---------------------------------------------------------------------------
+# Probe 冻结（C1，`author_probe` 能力的土壤半，§15 C1 / §7）
+# ---------------------------------------------------------------------------
+def freeze_proposal(proposal_path, *, ctx, proposed_commit, created_by="seed") -> dict:
+    """把 `seed/probe-proposals/<id>.json` 校验通过后冻结进 vault + 写冻结登记
+    （C1；§7 `author_probe`：「种子写提案文件；土壤校验后写冻结登记与 vault
+    manifest」——本函数就是「土壤校验后」那半）。
+
+    v3.1 的 `promote_probes()`（已删除，见 `probe_runner.catalogue()` 的
+    docstring）读的是 `state/probe-proposals`（错的路径，与 CA-5 扫的
+    `seed/probe-proposals/` 对不上，§13.3 列的 supervisor 波次 2 改造项）；
+    本函数是这条能力在 v5 下的重写，不是 v3.1 代码的修补。
+
+    **落在 `pipeline.py` 而不是 `probe_runner.py`**：`probe_runner` 模块
+    docstring 自称「唯一读写 vault 的地方」——本函数确实要写 vault，但写入
+    动作全权委派给 `probe_runner.freeze_into_vault()`，本函数自己不直接碰
+    vault 路径，只做编排（读提案文件、拿 git tree sha、组装登记项、串起
+    `promotion_lock`），那条「唯一入口」的边界因此仍然成立。
+
+    **`proposed_commit` 由调用方给出，不在此处从 HEAD 现读**——理由与
+    `ctx.generation` / `ctx.soil_cycle` 住在 ctx 里而不是现读同一条：调用方
+    知道「这次冻结对应哪个候选 commit」，这里现猜就是又一次「猜一个方向」
+    （§1.2 的纪律）。P0-a 尚未给这个函数接一条 CLI（不在本次交付范围——
+    交付的是机制本身与它的测试，接线是另一件事），调用方目前只有测试。
+
+    **在 `ctx.promotion_lock` 内完成 vault 写入与登记写入**：两者是两次独立
+    的文件系统操作，不是一个事务；用同一把跨进程锁把它们串行化，至少排除
+    「两个并发 freeze 各自认为自己是第一个」的竞态。与晋升共用同一把锁没有
+    语义冲突——两者都是「改变共享 soil 状态」，谁也不需要在另一个的临界区
+    里跑。
+
+    **已知的未闭合项（不是本函数该顺手补的）**：vault 写入与登记写入仍是
+    两次独立操作，中间可能崩溃——若崩在两者之间，vault 有 manifest 但登记
+    没有条目（或反过来，若未来实现改成先写登记）。`validate_task()` 的两条
+    独立检查（catalogue 成员资格 + 登记条目存在）在这种情形下都会 fail
+    closed（缺一半就拒绝，不会误判为 eligible），所以不是一个安全漏洞，
+    但也不是一次干净的收尾——对称于 `reconcile_on_start()` 对晋升三步的
+    处理，freeze 目前没有等价的 reconcile。P0-a 单写者、人工触发的量级下，
+    这个窗口没有实际发生过；P0-c 无人值守时需要重新审视。
+    """
+    proposal_path = Path(proposal_path)
+    try:
+        manifest = json.loads(proposal_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise probe_runner.ProbeProposalError(f"{proposal_path}: 读不到（{exc}）") from exc
+    except json.JSONDecodeError as exc:
+        raise probe_runner.ProbeProposalError(f"{proposal_path}: 不是合法 JSON（{exc}）") from exc
+
+    probe_runner.validate_proposal(manifest)               # §8.1.1 schema + I2
+    probe_id = manifest["id"]
+
+    with ctx.promotion_lock:
+        if ctx.frozen_registry.get(probe_id) is not None:
+            raise probe_runner.ProbeProposalError(
+                f"{probe_id}: 已冻结过，拒绝再次冻结（C1：同一 probe_id 的 manifest "
+                "不得变化；改 active probe 必须新建 probe_id）")
+        probe_manifest_sha = probe_runner.freeze_into_vault(ctx.vault, manifest)
+        frozen_tree_sha = git(ctx.repo, "rev-parse", f"{proposed_commit}^{{tree}}")
+        entry = ctx.frozen_registry.freeze({
+            "probe_id": probe_id,
+            "status": "active",
+            "created_by": created_by,
+            "proposed_commit": proposed_commit,
+            "frozen_tree_sha": frozen_tree_sha,
+            "frozen_probe_manifest_sha": probe_manifest_sha,
+            # eligible_after：见 §15 C1 与本模块 validate_task() 的注释——
+            # 度量单位是 soil_cycle（拍号，因果排序的原语），不是墙钟时间：
+            # C1 要挡的是「同一个 Change 内」，Change 的边界由 soil_cycle 划，
+            # 两次 cycle 可能背靠背在同一秒内跑完，也可能横跨数小时，
+            # 墙钟时间对「隔没隔开一个独立 cycle」这个问题不提供任何保证。
+            "eligible_after": {"generation": ctx.generation, "soil_cycle": ctx.soil_cycle},
+        })
+    return entry
 
 
 def evaluate_task(task: Task, observed: list) -> tuple:
