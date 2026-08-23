@@ -1,0 +1,17 @@
+{
+  "id": "probe-classify-basic",
+  "capability": "把失败原因分类到命名类别",
+  "organ": "classifier",
+  "checks": [
+    {"id": "c1", "input": "closure ~52704 > 50000 budget",
+     "cmp": "equals", "expect": "closure-budget"},
+    {"id": "c2", "input": "touches protected path root/",
+     "cmp": "equals", "expect": "protected-path"},
+    {"id": "c3", "input": "anchor regressed on candidate c7",
+     "cmp": "equals", "expect": "probe-regressed"},
+    {"id": "c4", "input": "prompt surface 812 tokens > 600 budget",
+     "cmp": "equals", "expect": "prompt-budget"},
+    {"id": "c5", "input": "contract surface exceeds 40 public symbols",
+     "cmp": "equals", "expect": "contract-budget"}
+  ]
+}
