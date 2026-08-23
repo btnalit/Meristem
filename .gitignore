@@ -32,3 +32,8 @@ state/
 
 # Generated report
 REPORT.md
+
+# v5: 晋升锁是运行时文件，不是源码。刻意不放在 state/ —— CA-8 断言 state/ 下
+# 每个文件都匹配 ^state/soil-[a-z0-9-]+\.jsonl$，给锁文件开一条例外，
+# 正是列举式边界漏水的方式（同 .gitkeep 那次的理由）。
+soil/.promotion.lock
