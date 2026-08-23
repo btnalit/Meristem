@@ -59,11 +59,20 @@ def _refuse_if_latched() -> bool:
 
     清闩只有人能做（`python3 root/panic.py clear`）；种子无任何路径触及它。
     """
-    if not panic.engaged():
+    try:
+        latch = panic.latch_path()
+    except panic.ControlPathMissing as exc:
+        # **闩查不了就不许跑。** 「不知道闩在哪」与「闩没上」必须是两件事 ——
+        # 把前者当成后者，等于在一个无法急停的系统上开工。
+        print(f"无法定位 panic 闩，拒绝运行：\n{exc}", file=sys.stderr)
+        return True
+    if not latch.exists():
         return False
-    print(f"panic 闩已上，拒绝运行：{panic.LATCH}\n"
-          f"  内容：{panic.LATCH.read_text(encoding='utf-8').strip()}\n"
-          f"  清闩只有人能做：python3 root/panic.py clear", file=sys.stderr)
+    print(f"panic 闩已上，拒绝运行：{latch}\n"
+          f"  内容：{latch.read_text(encoding='utf-8').strip()}\n"
+          f"  清闩只有人能做（记得先 source 环境文件）：\n"
+          f"    set -a && . /RSI/meristem-env && set +a && python3 root/panic.py clear",
+          file=sys.stderr)
     return True
 
 
