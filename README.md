@@ -29,7 +29,8 @@ impossible to produce**, and the system reported progress anyway.
 | `manual-cycle` / `ignition-status` | implemented |
 | ignition organ + internal probe | implemented |
 | `seed/agenda.md` + `soil/p0a-task.json` | implemented (task fixed by §12.2) |
-| v3.1 entry points (`heartbeat`/`run`/`promote`/…) | **refused by default** — they would bypass the whole v5 chain; unlock with `MERISTEM_ALLOW_LEGACY=1` |
+| v3.1 entry points (`heartbeat`/`run`/`promote`/…) | **deleted** — `supervisor.py` went 1588 → 331 lines; `run_meristem.sh` removed. Gating them behind a flag was the wrong fix: a locked second entry point is still a second entry point. P0-c redesigns keeper/breaker for v5 rather than thawing v3.1's |
+| panic latch (`root/panic.py`) | **now read by v5** — `manual-cycle` refuses while it is engaged; `ignition-status` stays readable (a stopped system is exactly when you need the criterion) |
 | **anchor probe (5 hidden cases)** | **not written — human-authored, by design** |
 | `budget.py`, `model_gateway.py`, `panel.py` | not implemented |
 | `soil/report_renderer.py`, `seed/feedback.json` | not implemented |
