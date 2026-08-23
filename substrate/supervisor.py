@@ -1457,13 +1457,27 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
 def ignition_status(repo=None) -> int:
     """§1.2 判据的**唯一求值点**（§12.0.2）。只读台账，不查 task registry。
 
-    退出码恒为 0：这是一份读数，不是一道闸门。**给它一个规格没定义的退出码语义**，
-    下一个读者就会拿 `if ignition-status; then` 当判据用——而判据的定义在 §1.2，
-    不在某个人对退出码的理解里。计数与 `excluded` 都印在 stdout。
+    **退出码只区分「读数产出了」与「读数产不出来」，不区分计数多少。**
+    0 = 读数已产出（计数是 0 还是 5 都算产出）；1 = **台账损坏，读数不可得**。
+    绝不让退出码携带判据语义 —— 判据的定义在 §1.2，不在某个人对退出码的理解里，
+    否则下一个读者就会拿 `if ignition-status; then` 当判据用。
+
+    **台账损坏走 fail closed，不是抛 traceback。** §1.2 要求谓词严格下标、
+    缺键当场抛错（不许读者猜方向）——那条纪律留在谓词里；而**命令**必须把它
+    翻译成一句可处置的话。一个读不出数的仪表要说「我读不出」，
+    不是把栈打在操作员脸上：这正是判据最需要成立的时刻（崩溃恢复、事后审计）。
     """
     repo = pathlib.Path(repo) if repo is not None else REPO
     rows = _soil_state.Ledger(repo / "state" / "soil-ledger.jsonl").read()
-    hits = [ev for ev in rows if _pipeline.is_ignition_event(ev)]
+    try:
+        hits = [ev for ev in rows if _pipeline.is_ignition_event(ev)]
+    except (KeyError, TypeError) as exc:
+        print(f"台账损坏，出生判据无法求值：缺失或类型错误的字段 {exc}\n"
+              f"  台账：{repo / 'state' / 'soil-ledger.jsonl'}\n"
+              f"  §8.2 的强制字段与 records schema 由写入侧保证；"
+              f"读到不合规的行意味着有东西绕过了 substrate/soil_state.Ledger。",
+              file=sys.stderr)
+        return 1
 
     print(f"ignition events: {len(hits)}   (criterion §1.2)")
     for ev in hits:
@@ -1474,10 +1488,14 @@ def ignition_status(repo=None) -> int:
               f"{rec['before']} → {rec['after']}")
 
     counts: dict = {}
-    for ev in rows:
-        reason = _pipeline.ignition_exclusion_reason(ev)
-        if reason is not None:
-            counts[reason] = counts.get(reason, 0) + 1
+    try:
+        for ev in rows:
+            reason = _pipeline.ignition_exclusion_reason(ev)
+            if reason is not None:
+                counts[reason] = counts.get(reason, 0) + 1
+    except (KeyError, TypeError) as exc:
+        print(f"台账损坏，excluded 归因无法求值：{exc}", file=sys.stderr)
+        return 1
     # 归因顺序定死（§12.0.2）：读数不稳定的仪表比没有仪表更坏。
     # **顺序从 `pipeline.IGNITION_CONJUNCTS` 派生，不在这里手抄一份** ——
     # 抄一份就是两个独立维护的副本，而这个项目到处在防的正是这种漂移。
@@ -1490,6 +1508,40 @@ def ignition_status(repo=None) -> int:
                 parts.append(f"{count} {key}")
     print("excluded: " + (" · ".join(parts) if parts else "0"))
     return 0
+
+
+#: v3.1 时代的运行入口。**默认拒绝执行**（§13.3 波次 2 之前）。
+#:
+#: 它们不是「还没接上新流水线」那么简单 —— **接上去是 P0-c 的工程**（keeper /
+#: breaker / 预算窗口，§12），而 P0-a 的定义就是「人给任务，人做判决」。
+#: 真正的危险在于它们**现在就能跑，而且跑起来会绕开整条 v5 链**：
+#: `heartbeat` 以 `cwd=REPO` 起 `python -m meristem.loop cycle`，
+#: 而 `meristem.loop` 如今是 **v5 的种子**，其 `run_cycle` 默认 workdir 即 REPO
+#: —— 种子会**直接提交到主线工作树**，随后由 v3.1 的 `promote()` 判决：
+#: 没有 before/after 测量、没有 `soil-ledger`、没有 `accepted_fitness`、
+#: 没有点火记账。**一次这样的运行会污染主线，而台账上不会留下任何痕迹。**
+#:
+#: 于是它违反了本项目最基本的一条：**同一件事只能有一个权威判定入口。**
+#: 保留代码（§13.3 要按项改造，不是删掉），但**不再默认可触发**。
+#: 诊断 v3.1 时可用 `MERISTEM_ALLOW_LEGACY=1` 显式解锁 —— 解锁是人的动作，
+#: 与 panic 闩同一形状：**默认安全，例外要显式说出口。**
+LEGACY_COMMANDS = ("run", "promote", "rollback", "canary", "heartbeat")
+
+
+def _refuse_legacy(command: str) -> int:
+    print(
+        f"拒绝执行 `{command}`：这是 v3.1 的运行入口，尚未按 §13.3 改造到 v5 流水线。\n"
+        f"\n"
+        f"  为什么不是「先跑着」：`heartbeat` 会以 cwd=REPO 起 `meristem.loop cycle`，\n"
+        f"  而那如今是 v5 的种子 —— 它会直接提交到主线，再由 v3.1 的 promote() 判决，\n"
+        f"  **绕开 before/after 测量、soil-ledger、accepted_fitness 与点火记账**。\n"
+        f"\n"
+        f"  P0-a 的运行入口是：python -m substrate.supervisor manual-cycle [--candidate <sha>]\n"
+        f"  判据的求值点是：  python -m substrate.supervisor ignition-status\n"
+        f"\n"
+        f"  确实要跑 v3.1 的诊断路径，显式解锁：MERISTEM_ALLOW_LEGACY=1",
+        file=sys.stderr)
+    return 2
 
 
 def main(argv=None) -> int:
@@ -1509,6 +1561,10 @@ def main(argv=None) -> int:
                         help="beat without sleeping, for verification")
     parser.add_argument("--reason", default="manual")
     args = parser.parse_args(argv)
+
+    if (args.command in LEGACY_COMMANDS
+            and os.environ.get("MERISTEM_ALLOW_LEGACY", "").strip() != "1"):
+        return _refuse_legacy(args.command)
 
     if args.command == "manual-cycle":
         return manual_cycle(calibration=args.calibration, candidate=args.candidate,

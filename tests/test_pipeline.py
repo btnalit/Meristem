@@ -127,6 +127,23 @@ def _make_candidate(repo: Path, *, table=None, organ_src=None, selftest=None) ->
     return candidate
 
 
+def _record(**overrides) -> dict:
+    """一条符合 §8.2 `records[]` schema 的 fitness 记录。
+
+    测试夹具必须**带齐三个版本维度** —— 它们是可比性的前提，写入侧现在会拒绝
+    缺了它们的记录。上一版这里手写了一条精简记录，恰好被新校验抓住：
+    **夹具偷的懒，就是断言覆盖不到的那块地方。**
+    """
+    record = {"probe_id": PROBE_ID, "before": 40.0, "after": 60.0, "delta": 20.0,
+              "status": "improved", "checks_before": 2, "checks_after": 3,
+              "checks_total": 5, "measured_by": "soil",
+              "tree_before": "sha-before", "tree_after": "sha-after",
+              "probe_manifest_sha": "sha-manifest", "runner_version": "1",
+              "execution_policy_version": "1"}
+    record.update(overrides)
+    return record
+
+
 def _task(minimum_delta=20.0, expected="score_increase") -> pipeline.Task:
     return pipeline.Task(task_id="task-test", kind="repair", target="classifier",
                          primary_probe=PROBE_ID, expected=expected,
@@ -511,8 +528,7 @@ class ReconcileTests(PipelineTestCase):
         ctx = self._ctx(repo, calibration=True)
         oid = ctx.ledger.append({
             "kind": "observed_fitness", "commit": candidate, "source": None,
-            "records": [{"probe_id": PROBE_ID, "before": 40.0, "after": 60.0,
-                         "delta": 20.0, "status": "improved"}],
+            "records": [_record()],
             "task_id": "task-test", "primary_probe": PROBE_ID, "generation": "gen-0",
             "soil_cycle": 1, "calibration": True, "counts_as_progress": False})
         parent = _git(repo, "rev-parse", "HEAD")
@@ -569,6 +585,96 @@ class TaskDeclarationTests(PipelineTestCase):
         ok, why = pipeline.evaluate_task(_task(expected="cost_reduction"), [])
         self.assertFalse(ok)
         self.assertIn("Metric Registry", why)
+
+
+class LedgerReaderContractTests(unittest.TestCase):
+    """写入侧接受的每一行，判据侧都必须读得出来。
+
+    2026-08-23 第三份独立审查复现：`records: [{}]` 能写进台账，而
+    `is_ignition_event` 读到它抛 `KeyError` —— **判据的唯一求值点当场崩溃**。
+    一个写得进去、却读不出来的台账行，等于把崩溃留给最需要读数的那一刻
+    （崩溃恢复、事后审计）。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        state = Path(self.tmp.name) / "state"
+        state.mkdir()
+        self.ledger = soil_state.Ledger(state / "soil-ledger.jsonl")
+
+    def _event(self, records):
+        return {"kind": "accepted_fitness", "commit": "c", "source": "ev-x",
+                "task_id": "t", "primary_probe": PROBE_ID, "generation": "gen-0",
+                "soil_cycle": 1, "calibration": False, "counts_as_progress": True,
+                "records": records}
+
+    def test_empty_record_is_refused_at_write_time(self):
+        with self.assertRaises(soil_state.SoilStateError):
+            self.ledger.append(self._event([{}]))
+        self.assertEqual(self.ledger.read(), [])
+
+    def test_record_without_version_dimensions_is_refused(self):
+        """三个版本维度缺失会让不可比**静默发生** —— 规格叫它「又一个声明了没断言」。"""
+        thin = {k: v for k, v in _record().items()
+                if k not in ("probe_manifest_sha", "runner_version",
+                             "execution_policy_version")}
+        with self.assertRaises(soil_state.SoilStateError):
+            self.ledger.append(self._event([thin]))
+
+    def test_record_with_status_outside_the_i5_enum_is_refused(self):
+        with self.assertRaises(soil_state.SoilStateError):
+            self.ledger.append(self._event([_record(status="looks-good")]))
+
+    def test_everything_the_writer_accepts_the_predicate_can_read(self):
+        """正向断言：写得进去的，判据一定读得出来（不抛异常）。"""
+        self.ledger.append(self._event([_record()]))
+        for row in self.ledger.read():
+            self.assertIsInstance(pipeline.is_ignition_event(row), bool)
+            pipeline.ignition_exclusion_reason(row)
+
+    def test_baseline_and_unmeasured_records_remain_writable(self):
+        """`pair()` 在 baseline / unmeasured 下合法地产出 `None` ——
+        校验不能严到让 runner 写不出自己的记录。"""
+        self.ledger.append(self._event([_record(before=None, delta=None,
+                                                checks_before=None, status="baseline")]))
+        self.ledger.append(self._event([_record(delta=None, status="unmeasured")]))
+        self.assertEqual(len(self.ledger.read()), 2)
+
+
+class LegacyEntryPointTests(unittest.TestCase):
+    """v3.1 的运行入口默认不可触发（双轨消除）。
+
+    危险不在于「旧代码还在」，而在于 **`heartbeat` 现在就能跑**：
+    它以 `cwd=REPO` 起 `meristem.loop cycle`，而那如今是 v5 的种子，
+    默认 workdir 就是 REPO —— 种子会**直接提交到主线**，再由 v3.1 的 `promote()`
+    判决，绕开 before/after 测量、`soil-ledger`、`accepted_fitness` 与点火记账。
+    **同一件事只能有一个权威判定入口。**
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from substrate import supervisor
+        self.supervisor = supervisor
+        self._saved = os.environ.pop("MERISTEM_ALLOW_LEGACY", None)
+        self.addCleanup(lambda: os.environ.__setitem__("MERISTEM_ALLOW_LEGACY", self._saved)
+                        if self._saved is not None else None)
+
+    def test_every_legacy_command_is_refused_by_default(self):
+        for command in self.supervisor.LEGACY_COMMANDS:
+            with self.subTest(command=command):
+                self.assertEqual(self.supervisor.main([command]), 2)
+
+    def test_v5_commands_are_not_refused(self):
+        self.assertNotIn("manual-cycle", self.supervisor.LEGACY_COMMANDS)
+        self.assertNotIn("ignition-status", self.supervisor.LEGACY_COMMANDS)
+
+    def test_legacy_can_be_unlocked_explicitly(self):
+        """解锁是**人的动作**，与 panic 闩同一形状：默认安全，例外要显式说出口。"""
+        os.environ["MERISTEM_ALLOW_LEGACY"] = "1"
+        self.addCleanup(os.environ.pop, "MERISTEM_ALLOW_LEGACY", None)
+        # 解锁后不再走拒绝分支（真跑 v3.1 逻辑不在本测试范围内，只断言不再返回 2）。
+        self.assertNotEqual(self.supervisor._refuse_legacy("heartbeat"), 0)
 
 
 class SoilStateTests(unittest.TestCase):

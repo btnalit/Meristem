@@ -28,6 +28,8 @@ impossible to produce**, and the system reported progress anyway.
 | `substrate/pipeline.py`, `soil_state.py` | implemented |
 | `manual-cycle` / `ignition-status` | implemented |
 | ignition organ + internal probe | implemented |
+| `seed/agenda.md` + `soil/p0a-task.json` | implemented (task fixed by §12.2) |
+| v3.1 entry points (`heartbeat`/`run`/`promote`/…) | **refused by default** — they would bypass the whole v5 chain; unlock with `MERISTEM_ALLOW_LEGACY=1` |
 | **anchor probe (5 hidden cases)** | **not written — human-authored, by design** |
 | `budget.py`, `model_gateway.py`, `panel.py` | not implemented |
 | `soil/report_renderer.py`, `seed/feedback.json` | not implemented |
