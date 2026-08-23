@@ -77,6 +77,48 @@ class ValidatePathsTests(unittest.TestCase):
 # engine prompt face: over-budget prompts must cause zero model calls (I10)
 # ---------------------------------------------------------------------------
 
+class BuildContextTests(unittest.TestCase):
+    """种子必须在 prompt 里看到自己的可写面。
+
+    此前 `build_context` 只拼 task/extra/config —— 种子被要求产出整文件替换，
+    **却不知道自己能写哪些文件**，于是会去改白名单外的路径、被当场拒绝、整拍作废。
+    那样测出来的是「模型能不能猜中白名单」，**不是 H1 要问的「能不能沿梯度爬」**。
+    """
+
+    def test_prompt_carries_the_writable_surface(self):
+        prompt = engine.build_context("任务", config={})
+        for entry in engine.SEED_WRITABLE:
+            with self.subTest(entry=entry):
+                self.assertIn(entry, prompt)
+
+    def test_prompt_carries_the_readonly_surface(self):
+        prompt = engine.build_context("任务", config={})
+        for entry in engine.SEED_READONLY:
+            with self.subTest(entry=entry):
+                self.assertIn(entry, prompt)
+
+    def test_prompt_never_carries_soil_private_material(self):
+        """**正向断言不够，还要有反向的。** 把可写面放进 prompt 之后，
+        更要守住没有把土壤私有的东西一起带进去。"""
+        prompt = engine.build_context("任务", config={}).lower()
+        for forbidden in ("soil-ledger", "scoreboard", "api_key", "calls_per_window"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, prompt)
+
+    def test_missing_constitution_does_not_break_a_cycle(self):
+        """宪法在种子可写面上 —— 种子可以删掉它。**那是它的权限，不是故障。**"""
+        saved = engine.SEED_DIR / "constitution.md"
+        original = saved.read_text(encoding="utf-8") if saved.exists() else None
+        try:
+            if saved.exists():
+                saved.unlink()
+            prompt = engine.build_context("任务", config={})
+            self.assertIn("Task: 任务", prompt)
+        finally:
+            if original is not None:
+                saved.write_text(original, encoding="utf-8")
+
+
 class PromptBudgetTests(unittest.TestCase):
     def test_over_budget_makes_zero_llm_calls(self):
         calls = []

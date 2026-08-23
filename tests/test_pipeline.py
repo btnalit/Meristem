@@ -10,6 +10,7 @@ vault 一律建在 `tmp_path` 里，**绝不建在仓库附近**（C-65：`.clau
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from substrate import pipeline  # noqa: E402
+from substrate import probe_runner  # noqa: E402
 from substrate import soil_state  # noqa: E402
 
 #: 探针的 5 个 check：input -> 期望类别。
@@ -170,9 +172,35 @@ class PipelineTestCase(unittest.TestCase):
         self.vault = _make_vault(self.root)
 
     def _ctx(self, repo, *, calibration=False, soil_cycle=1):
-        return soil_state.SoilContext.open(
+        ctx = soil_state.SoilContext.open(
             repo, generation="gen-0", soil_cycle=soil_cycle,
             calibration=calibration, vault=self.vault)
+        self._ensure_frozen(ctx)
+        return ctx
+
+    def _ensure_frozen(self, ctx, probe_id=PROBE_ID):
+        """让 `probe_id` 在这个 ctx 眼里已经 `active` 且早已过 `eligible_after`
+        （C1，§15）——`_make_vault()` 把 manifest 直接写进 vault，绕过
+        `pipeline.freeze_proposal()`，从不touch冻结登记。**这个模块里除了
+        C1 自己的测试类之外，其余测试类验的都是别的机制**（晋升事务链 /
+        非晋升出口 / 校准 / manual-panel 对等 / 崩溃收尾），不该被 C1 的
+        时机闸门挡住，所以这里补一条「早已冻结、早已过期」的登记，
+        `soil_cycle=0` 保证严格小于任何真实拍号（拍号从 1 起算，
+        见 `substrate/supervisor.py::_next_soil_cycle`）。
+
+        C1 自己的测试类（`FreezeProposalTests` / `TaskDeclarationTests` 里
+        新增的用例）不经过这个助手——它们要测的正是「还没到 eligible_after」
+        与「冻结与登记同一个 ctx」这两种情形，用真实的 `freeze_proposal()`
+        或手工摆一条未到期的登记，不能被这里的默认放行悄悄盖过。
+        """
+        if ctx.frozen_registry.get(probe_id) is not None:
+            return
+        ctx.frozen_registry.freeze({
+            "probe_id": probe_id, "status": "active", "created_by": "seed",
+            "proposed_commit": "0" * 40, "frozen_tree_sha": "0" * 40,
+            "frozen_probe_manifest_sha": "fixture-manifest-sha-not-checked",
+            "eligible_after": {"generation": ctx.generation, "soil_cycle": 0},
+        })
 
     def _ledger(self, ctx):
         return ctx.ledger.read()
@@ -388,6 +416,7 @@ class ManualPanelParityTests(PipelineTestCase):
         candidate = _make_candidate(repo, table=KNOWS_THREE)
         ctx = soil_state.SoilContext.open(repo, generation="gen-0", soil_cycle=1,
                                           vault=self.vault)
+        self._ensure_frozen(ctx)
         outcome = pipeline.process_candidate(candidate, _task(), repo=repo,
                                              panel=panel, ctx=ctx)
         self.assertIs(outcome, pipeline.Outcome.PROMOTED)
@@ -561,6 +590,59 @@ class TaskDeclarationTests(PipelineTestCase):
         self.repo = _make_repo(self.root)
         self.ctx = self._ctx(self.repo)
 
+    def test_anchor_present_in_the_measured_set_is_still_refused_as_primary(self):
+        """**这一条以前是靠 anchor 缺席才通过的。**
+
+        旧写法是「在清单里找不到就拒绝」，而当时的清单根本不含 anchor ——
+        碰巧奏效。§12.2 的「anchor 回归即拒」要求 anchor 必须真的在被测集合里；
+        它一进去，靠缺席的判别就**静默失效**，种子从此可以拿外部锚当自己的尺。
+        现在按来源目录判别，anchor 在场也照样被拒。
+        """
+        anchor_dir = self.vault / "anchors" / "probe-anchor-x"
+        anchor_dir.mkdir(parents=True)
+        _write(anchor_dir / "probe.json", json.dumps({
+            "id": "probe-anchor-x", "capability": "c", "organ": "classifier",
+            "checks": CHECKS}, ensure_ascii=False))
+
+        # 前提：anchor 确实进了被测集合（否则这条测试又在测缺席）。
+        ids = {m["id"] for m in probe_runner.catalogue(self.vault)}
+        self.assertIn("probe-anchor-x", ids)
+        self.assertIn(PROBE_ID, ids)
+
+        task = pipeline.Task(task_id="t", kind="repair", target="classifier",
+                             primary_probe="probe-anchor-x")
+        with self.assertRaises(pipeline.TaskDeclarationError) as caught:
+            pipeline.validate_task(task, self.ctx)
+        self.assertIn("anchor", str(caught.exception))
+
+    def test_anchor_regression_rejects_the_candidate(self):
+        """§12.2 的非对称第一半：**anchor 回归 → 候选被拒**。
+
+        这一条不新增机制 —— `run_all` 本就跑全套、`has_regression` 对任一 probe
+        触发。它断言的是「anchor 确实在那个『全套』里」，而那正是接线之前不成立的事。
+        """
+        anchor_dir = self.vault / "anchors" / "probe-anchor-x"
+        anchor_dir.mkdir(parents=True)
+        # anchor 用 internal 覆盖不到的输入取样。
+        _write(anchor_dir / "probe.json", json.dumps({
+            "id": "probe-anchor-x", "capability": "c", "organ": "classifier",
+            "checks": [{"id": "x1", "input": "anchor only sample",
+                        "cmp": "equals", "expect": "anchor-label"}]}, ensure_ascii=False))
+        # 本类的 setUp 已经建过一个 repo，这里另起一处，避免撞名。
+        elsewhere = self.root / "anchor-regression"
+        elsewhere.mkdir()
+        repo = _make_repo(elsewhere, table=dict(KNOWS_TWO,
+                                                **{"anchor only sample": "anchor-label"}))
+        # 候选修好了 internal 的一条，却把 anchor 那条弄坏了。
+        candidate = _make_candidate(repo, table=KNOWS_THREE)
+        ctx = self._ctx(repo)
+
+        outcome = pipeline.process_candidate(candidate, _task(), repo=repo,
+                                             panel=_accept, ctx=ctx)
+
+        self.assertIs(outcome, pipeline.Outcome.REGRESSED)
+        self.assertNotIn("accepted_fitness", [r["kind"] for r in ctx.ledger.read()])
+
     def test_anchor_cannot_be_declared_primary_probe(self):
         task = pipeline.Task(task_id="t", kind="repair", target="classifier",
                              primary_probe="probe-anchor-hidden")
@@ -585,6 +667,284 @@ class TaskDeclarationTests(PipelineTestCase):
         ok, why = pipeline.evaluate_task(_task(expected="cost_reduction"), [])
         self.assertFalse(ok)
         self.assertIn("Metric Registry", why)
+
+
+class C1EnforcementTests(PipelineTestCase):
+    """C1（§15 / §8.1.4 硬约束表第二行）：`validate_task()` 对 `primary_probe`
+    的 `active` + `eligible_after` 校验。
+
+    **不用 `self._ctx()`。** 那个助手替这个文件里其它所有测试类把 PROBE_ID
+    摆成「早已冻结、早已过期」（见 `PipelineTestCase._ensure_frozen` 的
+    docstring），而这里要测的正是「尚未过期」「非 active」这些情形本身，
+    必须自己控制登记内容，不能被默认放行盖过。
+    """
+
+    def _ctx_with_registry(self, repo, entry_overrides, *, soil_cycle=1):
+        ctx = soil_state.SoilContext.open(
+            repo, generation="gen-0", soil_cycle=soil_cycle, vault=self.vault)
+        entry = {"probe_id": PROBE_ID, "status": "active", "created_by": "seed",
+                 "proposed_commit": "0" * 40, "frozen_tree_sha": "0" * 40,
+                 "frozen_probe_manifest_sha": "sha-fixture",
+                 "eligible_after": {"generation": "gen-0", "soil_cycle": 1}}
+        entry.update(entry_overrides)
+        ctx.frozen_registry.freeze(entry)
+        return ctx
+
+    def test_probe_frozen_in_the_same_cycle_as_its_capability_is_rejected(self):
+        """核心场景（Constraints 第 1 条）：登记的 `eligible_after.soil_cycle`
+        与本次 ctx 的 `soil_cycle` 相等——「同一个 Change 里先写尺、再写刚好
+        通过这把尺的能力」，C1 明令禁止，必须拒绝。"""
+        repo = _make_repo(self.root)
+        ctx = self._ctx_with_registry(
+            repo, {"eligible_after": {"generation": "gen-0", "soil_cycle": 1}},
+            soil_cycle=1)
+        with self.assertRaises(pipeline.TaskDeclarationError) as cm:
+            pipeline.validate_task(_task(), ctx)
+        self.assertIn("eligible_after", str(cm.exception))
+
+    def test_probe_becomes_eligible_once_an_independent_cycle_has_passed(self):
+        repo = _make_repo(self.root)
+        ctx = self._ctx_with_registry(
+            repo, {"eligible_after": {"generation": "gen-0", "soil_cycle": 1}},
+            soil_cycle=2)
+        pipeline.validate_task(_task(), ctx)  # 不抛
+
+    def test_probe_not_yet_active_is_rejected(self):
+        """`freeze()` 只接受 `status="active"`（首次冻结转移），要构造「非
+        active」得在写入之后直接改磁盘内容——模拟 I3 退役路径已经把它标成
+        `degenerate_suspected` 之后的状态（状态迁移本身不在本任务范围内，
+        见 `FrozenProbeRegistry` 类 docstring）。"""
+        repo = _make_repo(self.root)
+        ctx = self._ctx_with_registry(
+            repo, {"eligible_after": {"generation": "gen-0", "soil_cycle": 0}},
+            soil_cycle=1)
+        data = json.loads(ctx.frozen_registry.path.read_text(encoding="utf-8"))
+        data[PROBE_ID]["status"] = "degenerate_suspected"
+        ctx.frozen_registry.path.write_text(json.dumps(data), encoding="utf-8")
+
+        with self.assertRaises(pipeline.TaskDeclarationError) as cm:
+            pipeline.validate_task(_task(), ctx)
+        self.assertIn("active", str(cm.exception))
+
+    def test_generation_mismatch_is_treated_as_not_eligible(self):
+        """规格未言明世代变化（§7.1 soil_recovery：「冻结自主运行，等待重新
+        点火」）之后旧 `soil_cycle` 是否仍可比；本实现按 §4.1 Fitness 三维度
+        配对同一条纪律 fail closed。这条测试把这个判断钉死，避免以后有人
+        「顺手」改成只比 `soil_cycle`、不比 `generation`。"""
+        repo = _make_repo(self.root)
+        ctx = self._ctx_with_registry(
+            repo, {"eligible_after": {"generation": "gen-earlier", "soil_cycle": 0}},
+            soil_cycle=5)
+        with self.assertRaises(pipeline.TaskDeclarationError):
+            pipeline.validate_task(_task(), ctx)
+
+    def test_missing_registry_entry_is_rejected_even_if_vault_has_the_manifest(self):
+        """vault 与登记不一致（例如登记条目绕开 `freeze_into_vault()` 手工
+        放进 vault）时 fail closed，不是「找不到登记就当成没有这层约束」。"""
+        repo = _make_repo(self.root)
+        ctx = soil_state.SoilContext.open(
+            repo, generation="gen-0", soil_cycle=1, vault=self.vault)
+        # 刻意不写登记——self.vault（PipelineTestCase.setUp）已经直接把
+        # PROBE_ID 的 manifest 放进了 vault。
+        with self.assertRaises(pipeline.TaskDeclarationError) as cm:
+            pipeline.validate_task(_task(), ctx)
+        self.assertIn("冻结登记", str(cm.exception))
+
+
+class FrozenProbeRegistryTests(unittest.TestCase):
+    """`soil_state.FrozenProbeRegistry` —— C1 冻结登记的持久层（§15 C1）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.soil = Path(self.tmp.name) / "soil"
+
+    def _entry(self, **overrides):
+        entry = {"probe_id": "probe-r", "status": "active", "created_by": "seed",
+                 "proposed_commit": "c" * 40, "frozen_tree_sha": "t" * 40,
+                 "frozen_probe_manifest_sha": "m" * 64,
+                 "eligible_after": {"generation": "gen-0", "soil_cycle": 3}}
+        entry.update(overrides)
+        return entry
+
+    def _registry(self):
+        return soil_state.FrozenProbeRegistry(self.soil / "frozen-probe-registry.json")
+
+    def test_read_on_missing_file_returns_empty_dict(self):
+        registry = self._registry()
+        self.assertEqual(registry.read(), {})
+        self.assertIsNone(registry.get("probe-r"))
+
+    def test_freeze_then_get_round_trips(self):
+        registry = self._registry()
+        written = registry.freeze(self._entry())
+        self.assertEqual(written["probe_id"], "probe-r")
+        self.assertIn("frozen_at", written)
+        self.assertEqual(registry.get("probe-r"), written)
+
+    def test_freeze_persists_across_new_instances(self):
+        """真实场景是跨进程 / 跨 ctx 复用同一份文件——不能只在同一个对象里
+        「看起来」持久。"""
+        self._registry().freeze(self._entry())
+        reopened = self._registry()
+        self.assertEqual(reopened.get("probe-r")["probe_id"], "probe-r")
+
+    def test_freeze_refuses_duplicate_probe_id(self):
+        registry = self._registry()
+        registry.freeze(self._entry())
+        with self.assertRaises(soil_state.SoilStateError):
+            registry.freeze(self._entry())
+        self.assertEqual(len(registry.read()), 1)  # 拒绝不得改动已有内容
+
+    def test_freeze_refuses_missing_field(self):
+        registry = self._registry()
+        for field in soil_state.FROZEN_REGISTRY_REQUIRED_ON_INPUT:
+            entry = self._entry()
+            del entry[field]
+            with self.subTest(field=field):
+                with self.assertRaises(soil_state.SoilStateError):
+                    registry.freeze(entry)
+        self.assertEqual(registry.read(), {})
+
+    def test_freeze_refuses_malformed_eligible_after(self):
+        registry = self._registry()
+        for bad in ({"generation": "gen-0"},                        # 缺 soil_cycle
+                    {"soil_cycle": 3},                               # 缺 generation
+                    {"generation": "", "soil_cycle": 3},              # generation 空串
+                    {"generation": "gen-0", "soil_cycle": "3"},       # 类型不对
+                    {"generation": "gen-0", "soil_cycle": True},      # bool 不算 int
+                    "not-a-dict"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(soil_state.SoilStateError):
+                    registry.freeze(self._entry(eligible_after=bad))
+
+    def test_freeze_only_accepts_active_status(self):
+        """`freeze()` 只做首次冻结（§6.2 的 draft -> active），不支持直接
+        写入其它状态——状态迁移不在 C1 本次交付范围内（类 docstring 已注明
+        这是刻意留空，不是遗漏）。"""
+        registry = self._registry()
+        with self.assertRaises(soil_state.SoilStateError):
+            registry.freeze(self._entry(status="degenerate_suspected"))
+
+
+class FreezeProposalTests(unittest.TestCase):
+    """`pipeline.freeze_proposal()` —— C1（§15）：把 `seed/probe-proposals/`
+    里的提案冻结进 vault + 登记，一次搭一把锁完成。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        # 刻意不用模块顶部的 _make_vault()：那份 fixture 直接把 PROBE_ID 的
+        # manifest 写进 vault，绕过 freeze_into_vault()，是给「已有测量环境」
+        # 的测试类（PipelineTestCase 及其子类）准备的起点。这里要测的是
+        # **冻结本身**，起点必须是一个还没冻结过任何 probe 的空 vault——
+        # 但 resolve_vault()（C-65）要求路径已经是目录，所以仍要 mkdir。
+        self.vault = self.root / "vault"
+        self.vault.mkdir()
+
+    def _ctx(self, repo, soil_cycle=1, generation="gen-0"):
+        return soil_state.SoilContext.open(
+            repo, generation=generation, soil_cycle=soil_cycle, vault=self.vault)
+
+    def _proposal_path(self, repo, probe_id=PROBE_ID, checks=None, extra=None):
+        path = repo / "seed" / "probe-proposals" / f"{probe_id}.json"
+        manifest = {"id": probe_id, "capability": "把失败原因分类到命名类别",
+                    "organ": "classifier",
+                    "checks": checks if checks is not None else CHECKS}
+        manifest.update(extra or {})
+        _write(path, json.dumps(manifest, ensure_ascii=False))
+        return path
+
+    def test_freeze_writes_vault_and_registry_with_matching_manifest_sha(self):
+        """核心断言（Constraints 第 3 条）：`frozen_probe_manifest_sha` 真的
+        等于 runner 测量时算出的 `probe_manifest_sha`——不是假设相等，是冻结
+        之后再真的从 vault 读回、跑一次测量核对出来的。"""
+        repo = _make_repo(self.root)
+        proposal_path = self._proposal_path(repo)
+        ctx = self._ctx(repo, soil_cycle=1)
+        commit = _git(repo, "rev-parse", "HEAD")
+
+        entry = pipeline.freeze_proposal(proposal_path, ctx=ctx, proposed_commit=commit)
+
+        self.assertEqual(entry["probe_id"], PROBE_ID)
+        self.assertEqual(entry["status"], "active")
+        self.assertEqual(entry["created_by"], "seed")
+        self.assertEqual(entry["proposed_commit"], commit)
+        self.assertEqual(entry["frozen_tree_sha"],
+                         _git(repo, "rev-parse", f"{commit}^{{tree}}"))
+        self.assertEqual(entry["eligible_after"],
+                         {"generation": "gen-0", "soil_cycle": 1})
+        self.assertIn("frozen_at", entry)
+        self.assertEqual(ctx.frozen_registry.get(PROBE_ID), entry)
+
+        manifests = probe_runner.catalogue(ctx.vault)
+        [manifest] = [m for m in manifests if m["id"] == PROBE_ID]
+        run = probe_runner.run_probe(manifest, repo)
+        self.assertEqual(run.probe_manifest_sha, entry["frozen_probe_manifest_sha"])
+
+    def test_freeze_refuses_fewer_than_five_checks(self):
+        """I2（Constraints 第 2 条）：冻结点拒绝 <5 个 check 的提案，且不留下
+        任何部分写入的痕迹。"""
+        repo = _make_repo(self.root)
+        proposal_path = self._proposal_path(repo, checks=CHECKS[:4])
+        ctx = self._ctx(repo, soil_cycle=1)
+        commit = _git(repo, "rev-parse", "HEAD")
+
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            pipeline.freeze_proposal(proposal_path, ctx=ctx, proposed_commit=commit)
+
+        self.assertEqual(probe_runner.catalogue(self.vault), [])
+        self.assertIsNone(ctx.frozen_registry.get(PROBE_ID))
+
+    def test_freeze_refuses_entrypoint_field(self):
+        repo = _make_repo(self.root)
+        proposal_path = self._proposal_path(
+            repo, extra={"entrypoint": ["python3", "hack.py"]})
+        ctx = self._ctx(repo, soil_cycle=1)
+        commit = _git(repo, "rev-parse", "HEAD")
+
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            pipeline.freeze_proposal(proposal_path, ctx=ctx, proposed_commit=commit)
+        self.assertEqual(probe_runner.catalogue(self.vault), [])
+
+    def test_freeze_refuses_duplicate_probe_id(self):
+        repo = _make_repo(self.root)
+        proposal_path = self._proposal_path(repo)
+        ctx = self._ctx(repo, soil_cycle=1)
+        commit = _git(repo, "rev-parse", "HEAD")
+        pipeline.freeze_proposal(proposal_path, ctx=ctx, proposed_commit=commit)
+
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            pipeline.freeze_proposal(proposal_path, ctx=ctx, proposed_commit=commit)
+
+    def test_freeze_then_validate_task_in_the_same_cycle_is_rejected(self):
+        """端到端（Constraints 第 1 条）：同一个 Change（同一个 soil_cycle）
+        里先冻结、再声明 `primary_probe`——C1 要防的攻击本身，必须拒绝。"""
+        repo = _make_repo(self.root)
+        proposal_path = self._proposal_path(repo)
+        ctx = self._ctx(repo, soil_cycle=1)
+        commit = _git(repo, "rev-parse", "HEAD")
+        pipeline.freeze_proposal(proposal_path, ctx=ctx, proposed_commit=commit)
+
+        task = pipeline.Task(task_id="t", kind="repair", target="classifier",
+                             primary_probe=PROBE_ID)
+        with self.assertRaises(pipeline.TaskDeclarationError):
+            pipeline.validate_task(task, ctx)
+
+    def test_freeze_then_validate_task_one_cycle_later_is_accepted(self):
+        """同一场景，隔了一个独立 cycle（新的 ctx，`soil_cycle` 前进一格）
+        ——通过。"""
+        repo = _make_repo(self.root)
+        proposal_path = self._proposal_path(repo)
+        ctx1 = self._ctx(repo, soil_cycle=1)
+        commit = _git(repo, "rev-parse", "HEAD")
+        pipeline.freeze_proposal(proposal_path, ctx=ctx1, proposed_commit=commit)
+
+        ctx2 = self._ctx(repo, soil_cycle=2)
+        task = pipeline.Task(task_id="t", kind="repair", target="classifier",
+                             primary_probe=PROBE_ID)
+        pipeline.validate_task(task, ctx2)  # 不抛
 
 
 class LedgerReaderContractTests(unittest.TestCase):
@@ -689,6 +1049,64 @@ class LegacyEntryPointTests(unittest.TestCase):
         """闩必须有人看。**一个零调用点的安全开关不是安全开关** ——
         这份规格自己写过，`advance()` 零调用点就是这么活过 400 拍的。"""
         self.assertTrue(hasattr(self.supervisor, "_refuse_if_latched"))
+
+
+class SoilCycleCounterTests(unittest.TestCase):
+    """拍号必须能在**闸门拒绝的情况下**继续前进。
+
+    2026-08-24 实测于服务器的死锁：`_next_soil_cycle` 原本数
+    `observed_fitness` 的条数，而那种事件只在 `validate_task()` **通过之后**才写；
+    C1 的 `eligible_after` 又要求「冻结那一拍不可用」，即拍号必须先前进。
+    **于是拍号只能靠穿过闸门来前进，而闸门正用它做判断** —— 永远停在原地。
+
+    与 v3.1 的 `campaign_calls` 同一形状（§13.2）。教训比 I1 更窄也更基本：
+    **推进拍号的动作，不得挂在拍号所守的那道闸后面。**
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name) / "state"
+        self.state.mkdir()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from substrate import supervisor
+        self.supervisor = supervisor
+
+    def _ledger(self):
+        return soil_state.Ledger(self.state / "soil-ledger.jsonl")
+
+    def test_counter_starts_at_one_on_an_empty_ledger(self):
+        self.assertEqual(self.supervisor._next_soil_cycle(Path(self.tmp.name)), 1)
+
+    def test_a_rejected_attempt_still_advances_the_counter(self):
+        """**这一条就是那个死锁的回归。**
+
+        只写一条 `cycle`（一次被拒的尝试也会写它），不写任何 `observed_fitness`。
+        旧实现在这里恒返回 1；正确行为是前进。
+        """
+        self._ledger().append({"kind": "cycle", "commit": None, "task_id": None,
+                               "generation": "gen-0", "soil_cycle": 1,
+                               "exit_code": None})
+        self.assertEqual(self.supervisor._next_soil_cycle(Path(self.tmp.name)), 2)
+
+    def test_multiple_events_in_one_beat_do_not_over_advance(self):
+        """一拍里写了多条带拍号的事件，拍号只前进一格 ——
+        取 `max` 而不是计数，正是为了这个。"""
+        ledger = self._ledger()
+        for _ in range(3):
+            ledger.append({"kind": "cycle", "commit": None, "task_id": None,
+                           "generation": "gen-0", "soil_cycle": 4, "exit_code": None})
+        self.assertEqual(self.supervisor._next_soil_cycle(Path(self.tmp.name)), 5)
+
+    def test_counter_is_recomputable_from_any_copy_of_the_ledger(self):
+        """不另设计数文件：台账就是权威，这个数可在任意副本上离线重算。"""
+        ledger = self._ledger()
+        ledger.append({"kind": "cycle", "commit": None, "task_id": None,
+                       "generation": "gen-0", "soil_cycle": 7, "exit_code": None})
+        copy_dir = Path(self.tmp.name) / "copy"
+        (copy_dir / "state").mkdir(parents=True)
+        shutil.copy(ledger.path, copy_dir / "state" / "soil-ledger.jsonl")
+        self.assertEqual(self.supervisor._next_soil_cycle(copy_dir), 8)
 
 
 class SoilStateTests(unittest.TestCase):

@@ -343,5 +343,131 @@ class MalformedManifestShapeTests(unittest.TestCase):
             self.assertEqual(run.score, 100.0)
 
 
+def _five_checks():
+    return [{"id": f"c{i}", "input": f"in{i}", "cmp": "equals", "expect": f"out{i}"}
+            for i in range(5)]
+
+
+class ProposalValidationTests(unittest.TestCase):
+    """`probe_runner.validate_proposal()` —— §8.1.1 schema + I2 校验，
+    **冻结路径执行**（C1；`_checks_well_formed` 的 docstring 明写运行时
+    故意不查数量）。"""
+
+    def _proposal(self, **overrides):
+        proposal = {"id": "probe-x", "capability": "test capability",
+                    "organ": "classifier", "checks": _five_checks()}
+        proposal.update(overrides)
+        return proposal
+
+    def test_well_formed_proposal_passes(self):
+        probe_runner.validate_proposal(self._proposal())  # 不抛即通过
+
+    def test_fewer_than_five_checks_refused(self):
+        """I2：<5 个 check 在冻结点拒绝——这是 I2 唯一的执行点。"""
+        checks = [{"id": f"c{i}", "input": "a", "cmp": "equals", "expect": "a"}
+                  for i in range(4)]
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            probe_runner.validate_proposal(self._proposal(checks=checks))
+
+    def test_exactly_five_checks_is_the_boundary(self):
+        checks = [{"id": f"c{i}", "input": "a", "cmp": "equals", "expect": "a"}
+                  for i in range(5)]
+        probe_runner.validate_proposal(self._proposal(checks=checks))  # 不抛
+
+    def test_entrypoint_field_refused(self):
+        """§8.1.1 / CA-5：种子可写 schema 里没有 entrypoint，出现即拒绝。"""
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            probe_runner.validate_proposal(
+                self._proposal(entrypoint=["python3", "hack.py"]))
+
+    def test_missing_capability_refused(self):
+        proposal = self._proposal()
+        del proposal["capability"]
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            probe_runner.validate_proposal(proposal)
+
+    def test_missing_organ_refused(self):
+        proposal = self._proposal()
+        del proposal["organ"]
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            probe_runner.validate_proposal(proposal)
+
+    def test_missing_id_refused(self):
+        proposal = self._proposal()
+        del proposal["id"]
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            probe_runner.validate_proposal(proposal)
+
+    def test_malformed_check_refused(self):
+        checks = [{"id": f"c{i}", "input": "a", "cmp": "equals", "expect": "a"}
+                  for i in range(4)]
+        checks.append({"id": "c5", "input": "a", "cmp": "not-in-whitelist", "expect": "a"})
+        with self.assertRaises(probe_runner.ProbeProposalError):
+            probe_runner.validate_proposal(self._proposal(checks=checks))
+
+    def test_non_dict_manifest_refused(self):
+        for bad in (42, None, True, [1, 2, 3], "a string"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(probe_runner.ProbeProposalError):
+                    probe_runner.validate_proposal(bad)
+
+    def test_runtime_still_does_not_enforce_cardinality(self):
+        """反向断言：I2 的执行点只在冻结路径（`validate_proposal`），不在
+        `run_probe()`——加了 I2 不能把运行时也顺手锁死，那会把「这把尺不
+        合法」与「这把尺这次测不出来」混成同一个出口（`_checks_well_formed`
+        的 docstring 讲的正是这件事）。"""
+        checks = [{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}]
+        manifest = self._proposal(checks=checks, organ="echoer")
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = _make_tree(Path(tmp))  # 默认 organ_name="echoer"，与上面对齐
+            run = probe_runner.run_probe(manifest, tree)
+        self.assertIsNotNone(run)  # 仍然测得出来，只是只有 1 个 check
+
+
+class FreezeIntoVaultTests(unittest.TestCase):
+    """`probe_runner.freeze_into_vault()` —— C1 的 vault 写入半。"""
+
+    def _manifest(self, probe_id="probe-y"):
+        return {"id": probe_id, "capability": "test", "organ": "classifier",
+                "checks": _five_checks()}
+
+    def test_freeze_writes_manifest_and_returns_matching_sha(self):
+        manifest = self._manifest()
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            sha = probe_runner.freeze_into_vault(vault, manifest)
+            written = json.loads(
+                (vault / "internal" / "active" / "probe-y" / "probe.json")
+                .read_text(encoding="utf-8"))
+            self.assertEqual(written, manifest)
+            # 构造性保证：与 run_probe() 测量时用的是同一个 _manifest_sha()。
+            self.assertEqual(sha, probe_runner._manifest_sha(manifest))
+
+    def test_frozen_manifest_is_reachable_by_catalogue(self):
+        manifest = self._manifest()
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            probe_runner.freeze_into_vault(vault, manifest)
+            found = probe_runner.catalogue(vault)
+            self.assertEqual([m["id"] for m in found], ["probe-y"])
+
+    def test_freeze_refuses_duplicate_probe_id(self):
+        manifest = self._manifest()
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            probe_runner.freeze_into_vault(vault, manifest)
+            with self.assertRaises(probe_runner.ProbeProposalError):
+                probe_runner.freeze_into_vault(vault, manifest)
+            # 拒绝时不得改动已经冻结的那份内容。
+            found = probe_runner.catalogue(vault)
+            self.assertEqual(len(found), 1)
+
+    def test_freeze_refuses_unvalidated_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            with self.assertRaises(probe_runner.ProbeProposalError):
+                probe_runner.freeze_into_vault(vault, {"capability": "no id here"})
+
+
 if __name__ == "__main__":
     unittest.main()
