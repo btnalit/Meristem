@@ -545,6 +545,15 @@ soil recovery path（root 持有，不可递归）
 **`calibration` 标在封套上，不标在记录里**（§12.0.1）——判据要能一次读出，
 不必下钻到 `records[]`；标在记录里就等于要求每个读者自己去聚合，**那是下一个「声明了没断言」**。
 
+**且必须显式携带，不得靠缺省**：每个 fitness 类事件封套（`observed_fitness` / `accepted_fitness`）
+**必须显式写出 `calibration` 键**，缺键即 schema 违例（§10 pipeline 的两处 `append` 已按此写）。
+
+> **理由是 CA-7 会空真。** 断言「台账中不存在 `calibration: true` 的 `accepted_fitness`」
+> 在这个键从不存在时**恒为真**——**一条永远绿、也永远不检查任何东西的断言**。
+> §1.2 谓词里的 `ev.get("calibration") is not True` 是**读者侧的纵深，不是写者侧的许可**：
+> 靠 `.get` 的默认值兜住，是"碰巧不误判"，不是约定。
+> 本条是 v5.7 advisor 复审抓到的——**而它正是本轮新增文本自己引入的**，同一种病换了个位置。
+
 **种子不产出任何关于自身进步的断言字段。**
 
 ### 8.3 `state/soil-scoreboard.jsonl`（**只由土壤写入**）
@@ -804,7 +813,8 @@ def process_candidate(
         observed = fitness.pair(before, after, commit)              # S5
         oid = ctx.ledger.append({"kind": "observed_fitness", "records": observed,
                                  "candidate_state": "measured",
-                                 "promotion_state": "pending"})
+                                 "promotion_state": "pending",
+                                 "calibration": False})   # §8.2：必须显式，不得缺键
 
         if fitness.has_regression(observed):
             return finalize_nonpromotion(ctx, Outcome.REGRESSED, oid,
@@ -837,7 +847,8 @@ def process_candidate(
         merge_ff(repo, commit)
         ctx.scoreboard.write(after, commit)                         # S2
         ctx.ledger.append({"kind": "accepted_fitness", "source": oid,
-                           "counts_as_progress": True, "records": observed})
+                           "counts_as_progress": True, "records": observed,
+                           "calibration": False})       # §8.2：CA-7 的咬合面
         ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
         return Outcome.PROMOTED
 
@@ -985,6 +996,16 @@ ignition events: 2   (criterion §1.2, primary_probe=probe-classify-basic)
   cycle 5  commit def456  60.0 → 80.0
 excluded: 4 observed_fitness (未晋升) · 1 calibration · 1 anchor-only improvement
 ```
+
+**`excluded` 的归因规则（必须定死，否则同一事件会有两种报法）**：
+对每个未通过的事件，**按 §1.2 四个合取项的书写顺序求值，报第一个不满足的那一项**——
+
+```
+kind → calibration → counts_as_progress → primary_probe
+```
+
+**不是「所有不满足的项」，也不是任意一项。** 归因顺序不定死，两次运行的 `excluded` 行就可能
+不一样；而这一行是拿来做处置判断的（H1 否证 vs 修土壤），**读数不稳定的仪表比没有仪表更坏**。
 
 > **`excluded` 行不是调试信息，是判据的一部分。**
 > 只打印计数，读者无从判断「0 次」是种子没爬起来、还是判据把真实提升挡在门外了——
@@ -1593,7 +1614,7 @@ CI 无处附着，改动无从追溯，误删无从恢复。
 
 | 版本 | 来源 | 主要变更 |
 |---|---|---|
-| **v5.7** | **第五轮交接项收尾 + 顾问** | **5 项交接债全部关闭**：① `state/soil-*.jsonl` **前缀族**属主取代单文件名保护，scoreboard 定名 `state/soil-scoreboard.jsonl` 并补进权威矩阵 · ② Fitness 身份补三个版本维度，`pair()` 失配即 `unmeasured` · ③ `primary_probe` 必为 internal，**anchor 非对称**（回归即拒 / 上升不加分 / `overfit_suspected`）· ④ §1.2 成为出生判据的**全文唯一定义点**，`ignition-status` 为唯一求值点 · ⑤ **§17.8 SA/CA 断言集**——§17.5 与 §16 的机械化落地，并把 §17.7 冻结条款的执行机制从「记得遵守」换成 CI。**顺带勘误（6 处，均由本轮机械扫描抓到，非外部审查）**：删除从不存在的 `kind:"fitness"` · `probe_manifest_sha` 三名统一 · S2 与 §16 关于「种子读记分板」的直接矛盾 · §10 失败路径表列头 `kind` 拆为 `kind` + `outcome`（v5.5 的 T3 统一出口后未同步，照表实现会写出规格里没有的 kind）· C3 伪代码 `kind:"stale"` 改走 `finalize_nonpromotion()`（同一处病的第二个实例）· 补回本表缺失的 v5.6 行并改为降序 |
+| **v5.7** | **第五轮交接项收尾 + 顾问** | **5 项交接债全部关闭**：① `state/soil-*.jsonl` **前缀族**属主取代单文件名保护，scoreboard 定名 `state/soil-scoreboard.jsonl` 并补进权威矩阵 · ② Fitness 身份补三个版本维度，`pair()` 失配即 `unmeasured` · ③ `primary_probe` 必为 internal，**anchor 非对称**（回归即拒 / 上升不加分 / `overfit_suspected`）· ④ §1.2 成为出生判据的**全文唯一定义点**，`ignition-status` 为唯一求值点 · ⑤ **§17.8 SA/CA 断言集**——§17.5 与 §16 的机械化落地，并把 §17.7 冻结条款的执行机制从「记得遵守」换成 CI。**顺带勘误（6 处，均由本轮机械扫描抓到，非外部审查）**：删除从不存在的 `kind:"fitness"` · `probe_manifest_sha` 三名统一 · S2 与 §16 关于「种子读记分板」的直接矛盾 · §10 失败路径表列头 `kind` 拆为 `kind` + `outcome`（v5.5 的 T3 统一出口后未同步，照表实现会写出规格里没有的 kind）· C3 伪代码 `kind:"stale"` 改走 `finalize_nonpromotion()`（同一处病的第二个实例）· 补回本表缺失的 v5.6 行并改为降序。**另加 2 处 advisor 复审勘误**：§10 pipeline 两处 `append` 补显式 `calibration` 键——缺键会让 **CA-7 空真恒过**（一条永远绿、也永远不检查任何东西的断言），**而这个洞正是本轮新增文本自己引入的** · `ignition-status` 的 `excluded` 归因顺序定死为「第一个不满足的合取项」 |
 | **v5.6** | **第五轮外部独立审查** | **三个 P0**：`seed/` 目录前缀白名单穿透 S7 与 T5（改为文件级白名单）· 晋升三步非原子缺崩溃恢复（`promotion_intent` + `reconcile_on_start`）· 特殊 Task 未从 Change pipeline 分流；另修权威矩阵读权限错误。**本轮同时列出 5 项未落交接项——由 v5.7 关闭**（当时仅改了 header 版本号，未记入本表） |
 | v5.5 | 第四轮落地 | T1–T6 全部写进正文：pipeline 显式上下文 · merge 前二次 ancestry + `promotion_lock` · `finalize_nonpromotion()` 唯一非晋升出口 · `unfulfilled` 语义与额度 · `seed/feedback.json` 事实投影 |
 | v5.4 | 外部独立审查 ×4 | **隔离两档重切（最小完整性隔离提前到 P0-a）· 执行身份模型 · anchor rubric 同受执行契约 · Measurement 身份加三个版本维度 · `eligible_after` 带 namespace · 六项待办明标（T1–T6）· 一致性自检机械化** |
