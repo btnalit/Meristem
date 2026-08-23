@@ -39,6 +39,21 @@ from . import (
 )
 
 
+def _soil_user_exists() -> bool:
+    """§15.6 的 `soil` 账户是否真的存在。
+
+    不存在 -> 任何「土壤资产归 soil 属主」的断言都不可能成立,因为那个属主本身
+    不存在。区分「平台做不到」和「平台做得到但没建」很重要:前者是环境限制,
+    后者是**一步没做的工作**,而这两者对应完全不同的处置。
+    """
+    try:
+        import pwd
+        pwd.getpwnam("soil")
+        return True
+    except Exception:
+        return False
+
+
 def determine_security_assurance() -> tuple[str, str]:
     """Decide CA-2's SECURITY_ASSURANCE value + reason, per §17.8.3:
 
@@ -54,6 +69,18 @@ def determine_security_assurance() -> tuple[str, str]:
     reasons = []
     if os.name != "posix":
         reasons.append(f"platform has no POSIX UID separation (os.name={os.name!r})")
+    elif not _soil_user_exists():
+        # 第三种状态，§17.8.3 没有命名：平台**做得到**，只是还没建。
+        # 硬失败是错的 —— 这不是代码缺陷，是一步没做的部署工作。
+        # 静默通过更错。所以给它自己的取值，并把补救步骤写进原因里。
+        reasons.append(
+            "NOT_ESTABLISHED: platform is POSIX but the `soil` account from §15.6's "
+            "execution identity model does not exist, so no soil-owned asset can "
+            "possibly be soil-owned. This is a deployment step that has never been "
+            "done, not a defect in the code under test. Until it is, P0-a MUST NOT "
+            "be described as fully verified (§17.8.3). Remediation: create the "
+            "`soil` and `worker` accounts, chown soil assets to `soil`, and re-run."
+        )
     probe_runner = REPO_ROOT / "substrate" / "probe_runner.py"
     if not probe_runner.is_file():
         reasons.append(
