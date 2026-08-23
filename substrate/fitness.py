@@ -118,6 +118,11 @@ def degenerate_probes(ledger, window: int) -> list:
                     if probe_id is None or after is None:
                         continue
                     history.setdefault(probe_id, []).append(after)
+    if window <= 0:
+        # `scores[-0:]` 等于 `scores[0:]` —— 负零不存在，本该为空的切片变成了
+        # 整段历史，而随后的 `len(recent) < 0` 永不成立，样本量守卫被静默绕过。
+        # I3 的整个意义是「样本不足就不判定」，所以这里直接不判定。
+        return []
     suspects = []
     for probe_id, scores in history.items():
         recent = scores[-window:]

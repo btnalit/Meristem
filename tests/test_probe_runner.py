@@ -82,18 +82,45 @@ class ProbeRunScoreTests(unittest.TestCase):
         run = probe_runner.run_probe(_manifest(checks=checks), self.tree)
         self.assertEqual(run.checks_passed, 1)
 
-    def test_unregistered_named_regex_is_unmeasured_not_silently_true(self):
+    def test_unregistered_named_regex_yields_no_score_at_all(self):
         # 比较器白名单（§8.1.1）：regex 只接受土壤预置的命名正则，不接受字面量。
+        # 测不出来就**没有分数**（返回 None），不是 0 分 —— 见 test_..._never_scores_zero。
         checks = [{"id": "c1", "input": "a", "cmp": "regex", "expect": "not-registered"}]
-        run = probe_runner.run_probe(_manifest(checks=checks), self.tree)
-        self.assertEqual(run.checks_passed, 0)
-        self.assertEqual(run.detail[0]["result"], "unmeasured")
+        self.assertIsNone(probe_runner.run_probe(_manifest(checks=checks), self.tree))
 
-    def test_comparator_outside_whitelist_is_unmeasured(self):
+    def test_comparator_outside_whitelist_yields_no_score_at_all(self):
         checks = [{"id": "c1", "input": "a", "cmp": "startswith", "expect": "a"}]
-        run = probe_runner.run_probe(_manifest(checks=checks), self.tree)
-        self.assertEqual(run.checks_passed, 0)
-        self.assertEqual(run.detail[0]["result"], "unmeasured")
+        self.assertIsNone(probe_runner.run_probe(_manifest(checks=checks), self.tree))
+
+    def test_unmeasured_check_never_scores_zero(self):
+        """§15.6 的具体形态：crash 的 organ 记 0 分,修好它就读成一次 improved。
+
+        一条 check 测不出来 -> 整把尺没有可信分数 -> None（§10 的 UNMEASURED 出口）。
+        绝不能返回一个看起来合法的 0.0。
+        """
+        checks = [{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"},
+                  {"id": "c2", "input": "b", "cmp": "startswith", "expect": "b"}]
+        self.assertIsNone(probe_runner.run_probe(_manifest(checks=checks), self.tree))
+
+    def test_relative_tree_path_measures_the_same_as_absolute(self):
+        """argv 留相对路径而 cwd 切到 organ 目录,会得到翻倍的不存在路径 ->
+        每条 check 非零退出 -> 静默变成一次「测量」。绝对路径与相对路径必须同分。"""
+        checks = [{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}]
+        m = _manifest(checks=checks)
+        absolute = probe_runner.run_probe(m, os.path.abspath(self.tree))
+        cwd = os.getcwd()
+        os.chdir(os.path.dirname(os.path.abspath(self.tree)))
+        self.addCleanup(os.chdir, cwd)
+        relative = probe_runner.run_probe(m, os.path.basename(os.path.abspath(self.tree)))
+        self.assertIsNotNone(absolute)
+        self.assertIsNotNone(relative)
+        self.assertEqual(absolute.score, relative.score)
+
+    def test_malformed_manifest_returns_none_not_keyerror(self):
+        """一把坏尺不得连累其它尺：原先 KeyError 会从 run_all 的列表推导里炸出去,
+        把一轮测量整个打掉。"""
+        self.assertIsNone(probe_runner.run_probe({"id": "x", "checks": []}, self.tree))
+        self.assertIsNone(probe_runner.run_probe({"organ": "o", "checks": []}, self.tree))
 
     def test_version_dims_produced_at_measurement_time(self):
         checks = [{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}]
@@ -113,9 +140,11 @@ class SecretIsolationTests(unittest.TestCase):
             self.addCleanup(lambda: os.environ.pop("SENSENOVA_API_KEY", None))
             checks = [{"id": "c1", "input": "x", "cmp": "equals", "expect": "super-secret"}]
             run = probe_runner.run_probe(_manifest(organ="leaker", checks=checks), tree)
-            self.assertEqual(run.checks_passed, 0)
-            self.assertEqual(run.detail[0]["result"], "unmeasured")
-            self.assertNotIn("super-secret", json.dumps(run.detail))
+            # 读不到 secret -> organ 崩溃 -> unmeasured -> 整把尺无分数。
+            # 若这里返回 0.0，下一拍「修好」这个 organ 就会读成一次 improved。
+            self.assertIsNone(run)
+            # 而且 secret 绝不能出现在任何返回值里。
+            self.assertNotIn("super-secret", json.dumps(probe_runner.run_all(tree, tree) or []))
 
 
 class CatalogueTests(unittest.TestCase):

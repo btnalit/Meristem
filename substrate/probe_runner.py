@@ -101,6 +101,10 @@ def _invoke(entrypoint: Path, check_input) -> tuple[bool, str]:
     不是字面 JSON key）——因此只认「恰好一个字符串值的 JSON 对象」这一种形状，
     不认 key 的名字。这样跑不同 organ 不需要为每个 organ 的语义 key 改 runner。
     """
+    # 必须先转绝对路径。argv 里留相对路径而 cwd 又切到 organ 目录，Python 会拿新的
+    # cwd 去解析它 —— 得到一个翻倍的、不存在的路径，于是每个 check 都非零退出、
+    # 全部记 unmeasured。这不会报错，只会静默地把管道故障变成一次「测量」。
+    entrypoint = entrypoint.resolve()
     if not entrypoint.is_file():
         return False, "entrypoint missing"
     try:
@@ -165,12 +169,26 @@ def catalogue(vault) -> list:
     return manifests
 
 
-def run_probe(manifest: dict, tree) -> ProbeRun:
-    """input -> organ ABI -> output -> cmp(output, expect)。score = passed/len(checks)*100。"""
-    checks = manifest["checks"]
-    entrypoint = _entrypoint(Path(tree), manifest["organ"])
+def run_probe(manifest: dict, tree):
+    """input -> organ ABI -> output -> cmp(output, expect)。score = passed/len(checks)*100。
+
+    **返回 None 表示这把尺这一次测不出来**（§10 pipeline 的 `before is None or
+    after is None` 出口，Outcome.UNMEASURED）。两种情形返回 None：
+
+    1. manifest 缺必需字段 —— 坏的 manifest 不得连累其它探针（原先直接 KeyError,
+       会从 run_all 的列表推导里炸出去,一把坏尺让整轮测量全灭）。
+    2. **任何一个 check 记了 unmeasured** —— 见下方那段。
+    """
+    try:
+        checks = manifest["checks"]
+        organ = manifest["organ"]
+        probe_id = manifest["id"]
+    except KeyError:
+        return None
+    entrypoint = _entrypoint(Path(tree), organ)
     detail = []
     passed = 0
+    unmeasured = 0
     for check in checks:
         ok, out = _invoke(entrypoint, check["input"])
         if ok:
@@ -181,21 +199,44 @@ def run_probe(manifest: dict, tree) -> ProbeRun:
         if not ok:
             # 非法输出（含 organ 因读不到 secrets 而崩溃）—— 记 unmeasured，不是 fail/0。
             detail.append({"id": check["id"], "result": "unmeasured", "reason": out})
+            unmeasured += 1
             continue
         if hit:
             passed += 1
             detail.append({"id": check["id"], "result": "pass"})
         else:
             detail.append({"id": check["id"], "result": "fail", "got": out})
+    if unmeasured:
+        # **一条 check 测不出来，这把尺这一次就没有可信分数。**
+        #
+        # 原先只把 unmeasured 记进 detail，score 照样按 passed/total 算 —— 而
+        # fitness.pair() 只看得到 score。于是 5 条全 unmeasured 会得到一个漂亮的
+        # 0.0，被下游当成一次合法测量。§15.6 正是点名这件事：一个 crash 的 organ
+        # 若记 0 分，后续把它修好会读成一次 improved —— **凭空制造出点火判据要的
+        # 那个事件**。unmeasured 记录了却不兑现，就是 runner 自己身上的
+        # 「声明了没断言」。
+        return None
     total = len(checks)
     score = (passed / total * 100) if total else 0.0
     return ProbeRun(
-        probe_id=manifest["id"], score=score, checks_passed=passed, checks_total=total,
+        probe_id=probe_id, score=score, checks_passed=passed, checks_total=total,
         detail=detail, probe_manifest_sha=_manifest_sha(manifest),
         tree_sha=_tree_sha(Path(tree)),
         runner_version=RUNNER_VERSION, execution_policy_version=EXECUTION_POLICY_VERSION,
     )
 
 
-def run_all(tree, vault) -> list:
-    return [run_probe(manifest, tree) for manifest in catalogue(vault)]
+def run_all(tree, vault):
+    """全套探针。**任一把测不出来就整体返回 None**（§10：before/after 为 None → UNMEASURED）。
+
+    不做「跳过坏的那把、把好的那些凑成一批」——那样 before 与 after 可能覆盖不同的
+    探针集合，两边根本不可比，而 fitness.pair() 无从察觉。宁可整轮记 unmeasured
+    （机制故障，不计入拒绝额度），也不要一批悄悄换了尺的分数。
+    """
+    runs = []
+    for manifest in catalogue(vault):
+        run = run_probe(manifest, tree)
+        if run is None:
+            return None
+        runs.append(run)
+    return runs

@@ -39,7 +39,7 @@ def _git(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
 
 
-def run_cycle(task: str | None, cycle: int, *, workdir: pathlib.Path | None = None,
+def run_cycle(task: str | None, cycle: int | None, *, workdir: pathlib.Path | None = None,
               config: dict | None = None) -> Result:
     """Take a task -> generate a change -> commit it in the worktree ->
     return the candidate. Does not measure, does not judge, does not write
@@ -75,7 +75,8 @@ def run_cycle(task: str | None, cycle: int, *, workdir: pathlib.Path | None = No
     _git(["add", *changed], cwd=root)
     commit = _git(
         ["-c", "user.email=seed@meristem.local", "-c", "user.name=meristem-seed",
-         "commit", "-m", f"seed cycle {cycle}: {task[:72]}"],
+         "commit", "-m",
+         f"seed cycle {cycle if cycle is not None else 'unknown'}: {task[:72]}"],
         cwd=root,
     )
     if commit.returncode != 0:
@@ -89,7 +90,12 @@ def run_cycle(task: str | None, cycle: int, *, workdir: pathlib.Path | None = No
 def _cmd_cycle() -> int:
     facts = ReadOnlyFacts.load(SEED_DIR / "feedback.json")
     task = take_task(SEED_DIR / "agenda.md", facts)
-    cycle = int(os.environ.get("MERISTEM_SOIL_CYCLE", "0") or "0")
+    # 拍号归土壤（种子不持有自己的时间基准 —— 那是 S1 脉搏的一部分）。
+    # 土壤尚未注入时**不要伪造一个 0**：每个 commit 都标成 "cycle 0" 是个静默的
+    # 错误标签，而错误标签比没有标签更坏——它看起来像数据。
+    # 未知就写 unknown，等 supervisor 接上（§13.3 的波次 2 改动）。
+    raw = os.environ.get("MERISTEM_SOIL_CYCLE", "").strip()
+    cycle = int(raw) if raw.isdigit() else None
     return 0 if run_cycle(task, cycle).ok else 1
 
 

@@ -320,6 +320,13 @@ class SA5IgnitionPredicateImplementationExists(unittest.TestCase):
     substrate/pipeline.py lands in wave 2.
     """
 
+    # 波次 2 落地 substrate/pipeline.py 之前，本条必然失败 —— 判据的唯一实现点还不存在。
+    #
+    # 用 expectedFailure 而不是 skip：skip 会让「还没做」和「不适用」长得一样。
+    # 更要紧的是反向信号 —— 一旦 pipeline.py 落地让它通过，unittest 会报
+    # **unexpected success**，那正是「该摘掉这个标记了」的提醒。skip 不会提醒任何人，
+    # 于是标记会一直挂着，而这份规格自己就写过：`advance()` 零调用点就是这么活过 400 拍的。
+    @unittest.expectedFailure
     def test_sa5_is_ignition_event_implementation_matches_spec(self):
         substrate_dir = REPO_ROOT / "substrate"
         candidates = sorted(substrate_dir.glob("*.py")) if substrate_dir.is_dir() else []
