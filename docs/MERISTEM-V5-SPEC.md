@@ -1022,7 +1022,8 @@ def finalize_nonpromotion(ctx, outcome, source, why, *, quota) -> Outcome:
 **约束（缺一不可）：**
 
 - 走专用入口 `manual-cycle --calibration`
-- **事件封套**带 `"calibration": true`（标在封套上，不标在 `records[]` 里——§8.2）
+- **`observed_fitness` 封套**带 `"calibration": true`（标在封套上，不标在 `records[]` 里——§8.2）；
+  **`accepted_fitness` 的 `calibration` 恒为 `False`**——校准强制回滚、永不 merge，**结构上产不出该事件**（§10）
 - **永不进记分板、永不计入 `improved` 统计**
 - **测量后强制回滚树**
 
