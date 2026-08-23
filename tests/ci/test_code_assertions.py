@@ -450,17 +450,39 @@ class CA9ProbeManifestShaMatchesFrozenRegistration(unittest.TestCase):
     the soil-private frozen registry) required -- SKIPs pre-wave-2."""
 
     def test_ca9_probe_manifest_sha_matches(self):
-        if not LEDGER_PATH.exists():
-            print("CA-9: SKIPPED (no ledger yet)")
-            self.skipTest("no ledger yet")
+        # **不再用「no ledger yet」当第二次跳过的理由。**
+        # 上一版无论台账在不在都会再跳一次,并且第二次仍打印 "no ledger yet" ——
+        # 一句在台账出现之后必然为假的话。真正的阻塞条件不是台账缺席,
+        # 而是**冻结登记没有落盘路径**(§16: internal probe 冻结登记属土壤私有,
+        # 本波次未定义 on-disk 位置), 没有它就没有东西可以和 probe_manifest_sha 比对。
+        # 说清楚真实的阻塞条件, 断言才可能在条件解除时自己醒来。
+        registry_candidates = [REPO_ROOT / "soil" / "frozen-probe-registry.json"]
+        present = [p for p in registry_candidates if p.exists()]
+        if not present:
+            reason = ("frozen probe registry not on disk yet "
+                      f"(looked for: {[str(p.relative_to(REPO_ROOT)) for p in registry_candidates]})")
+            print(f"CA-9: SKIPPED ({reason})")
+            self.skipTest(reason)
             return
-        # The frozen probe registry is soil-private (§16: internal probe
-        # 冻结登记 -- Seed 读=摘要, Seed 写=✗) and has no defined on-disk path
-        # in this wave; without it there is nothing to compare
-        # probe_manifest_sha against, even with a ledger present.
-        reason = "no ledger yet"
-        print(f"CA-9: SKIPPED ({reason})")
-        self.skipTest(reason)
+        if not LEDGER_PATH.exists():
+            print("CA-9: SKIPPED (registry present but no ledger yet)")
+            self.skipTest("registry present but no ledger yet")
+            return
+
+        registry = json.loads(present[0].read_text(encoding="utf-8"))
+        frozen = {pid: entry.get("frozen_probe_manifest_sha")
+                  for pid, entry in registry.items()} if isinstance(registry, dict) else {}
+        failures = []
+        for row in load_jsonl(LEDGER_PATH):
+            for record in row.get("records", []) or []:
+                pid = record.get("probe_id")
+                if pid in frozen and record.get("probe_manifest_sha") != frozen[pid]:
+                    failures.append(
+                        f"{pid}: measurement probe_manifest_sha="
+                        f"{record.get('probe_manifest_sha')!r} != frozen registration "
+                        f"{frozen[pid]!r}")
+        print(f"CA-9: checked {len(frozen)} frozen registration(s)")
+        self.assertEqual(failures, [], "CA-9 FAIL: " + "; ".join(failures))
 
 
 class CA10PromotionChainFieldCorrespondence(unittest.TestCase):
@@ -483,6 +505,24 @@ class CA10PromotionChainFieldCorrespondence(unittest.TestCase):
         scoreboard_by_commit = {r["commit"]: r for r in scoreboard_rows}
 
         failures = []
+
+        # 基数：每个 commit **恰好一条** accepted_fitness。
+        #
+        # 上一版只验「每条 accepted 都配得上一条 intent/committed/scoreboard」,
+        # 从不验条数 —— 而一条重复的 accepted 每一项都配得上，静默通过。
+        # 2026-08-23 的独立审查正是这样复现出「一次晋升被数成两次点火」的:
+        # 崩溃落在 accepted_fitness 与 promotion_committed 之间(一行的窗口,
+        # 也正是 reconcile 存在的理由), reconcile 补写时又追加了一条。
+        # **§1.2 的计数是整个 P0-a 的唯一出口, 多数一次就是宣布一次没发生的点火。**
+        counts_by_commit: dict = {}
+        for af in accepted:
+            key = af.get("commit")
+            counts_by_commit[key] = counts_by_commit.get(key, 0) + 1
+        for commit, count in sorted(counts_by_commit.items(), key=lambda kv: str(kv[0])):
+            if count > 1:
+                failures.append(
+                    f"commit={commit}: {count} accepted_fitness events (must be exactly 1)")
+
         for af in accepted:
             commit = af.get("commit")
             intent = intents.get(commit)
@@ -529,12 +569,37 @@ class CA11ManualAndPanelProduceIdenticalEventSequences(unittest.TestCase):
     """
 
     def test_ca11_manual_panel_event_parity(self):
+        # **真实的阻塞条件是「台账里还没有两种 authority 各一次晋升」**,
+        # 不是「台账不存在」。上一版无论如何都会再跳一次并仍打印 "no ledger yet" ——
+        # 台账一出现那句话就是假的, 而它永远不会自己醒来。
+        #
+        # 逐字对等的**构造性**版本由 tests/test_pipeline.py::ManualPanelParityTests
+        # 在受控仓库里跑(两次独立全流程, 固定时间与身份使 commit sha 可复现);
+        # 本条断言的职责是在**真实台账**上守同一条性质。
         if not LEDGER_PATH.exists():
             print("CA-11: SKIPPED (no ledger yet)")
             self.skipTest("no ledger yet")
             return
-        print("CA-11: SKIPPED (no ledger yet)")
-        self.skipTest("no ledger yet")
+        rows = load_jsonl(LEDGER_PATH)
+        by_authority: dict = {}
+        for row in rows:
+            if row.get("kind") == "promotion_intent" and "verdict_authority" in row:
+                by_authority.setdefault(row["verdict_authority"], []).append(row)
+        missing = [a for a in ("manual", "panel") if a not in by_authority]
+        if missing:
+            reason = f"ledger has no promotion under authority {missing} yet"
+            print(f"CA-11: SKIPPED ({reason})")
+            self.skipTest(reason)
+            return
+
+        ignore = {"ts", "event_id", "source", "commit", "parent", "verdict_authority"}
+        shapes = {a: {frozenset(k for k in rows_[0] if k not in ignore)}
+                  for a, rows_ in by_authority.items()}
+        print(f"CA-11: comparing manual vs panel promotion_intent shapes")
+        self.assertEqual(
+            shapes["manual"], shapes["panel"],
+            "CA-11 FAIL: manual and panel promotion_intent events differ in more than "
+            "verdict_authority")
 
 
 class CA12ProjectionFreshness(unittest.TestCase):

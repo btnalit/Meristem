@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,11 +127,21 @@ class PromotionLock:
         self.timeout = timeout
         self._fd = None
         self._depth = 0
+        self._owner = None
 
     def __enter__(self) -> "PromotionLock":
-        if self._depth:
+        # **重入必须认人。** 上一版只看 `_depth`：另一个线程在持有者的临界区内
+        # 调同一个实例的 `__enter__`，会被当成重入直接放行 —— 互斥被打穿
+        # （2026-08-23 对抗性审查实测赢下这个竞态）。文件锁本身是跨进程的，
+        # 但同进程内的第二个线程根本走不到 `flock` 那一步就返回了。
+        # 当前调用点是单线程 CLI，够不到它；而 P0-c 的无人值守守护进程够得到。
+        if self._depth and self._owner == threading.get_ident():
             self._depth += 1
             return self
+        if self._depth:
+            raise SoilStateError(
+                f"promotion lock 已被本进程另一线程（{self._owner}）持有；"
+                "同一实例不得跨线程重入 —— 那会绕过互斥。")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
         deadline = time.monotonic() + self.timeout
@@ -146,6 +157,7 @@ class PromotionLock:
                 time.sleep(0.05)
         self._fd = fd
         self._depth = 1
+        self._owner = threading.get_ident()
         return self
 
     def __exit__(self, *exc) -> None:
@@ -157,6 +169,7 @@ class PromotionLock:
         finally:
             os.close(self._fd)
             self._fd = None
+            self._owner = None
 
 
 # ---------------------------------------------------------------------------
@@ -212,18 +225,58 @@ def _content_id(record: dict) -> str:
     return "ev-" + hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
 
 
-class Ledger(_AppendOnlyJsonl):
-    """`state/soil-ledger.jsonl` —— 唯一权威台账，只由土壤写入（§8.2 / C4）。"""
+def _validate_fitness_envelope(kind: str, event: dict) -> None:
+    """六个强制字段的**存在性与取值有效性**（§8.2）。
 
-    def append(self, event: dict) -> str:
-        kind = event.get("kind")
+    只查「键在不在」是不够的。2026-08-23 的对抗性审查用
+    `task_id=None` / `generation=None` / `soil_cycle="not-a-number"` 写进了一条
+    键全在、值全是垃圾的 `accepted_fitness`，而 §1.2 的谓词按设计**不看这三个字段**
+    （它是单行纯函数），于是那条垃圾事件被判为一次合法点火。
+    本模块 docstring 自称「写入侧拒绝，不留给读取侧发现」——
+    那句话此前只对缺键成立。**声明了没断言，就是这个项目的家族病本身。**
+    """
+    missing = [f for f in MANDATORY_FITNESS_FIELDS if f not in event]
+    if missing:
+        raise SoilStateError(
+            f"{kind} 缺少 §8.2 强制字段 {missing}；缺键即台账损坏，写入侧拒绝。")
+    if not isinstance(event["task_id"], str) or not event["task_id"]:
+        raise SoilStateError(f"{kind}.task_id 必须是非空字符串，收到 {event['task_id']!r}")
+    if not isinstance(event["primary_probe"], str) or not event["primary_probe"]:
+        raise SoilStateError(
+            f"{kind}.primary_probe 必须是非空字符串，收到 {event['primary_probe']!r}")
+    if not isinstance(event["generation"], str) or not event["generation"]:
+        raise SoilStateError(f"{kind}.generation 必须是非空字符串，收到 {event['generation']!r}")
+    if isinstance(event["soil_cycle"], bool) or not isinstance(event["soil_cycle"], int):
+        raise SoilStateError(f"{kind}.soil_cycle 必须是整数，收到 {event['soil_cycle']!r}")
+    if not isinstance(event["calibration"], bool):
+        raise SoilStateError(f"{kind}.calibration 必须是 bool，收到 {event['calibration']!r}")
+    if not isinstance(event["counts_as_progress"], bool):
+        raise SoilStateError(
+            f"{kind}.counts_as_progress 必须是 bool，收到 {event['counts_as_progress']!r}")
+    records = event.get("records")
+    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+        raise SoilStateError(f"{kind}.records 必须是对象数组，收到 {type(records).__name__}")
+
+
+class Ledger(_AppendOnlyJsonl):
+    """`state/soil-ledger.jsonl` —— 唯一权威台账，只由土壤写入（§8.2 / C4）。
+
+    **校验落在 `_append_raw` 上，不落在 `append` 上。** 上一版把校验放在 `append`，
+    而 `_append_raw` 继承自共用基类且完全不校验 —— 于是
+    `ctx.ledger._append_raw({...})` 一行就能写出一条被 §1.2 判据认可、
+    却从未测量过也从未 merge 过的 `accepted_fitness`。
+    **一道能被同一个对象上的另一个方法绕开的闸门，不是闸门。**
+    """
+
+    def _append_raw(self, record: dict) -> None:
+        kind = record.get("kind")
         if not kind:
             raise SoilStateError("台账事件必须带 kind（§8.2 封套）")
         if kind in FITNESS_KINDS:
-            missing = [f for f in MANDATORY_FITNESS_FIELDS if f not in event]
-            if missing:
-                raise SoilStateError(
-                    f"{kind} 缺少 §8.2 强制字段 {missing}；缺键即台账损坏，写入侧拒绝。")
+            _validate_fitness_envelope(kind, record)
+        super()._append_raw(record)
+
+    def append(self, event: dict) -> str:
         record = {"ts": _utcnow()}
         record.update(event)
         record["event_id"] = _content_id(record)

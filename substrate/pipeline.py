@@ -8,7 +8,10 @@ P0-a 传 `manual_prompt`（人敲 y/n），P0-b 换成真 panel，**其余代码
 
 ---
 
-**本模块两处偏离 §10 的字面文本，都是实现时才暴露的规格缺口，走 §18 勘误行（v5.10）。**
+**本模块三处偏离 §10 的字面文本，都是实现时才暴露的规格缺口，走 §18 勘误行（v5.10）。**
+
+（原文写「两处」而实际有三处 —— 独立审查 2026-08-23 指出。一句自称完整的
+清单少一项，与本文档反复点名的「声明了没断言」是同一种东西，只是发生在注释里。）
 
 **① `Outcome` 多出三个表以外的取值。** §10 的失败路径表列的是 `process_candidate`
 **判决路径**的六个出口。但另有三种情形结构上不属于那六个：
@@ -27,6 +30,12 @@ panel accept 产生逐字相同的事件序列，仅 `verdict.authority` 取值�
 authority 落在 `promotion_intent` 上——判决之后、merge 之前的第一条事件。
 **已知未闭合**：拒绝路径（`promotion_outcome`）目前不带 authority，
 因此 CA-11 只覆盖 accept 一侧，与它自己的措辞（「manual accept 与 panel accept」）一致。
+
+**③ `evaluate_task(task, observed)` 不接 `ctx`。** §10.2 的伪代码写的是
+`task_evaluator.evaluate(task, observed, ctx)`，而 §10 的土壤模块清单里没有
+`task_evaluator.py` 这个模块 —— 它只在那一行调用里出现过。判定不需要 `ctx`
+（`expected` / `minimum_delta` / `primary_probe` 全在 Task 声明上），
+故内联于本模块并去掉那个未被使用的参数。
 """
 from __future__ import annotations
 
@@ -60,6 +69,10 @@ CANARY_TIMEOUT_SECONDS = 300
 
 class TaskDeclarationError(ValueError):
     """Task 声明违反 §8.1.4 的硬约束，土壤拒绝该声明。"""
+
+
+class SoilIsolationError(RuntimeError):
+    """土壤无法在本环境下兑现 §15.6 要求的隔离，**拒绝继续**而不是降级运行。"""
 
 
 class Outcome(enum.Enum):
@@ -177,10 +190,19 @@ def materialize_readonly_tree(repo, sha: str, dest) -> Path:
                                             ["git", "archive", sha],
                                             archive.stdout, archive.stderr)
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tf:
-        try:
-            tf.extractall(dest, filter="data")
-        except TypeError:  # Python < 3.12 没有 filter 参数
-            tf.extractall(dest)
+        # **没有「悄悄降级成不设防」这个选项。** 候选树里可以合法地存在一个
+        # git symlink 条目（mode 120000，target 任意），`extractall` 在没有
+        # `filter="data"` 时会照着它把链接建出来 —— 于是「物化一棵只读树」变成了
+        # 一次任意路径写入/读出。旧写法用 `except TypeError` 静默退回到裸
+        # `extractall()`：在 Python < 3.12 上**保护为零，且没有任何提示**，
+        # 而仓库从未声明过最低 Python 版本。宁可拒绝运行，也不要一条
+        # 「看起来在防护、实际什么都没防」的路径。
+        if sys.version_info < (3, 12):
+            raise SoilIsolationError(
+                "materialize_readonly_tree 需要 Python >= 3.12 的 tarfile "
+                f"filter='data'；当前 {sys.version_info.major}.{sys.version_info.minor} "
+                "无法阻止候选树里的 symlink 条目逃逸出目标目录。")
+        tf.extractall(dest, filter="data")
     return dest
 
 
@@ -191,7 +213,12 @@ def canary(repo, commit: str, tree) -> tuple:
     自己的 before/after 测量（S2）；重跑一遍会让同一件事有两个判定处，
     **而两个判定处迟早不一致** —— 这正是 §17.5 点名的那种漂移。
     """
-    env = {**os.environ, "PYTHONPATH": str(tree)}
+    # **绝不 `{**os.environ, ...}`。** §15.6 点名了 `canary(commit)`：它执行候选代码，
+    # 与 organ 同受不可信执行契约约束。而 C-65 保证 supervisor 进程上一定有
+    # `MERISTEM_VAULT` —— 整份环境传下去，等于把 anchor vault 的路径亲手交给种子控制的
+    # 代码，**把上午刚立起来的那道门从旁边绕开**。正确写法本就在同一个仓库里
+    # （`probe_runner._sandboxed_env()`），这里复用它，不另写一份。
+    env = {**probe_runner._sandboxed_env(), "PYTHONPATH": str(tree)}
     try:
         result = subprocess.run([sys.executable, "-m", "meristem.loop", "selftest"],
                                 cwd=str(tree), capture_output=True, text=True,
@@ -257,12 +284,23 @@ def evaluate_task(task: Task, observed: list) -> tuple:
 # ---------------------------------------------------------------------------
 # 流水线
 # ---------------------------------------------------------------------------
-def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota: bool) -> Outcome:
-    """**唯一的非晋升出口。** 任何没有 `accepted_fitness` 的候选，都不得被统计为 improved。"""
+def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota=None) -> Outcome:
+    """**唯一的非晋升出口。** 任何没有 `accepted_fitness` 的候选，都不得被统计为 improved。
+
+    额度归属**以 `COUNTS_AGAINST_QUOTA` 为准**，调用点传的 `quota` 只当交叉校验。
+    原先那张表是装饰性的：每个调用点各写一个字面量，表本身没有任何调用者，
+    唯一「验证」它的测试还是拿表跟自己比。**一张没人读的表就是下一次漂移的起点** ——
+    改了调用点没改表（或反过来）不会有任何东西出声。现在两边不一致会当场抛错。
+    """
+    expected = COUNTS_AGAINST_QUOTA[outcome]
+    if quota is not None and quota != expected:
+        raise ValueError(
+            f"{outcome.name} 的额度归属与 COUNTS_AGAINST_QUOTA 不一致："
+            f"调用点写 {quota}，表写 {expected}（§10 失败路径表）")
     ctx.ledger.append({"kind": "promotion_outcome", "outcome": outcome.name,
                        "source": source, "why": why,
                        "counts_as_progress": False,
-                       "counts_against_task_quota": quota})
+                       "counts_against_task_quota": expected})
     return outcome
 
 
@@ -286,8 +324,18 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
 
         parent = git(repo, "rev-parse", commit + "^")
         with tempfile.TemporaryDirectory(prefix="meristem-measure-") as tmp:
-            parent_tree = materialize_readonly_tree(repo, parent, Path(tmp) / "parent")
-            candidate_tree = materialize_readonly_tree(repo, commit, Path(tmp) / "candidate")
+            try:
+                parent_tree = materialize_readonly_tree(repo, parent, Path(tmp) / "parent")
+                candidate_tree = materialize_readonly_tree(repo, commit, Path(tmp) / "candidate")
+            except SoilIsolationError:
+                # 环境兑现不了隔离契约 —— 这不是「这个候选测不出来」，
+                # 而是土壤自己不该继续跑。原样上抛，让操作员看见。
+                raise
+            except Exception as exc:  # noqa: BLE001 -- 恶意/损坏的候选树不得炸穿流水线
+                # 例如候选树里带一个逃逸目标的 symlink 条目：extractall 会拒绝并抛错。
+                # 那是「这一次量不出来」（机制故障，不计额度），不是一个 traceback。
+                return finalize_nonpromotion(ctx, Outcome.UNMEASURED, None,
+                                             f"cannot materialize trees: {exc}", quota=False)
 
             before = probe_runner.run_all(parent_tree, ctx.vault)      # S2
             after = probe_runner.run_all(candidate_tree, ctx.vault)
@@ -379,6 +427,28 @@ def _runs_from_records(records: list) -> list:
     ) for r in records]
 
 
+def _main_contains(repo, commit: str):
+    """main 是否已含该 commit。`True` / `False` / **`None` = 判定不了**。
+
+    `git merge-base --is-ancestor` 用退出码区分三件事，而不是两件：
+    **0 = 是祖先，1 = 不是祖先，其它（实测 128）= 根本没能判定**
+    （commit 名字解析不了：被 gc 掉、仓库损坏、拿错了仓库）。
+    把「非 0 一律当作不是祖先」会把「判定不了」报成 `ABANDONED` —— 一个**确信的否定**，
+    而真实状态是未知。规格反复强调这两者对应完全不同的处置
+    （H1 否证 vs 修土壤），读数不稳定的仪表比没有仪表更坏。
+    """
+    try:
+        result = subprocess.run(["git", "merge-base", "--is-ancestor", commit, "HEAD"],
+                                cwd=str(repo), capture_output=True)
+    except OSError:
+        return None
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    return None
+
+
 def reconcile_on_start(repo, ctx) -> list:
     """supervisor 启动时必跑：有 `promotion_intent` 而无 `promotion_committed` 的，
     核对 main 是否已含该 commit —— 已含则补写 scoreboard/accepted_fitness，
@@ -391,43 +461,64 @@ def reconcile_on_start(repo, ctx) -> list:
     repo = Path(repo)
     rows = ctx.ledger.read()
     committed = {r.get("commit") for r in rows if r.get("kind") == "promotion_committed"}
+    # **已存在的 accepted_fitness 必须单独记账。** 晋升是三步非原子操作，
+    # 崩溃可能正好落在 accepted_fitness 与 promotion_committed 之间 —— 那是一行的
+    # 窗口，而且**正是本函数存在的理由**。只看 promotion_committed 在不在，
+    # 会把「差最后一条」误判成「什么都没写」，于是补写出第二条 accepted_fitness：
+    # 同一次晋升被 §1.2 的判据数成两次点火。CA-10 抓不到它（它只验每条 accepted
+    # 都有配对的 intent/committed/scoreboard，**从不验基数**），
+    # 而那个数字是整个 P0-a 的唯一出口。
+    accepted_sources = {r.get("source") for r in rows if r.get("kind") == "accepted_fitness"}
     by_id = {r.get("event_id"): r for r in rows}
     resolved = []
 
     for intent in [r for r in rows if r.get("kind") == "promotion_intent"]:
         commit = intent.get("commit")
+        source = intent.get("source")
         if commit in committed:
             continue
         with ctx.promotion_lock:
-            try:
-                merged = subprocess.run(
-                    ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
-                    cwd=str(repo), capture_output=True).returncode == 0
-            except OSError as exc:
+            merged = _main_contains(repo, commit)
+            if merged is None:
                 resolved.append((commit, finalize_nonpromotion(
-                    ctx, Outcome.SOIL_RECOVERY, intent.get("source"),
-                    f"cannot decide whether main contains {commit}: {exc}", quota=False)))
+                    ctx, Outcome.SOIL_RECOVERY, source,
+                    f"cannot decide whether main contains {commit}", quota=False)))
                 continue
-
             if not merged:
                 resolved.append((commit, finalize_nonpromotion(
-                    ctx, Outcome.ABANDONED, intent.get("source"),
+                    ctx, Outcome.ABANDONED, source,
                     "promotion_intent written but main does not contain the commit",
                     quota=False)))
                 continue
 
-            observed_event = by_id.get(intent.get("source"))
+            if source in accepted_sources:
+                # accepted_fitness 已经写过了，缺的只是收尾那一条。**只补收尾。**
+                ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
+                committed.add(commit)
+                resolved.append((commit, Outcome.PROMOTED))
+                continue
+
+            observed_event = by_id.get(source)
             if observed_event is None:
                 resolved.append((commit, finalize_nonpromotion(
-                    ctx, Outcome.SOIL_RECOVERY, intent.get("source"),
+                    ctx, Outcome.SOIL_RECOVERY, source,
                     "main contains the commit but its observed_fitness event is missing",
+                    quota=False)))
+                continue
+            if observed_event.get("calibration") is True:
+                # §12.0.1 的纵深第二层：校准结构上到不了 promotion_intent。
+                # 真到了，说明有人给校准开了一条 merge 的路 —— **不得把它洗成
+                # 一条 calibration:false 的 accepted_fitness**，那正是判据要挡的东西。
+                resolved.append((commit, finalize_nonpromotion(
+                    ctx, Outcome.SOIL_RECOVERY, source,
+                    "calibration run reached promotion_intent -- refusing to launder it",
                     quota=False)))
                 continue
 
             records = observed_event.get("records", [])
             ctx.scoreboard.write(_runs_from_records(records), commit, intent.get("parent"))
             ctx.ledger.append({
-                "kind": "accepted_fitness", "source": intent.get("source"),
+                "kind": "accepted_fitness", "source": source,
                 "commit": commit, "records": records,
                 # 身份字段从当时那条 observed 事件抄回，**不从当前 ctx 取** ——
                 # 崩溃后重启的 ctx 拿的是新的拍号，用它会把旧事实记成新拍的事。
@@ -438,6 +529,10 @@ def reconcile_on_start(repo, ctx) -> list:
                 "calibration": False,
                 "counts_as_progress": True})
             ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
+            # 本次调用内新写的事实要立刻并进账本快照，否则同一批里的第二条
+            # intent 会对着一份过期快照重跑同样的补写。
+            accepted_sources.add(source)
+            committed.add(commit)
             resolved.append((commit, Outcome.PROMOTED))
     return resolved
 

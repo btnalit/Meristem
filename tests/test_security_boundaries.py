@@ -11,6 +11,7 @@
 """
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -86,6 +87,56 @@ class SeedWriteBoundaryTests(unittest.TestCase):
         with self.assertRaises(engine.PathViolation):
             self._apply()
         self.assertEqual(self.protected.read_text(encoding="utf-8"), "SOIL-OWNED")
+
+    def test_ntfs_junction_directory_cannot_be_written_through(self):
+        """**junction 不是 symlink，`is_symlink()` 看不见它。**
+
+        2026-08-23 对抗性审查用它绕过了本守卫的上一版：把 `seed/probe-proposals/`
+        （一个合法的 SEED_WRITABLE 目录前缀）做成指向 `soil/` 的 junction，
+        写入直接落在土壤私有面上。junction 与真 symlink 的关键差别是
+        **创建它不需要任何特权** —— Windows 上真 symlink 要管理员或开发者模式，
+        junction 不要。所以它是这条路上更容易走的那一扇门，而不是更难的。
+        """
+        if sys.platform != "win32":
+            self.skipTest("junction 是 NTFS 概念（非缺陷，是平台差异）")
+        junction = self.root / "seed" / "probe-proposals"
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction),
+                               str(self.root / "soil")], capture_output=True)
+        if made.returncode != 0:
+            self.skipTest("此环境不允许创建 junction")
+        self.assertFalse(junction.is_symlink(),
+                         "前提变了：junction 现在被 is_symlink() 报告了")
+        self.assertTrue(engine._is_link(junction), "_is_link 必须认出 reparse point")
+        with self.assertRaises(engine.PathViolation):
+            self._apply(rel="seed/probe-proposals/report-facts.json")
+        self.assertEqual(self.protected.read_text(encoding="utf-8"), "SOIL-OWNED")
+
+    def test_write_refuses_when_target_identity_changes_after_the_check(self):
+        """TOCTOU：检查与 open 之间目标被换掉，必须在**截断之前**发现。
+
+        Windows 没有 `O_NOFOLLOW`，静态检查与 open 不是原子的。修法是
+        「不带 O_TRUNC 打开 → 比对 fd 身份 → 再 ftruncate」，
+        所以即便竞态赢了，被指向的文件也不会先被清空。
+        这里直接对 `_safe_write` 注入一次身份变化来断言那条分支。
+        """
+        victim = self.root / "seed" / "narrative.md"
+        victim.write_text("ORIGINAL", encoding="utf-8")
+
+        class _OtherFile:
+            """open 之后拿到的 fd 指向了另一个文件 —— 竞态赢了的那一刻。"""
+            st_dev, st_ino, st_nlink = 1, 999999, 1
+
+        real_fstat = os.fstat
+        os.fstat = lambda fd: _OtherFile()
+        try:
+            with self.assertRaises(engine.PathViolation):
+                engine._safe_write(victim, "SHOULD-NOT-LAND")
+        finally:
+            os.fstat = real_fstat
+
+        # **关键断言：文件没有被清空。** 打开时不带 O_TRUNC 就是为了这一条 ——
+        # 先截断再发现身份不对，等于攻击已经得手了一半。
+        self.assertEqual(victim.read_text(encoding="utf-8"), "ORIGINAL")
 
     def test_ordinary_whitelisted_write_still_works(self):
         """守卫收紧之后，正常写入不能被误伤 —— 否则这道修复只是把门焊死。"""

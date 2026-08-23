@@ -1249,6 +1249,7 @@ def pending_task() -> bool:
 # 而同一件事有两个判定处，正是 §17.5 点名的漂移温床。
 # ===========================================================================
 from substrate import pipeline as _pipeline  # noqa: E402
+from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
 
 #: P0-a 的 Task 声明。**放在土壤侧而不是 `seed/`**：P0-a 是「人给任务，人做判决」
@@ -1368,7 +1369,11 @@ def _seed_candidate(repo, ctx, task):
     base = _pipeline.git(repo, "rev-parse", "HEAD")
     worktree = pathlib.Path(tempfile.mkdtemp(prefix="meristem-candidate-")) / "wt"
     _pipeline.git(repo, "worktree", "add", "-q", "--detach", str(worktree), base)
-    env = {**os.environ, "PYTHONPATH": str(worktree),
+    # **裁剪环境，不整份传递**（§15.6 C6）。种子的 `cycle` 是种子自己的代码，
+    # 整份 `os.environ` 会把 `MERISTEM_VAULT`（C-65 保证一定在）连同任何模型 key、
+    # webhook 一起交给它 —— vault 存在的全部理由就是种子看不见它。
+    # 与 `pipeline.canary()` 复用同一份 allowlist，不各写各的。
+    env = {**_probe_runner._sandboxed_env(), "PYTHONPATH": str(worktree),
            "MERISTEM_SOIL_CYCLE": str(ctx.soil_cycle)}
     try:
         result = subprocess.run([sys.executable, "-m", "meristem.loop", "cycle"],
@@ -1392,8 +1397,20 @@ def _seed_candidate(repo, ctx, task):
 
 
 def _drop_worktree(repo, worktree) -> None:
-    subprocess.run(["git", "worktree", "remove", "--force", str(worktree)],
-                   cwd=str(repo), capture_output=True)
+    """拆掉候选 worktree，**失败要出声**。
+
+    原先这里静默吞掉 `git worktree remove` 的失败：注册项会一次次泄漏而没有任何
+    痕迹。同时删掉 `mkdtemp` 建的那层父目录 —— `git worktree remove` 只认
+    `wt/` 那一级，父目录每跑一次 `manual-cycle` 就留一个空壳，
+    无人值守跑一夜会攒出一堆。
+    """
+    worktree = pathlib.Path(worktree)
+    result = subprocess.run(["git", "worktree", "remove", "--force", str(worktree)],
+                            cwd=str(repo), capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"worktree remove 失败（注册项可能泄漏）：{result.stderr.strip()[:200]}",
+              file=sys.stderr)
+    shutil.rmtree(worktree.parent, ignore_errors=True)
 
 
 def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -> int:
@@ -1462,8 +1479,15 @@ def ignition_status(repo=None) -> int:
         if reason is not None:
             counts[reason] = counts.get(reason, 0) + 1
     # 归因顺序定死（§12.0.2）：读数不稳定的仪表比没有仪表更坏。
-    order = ("kind≠accepted_fitness", "calibration", "counts_as_progress", "primary_probe")
-    parts = [f"{counts[key]} {key}" for key in order if key in counts]
+    # **顺序从 `pipeline.IGNITION_CONJUNCTS` 派生，不在这里手抄一份** ——
+    # 抄一份就是两个独立维护的副本，而这个项目到处在防的正是这种漂移。
+    # `ignition_exclusion_reason` 对第一项返回的是带说明的 `kind≠accepted_fitness`，
+    # 其余三项与合取项同名，故按前缀匹配对齐。
+    parts = []
+    for conjunct in _pipeline.IGNITION_CONJUNCTS:
+        for key, count in counts.items():
+            if key == conjunct or key.startswith(conjunct):
+                parts.append(f"{count} {key}")
     print("excluded: " + (" · ".join(parts) if parts else "0"))
     return 0
 

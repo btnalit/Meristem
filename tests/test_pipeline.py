@@ -453,6 +453,79 @@ class ReconcileTests(PipelineTestCase):
         self.assertEqual(final["outcome"], "ABANDONED")
         self.assertNotIn("accepted_fitness", self._kinds(ctx))
 
+    def test_reconcile_does_not_duplicate_accepted_fitness_after_a_late_crash(self):
+        """崩溃落在 `accepted_fitness` 与 `promotion_committed` **之间**。
+
+        这是一行的窗口，也**正是 reconcile 存在的理由**；而上一版只看
+        `promotion_committed` 在不在，于是把「差最后一条」当成「什么都没写」，
+        补写出第二条 `accepted_fitness` —— 同一次晋升被 §1.2 数成**两次点火**。
+        CA-10 当时也抓不到：它只验每条 accepted 都配得上 intent/committed/scoreboard，
+        **从不验基数**，而重复条目每一项都配得上。
+
+        §1.2 的计数是整个 P0-a 的唯一出口。**多数一次，就是宣布一次没发生的点火。**
+        """
+        repo = _make_repo(self.root)
+        candidate = _make_candidate(repo, table=KNOWS_THREE)
+        ctx = self._ctx(repo)
+        pipeline.process_candidate(candidate, _task(), repo=repo, panel=_accept, ctx=ctx)
+
+        # 砍掉收尾那一条，重演崩溃现场。
+        lines = ctx.ledger.path.read_text(encoding="utf-8").splitlines()
+        self.assertIn("promotion_committed", lines[-1])
+        ctx.ledger.path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+        scoreboard_before = len(ctx.scoreboard.read())
+
+        resolved = pipeline.reconcile_on_start(repo, ctx)
+
+        self.assertEqual(resolved, [(candidate, pipeline.Outcome.PROMOTED)])
+        rows = self._ledger(ctx)
+        self.assertEqual(sum(1 for r in rows if r["kind"] == "accepted_fitness"), 1)
+        self.assertEqual(sum(1 for r in rows if pipeline.is_ignition_event(r)), 1)
+        # 记分板同理：补写不得再写一遍全套。
+        self.assertEqual(len(ctx.scoreboard.read()), scoreboard_before)
+        self.assertEqual(rows[-1]["kind"], "promotion_committed")
+
+    def test_reconcile_reports_soil_recovery_when_the_commit_cannot_be_resolved(self):
+        """`git merge-base --is-ancestor` 对解析不了的名字退 **128**，不是 1。
+
+        按 `!= 0` 一律当「不是祖先」，会把**判定不了**报成 `ABANDONED` ——
+        一个确信的否定。规格反复强调这两者对应完全不同的处置。
+        """
+        repo = _make_repo(self.root)
+        ctx = self._ctx(repo)
+        ctx.ledger.append({"kind": "promotion_intent", "commit": "0" * 40,
+                           "parent": _git(repo, "rev-parse", "HEAD"),
+                           "source": "ev-missing", "state": "pending",
+                           "verdict_authority": "manual"})
+
+        resolved = pipeline.reconcile_on_start(repo, ctx)
+
+        self.assertEqual([o for _, o in resolved], [pipeline.Outcome.SOIL_RECOVERY])
+        self.assertEqual(self._ledger(ctx)[-1]["outcome"], "SOIL_RECOVERY")
+
+    def test_reconcile_refuses_to_launder_a_calibration_run(self):
+        """校准结构上到不了 `promotion_intent`。真到了，说明有人开了一条 merge 的路 ——
+        **不得把它洗成一条 `calibration:false` 的 `accepted_fitness`**。"""
+        repo = _make_repo(self.root)
+        candidate = _make_candidate(repo, table=KNOWS_THREE)
+        ctx = self._ctx(repo, calibration=True)
+        oid = ctx.ledger.append({
+            "kind": "observed_fitness", "commit": candidate, "source": None,
+            "records": [{"probe_id": PROBE_ID, "before": 40.0, "after": 60.0,
+                         "delta": 20.0, "status": "improved"}],
+            "task_id": "task-test", "primary_probe": PROBE_ID, "generation": "gen-0",
+            "soil_cycle": 1, "calibration": True, "counts_as_progress": False})
+        parent = _git(repo, "rev-parse", "HEAD")
+        ctx.ledger.append({"kind": "promotion_intent", "commit": candidate,
+                           "parent": parent, "source": oid, "state": "pending",
+                           "verdict_authority": "manual"})
+        _git(repo, "merge", "--ff-only", "-q", candidate)
+
+        resolved = pipeline.reconcile_on_start(repo, ctx)
+
+        self.assertEqual([o for _, o in resolved], [pipeline.Outcome.SOIL_RECOVERY])
+        self.assertNotIn("accepted_fitness", self._kinds(ctx))
+
     def test_reconcile_is_a_noop_when_the_chain_is_complete(self):
         repo = _make_repo(self.root)
         candidate = _make_candidate(repo, table=KNOWS_THREE)
