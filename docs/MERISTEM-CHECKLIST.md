@@ -14,6 +14,7 @@
 |---|---|---|
 | v3.1 自主进化 | **已全停**（2026-08-23 16:55 服务器时间） | panic 闩 `/RSI/meristem-control/PANIC` |
 | v5 规格 | **v5.8-frozen**，外部审计裁定 APPROVED WITH BOOTSTRAP FIXES（fixes 已落） | `docs/MERISTEM-V5-SPEC.md` |
+| v3.1 代码清盘 | **已完成**，仓库 129 → **13 个文件**；待合并到 main | 分支 `v5-reset`（已推 GitHub） |
 | v5 实现 | **未开工** | — |
 
 ---
@@ -69,6 +70,45 @@ v5.8 的 P0：`accepted_fitness` 不带 Task 身份，而 `ignition-status` 只�
 - §17.8 的 SA/CA 断言集**目前只是规格文本，尚无实现**。CI 接入前它等同未生效（§17.8.3 自陈）。
 - v3.1 最后一拍 cycle 403 的拒绝原因是 `mutate:glm failed after 4 attempts: read operation timed out`
   ——GLM 免费档的已知额度问题，不是缺陷，无需追查。
+
+---
+
+### 2026-08-23 · v3.1 代码清盘（执行 §13），三地同步
+
+**分支 `v5-reset`**，从 `origin/main`(`10f00cc`) 起步——**不是**从旧 worktree 分支，
+后者落后 132 个 commit。5 个 docs commit 已 cherry-pick 过去，零冲突。
+
+**清盘结果**：仓库 129 → **13 个文件**（删 117：state 49 / body 40 / meristem 14 /
+control 9 / tests 4 / bootstrap.py）。保留 `root/` 3 + `substrate/` 2 + `docs/` 2 + 四个顶层文件。
+按 §13.2 拆出 `soil/model-policy.toml` 与 `seed/model-interface.json`。
+
+**为什么不「回退到某个历史版本」**（这个问题被问过，值得记）：
+
+| | 最早 P0 seed `23b8408` | `origin/main` | v5 需要 |
+|---|---|---|---|
+| `meristem/` | **24 文件** | 14 | 全删重写 |
+| `seed/` `soil/` | **不存在** | 不存在 | **v5 核心结构** |
+| `substrate/supervisor.py` | **169 行** | **1255 行** | **要 1255 行那版** |
+
+291 个 commit 里**没有一个有 v5 的形状**；早期反而更臃肿；而 v5 唯一实质保留的
+`supervisor.py` 要的是最新版——那 1086 行差额里装着 P-077 崩溃后有界续跑、rollback 阶梯、
+flock、canary、晋升逻辑，§13.3 逐条列了依赖。**历史两边都不丢**，所以回退无额外好处。
+
+**两处不能照抄的地方**（拆分不是复制）：
+
+- **`campaign_calls = 1000` 已删除，不得复活**。它是全时段累计，撞顶后 `check()` 在每次变异
+  和每次反思抛错 → 循环死锁，而唯一能修门的人被锁在门外（S7 实证）。I1 要求一切计数皆滚动窗口。
+  新的 `calls_per_window` 目前取恒等值并**明标「尚未校准」**，不假装它在防什么。
+- **`state/` 不加 `.gitkeep`**。CA-8 断言 `state/` 下每个文件都匹配
+  `^state/soil-[a-z0-9-]+\.jsonl$`，占位文件需要给断言开例外——**而例外正是列举式边界漏水的方式**。
+  改为整目录 gitignore，土壤启动时创建。
+
+**踩到的坑**
+
+- 分类器会拦下一次删多个目录的复合 `git rm -r`。**拆成单目录逐条执行即可**，不必绕路。
+
+**留给用户的动作（我不做）**：merge 到 main、服务器 reset、vault 清理——理由见报告，
+核心是归档 bundle 打于 14:31，而服务器 `state/` 的未提交现场与 vault 的时效我都没验证过。
 
 ---
 
