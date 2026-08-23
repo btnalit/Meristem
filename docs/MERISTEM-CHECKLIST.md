@@ -284,6 +284,81 @@ vault `soil:0500`、`state/soil-*.jsonl` `soil:0600`。
   （`state/journal.jsonl`、`control/agenda.md`）。v5 的路径是 `state/soil-*.jsonl` 与
   `seed/agenda.md`。两套并存目前互不调用，但这是 §13.3 波次 2 明列的清理项。
 
+### 2026-08-23 · 三份独立审查，以及「我昨天那道守卫被绕过」
+
+拉起三个独立审查子智能体（土壤层 / 波次 1 / 对抗性安全），各自**实机复现**，
+不接受任何提交说明里的结论。**顾问复审这一步没做成** —— 工具返回 unavailable
+且明确要求不要重试，多派一个对抗性审查员补位，但那不等同于顾问复审。
+
+**最值得记的一条：修复本身被绕过了。**
+
+上午我刚把 `engine.py` 的链接守卫从「resolve 之后检查」改成「逐级 `is_symlink()`」，
+下午对抗性审查就绕了过去：**NTFS junction（`mklink /J`）不被 `is_symlink()` 报告**，
+因为它是 `IO_REPARSE_TAG_MOUNT_POINT` 而不是 `IO_REPARSE_TAG_SYMLINK`。
+把 `seed/probe-proposals/`（合法的可写目录前缀）做成指向 `soil/` 的 junction，
+写入直接穿透。**而 junction 不需要任何特权** —— Windows 上真 symlink 反倒要管理员
+或开发者模式。**我防住了那扇需要钥匙的门，没防住旁边那扇没锁的。**
+
+教训不是「再加一种标签」，而是**判定方式错了**：改为
+「任何 reparse point 一律拒绝」（查 `FILE_ATTRIBUTE_REPARSE_POINT`），
+**不按标签列举** —— 列举式边界每出现一种新标签就漏一次，这份规格自己反复在说。
+
+同轮还发现我**删掉了一句仍然成立的告诫**：旧 `_safe_write` docstring 写着
+TOCTOU 警告，我改写时把它删了，而竞态还在（审查员第一次尝试就赢）。
+**删掉一句真话，比没写更坏。** 已改为「不带 `O_TRUNC` 打开 → 比对 fd 身份 →
+再 `ftruncate`」，并把警告写回去。
+
+**第二要紧：点火计数会被重复统计。**
+
+崩溃若落在 `accepted_fitness` 与 `promotion_committed` 之间（一行的窗口，
+**也正是 reconcile 存在的理由**），旧的 `reconcile_on_start` 只看
+`promotion_committed` 在不在，把「差最后一条」当成「什么都没写」，
+补写出第二条 `accepted_fitness` —— **同一次晋升被 §1.2 数成两次点火**。
+
+**CA-10 当时抓不到它**：它只验每条 accepted 都配得上 intent/committed/scoreboard，
+**从不验基数**，而重复条目每一项都配得上。两处都修了：reconcile 认
+`accepted_sources`，CA-10 加「每 commit 恰好一条」。
+
+**第三：我把刚立起来的 vault 门从旁边绕开了。**
+
+上午刚把 vault 路径从相对缺省改成强制 `MERISTEM_VAULT`（C-65），
+下午审查指出 `canary()` 与 `_seed_candidate()` 都在传 `{**os.environ, ...}` ——
+**整份环境交给种子控制的代码，`MERISTEM_VAULT` 就在里面**。
+§15.6 恰好点名过 `canary(commit)`。正确写法本就在同一个仓库里
+（`probe_runner._sandboxed_env()`），我没复用。
+
+**其余修掉的（逐条都有复现）**
+
+| 项 | 问题 | 处置 |
+|---|---|---|
+| `merge-base --is-ancestor` | 解析不了的 commit 退 **128 不是 1**，旧代码按 `!=0` 一律报 `ABANDONED`（一个确信的否定） | 改三态，判定不了 → `SOIL_RECOVERY` |
+| `Ledger` | 只查键在不在、不查值；`task_id=None` / `soil_cycle="not-a-number"` 能写进一条被 §1.2 认可的事件 | 补类型校验，并把校验从 `append()` **下移到 `_append_raw()`** —— 能被同一对象另一方法绕开的闸门不是闸门 |
+| `materialize_readonly_tree` | Python <3.12 静默退回无保护的 `extractall`，候选树里的 symlink 条目可逃逸；且仓库从未声明最低 Python 版本 | 拒绝运行；物化失败记 `UNMEASURED` 而非抛 traceback |
+| `PromotionLock` | 重入不认线程，另一线程可直接穿过互斥（实测赢下竞态） | 按 thread ident 判定 |
+| `COUNTS_AGAINST_QUOTA` | **是装饰性的**：调用点全是手写字面量，表没有任何读者 | 改为以表为准，调用点的值降级为交叉校验，不一致抛错 |
+| `ignition_status` | 手抄了一份归因顺序，连第一项拼写都与 `IGNITION_CONJUNCTS` 不同 | 改为从常量派生 |
+| CA-9 / CA-11 | **永久失效的双重 skip**：台账出现后仍打印 "no ledger yet"，一句届时必然为假的话 | 改为陈述真实阻塞条件，条件解除即自行生效 |
+| `_drop_worktree` | 静默吞掉失败；`mkdtemp` 父目录每跑一次泄漏一个 | 失败出声 + 清父目录 |
+
+**规格 v5.11**：本轮只有一处是规格自身的问题 —— **§15.6 内部矛盾**，
+档位表把「禁网」放在 P0-a 行，验收判据散文把联网 organ 测试归到 P0-b。
+同一份文档对同一项要求给出两个档位，**照哪边实现都能自称合规**。
+本轮**不擅自裁决归属**（实质改动须独立复审），只登记；
+在裁决前，任何一次 P0-a 运行都不得声称满足了 §15.6 的 P0-a 档。
+
+**仍未闭合**
+
+1. **organ 最小完整性隔离（§15.6 C6）依旧没落地** —— 两条 `expectedFailure` 照旧。
+   这是**部署动作**（服务器拆 `soil`/`worker` UID + vault `0500` + 台账 `0600`），
+   不是这台开发机上能验证的代码。
+2. **type-valid 但无晋升链背书的伪造事件，字段校验挡不住** —— 那是链不变量，
+   不是字段类型。现由 CA-10 的基数断言在**验证侧**守；写入侧要真正绑定，
+   需要 `accepted_fitness` 写入前回查 `promotion_intent`，尚未做。
+3. **锁文件 unlink-recreate 竞态在 Linux 上未验证**（Windows 因文件共享语义天然挡住）。
+   `fcntl.flock` 绑定的是 open file description 不是路径，**须在服务器上实测**。
+4. 大小写不敏感文件系统 vs 大小写敏感白名单：今日不可利用（`SEED_READONLY`
+   恰好都不在任何 `SEED_WRITABLE` 前缀之下），但**没有断言在守这个巧合**。
+
 ---
 
 ## 常用命令
