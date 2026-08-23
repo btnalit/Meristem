@@ -107,8 +107,25 @@ flock、canary、晋升逻辑，§13.3 逐条列了依赖。**历史两边都不
 
 - 分类器会拦下一次删多个目录的复合 `git rm -r`。**拆成单目录逐条执行即可**，不必绕路。
 
-**留给用户的动作（我不做）**：merge 到 main、服务器 reset、vault 清理——理由见报告，
-核心是归档 bundle 打于 14:31，而服务器 `state/` 的未提交现场与 vault 的时效我都没验证过。
+**三地同步（已执行）**。顺序是先存档、再破坏——归档 bundle 打于 14:31，晚于最后一拍，
+但服务器上有若干**不在 bundle 里**的东西，逐项先存：
+
+| 先存了什么 | 去处 | 量 |
+|---|---|---|
+| 服务器 `state/` 未提交现场 | `/RSI/meristem-v3-archive/state-final-uncommitted` | 2.1M / 26 文件 |
+| vault 完整状态（归档里那份是 Aug 15，旧八天） | `/RSI/meristem-v3-archive/vault-final` | 48 文件 |
+| keeper 全部日志（含 `KEEPER STOP` 那行） | `/RSI/meristem-v3-archive/logs-final` | 6 个，主日志 225K |
+| worktree 里 v3.1 的未提交改动（别的会话的在制品） | `D:/RSI/v31-uncommitted-2026-08-23.patch` | 528 行 / 5 文件 |
+
+然后：`v5-reset` 快进推 main（先验证落后 0 / 领先 7，**非 force**）→ 服务器 fetch + reset + clean
+→ 清掉 `__pycache__` 残留、`state/`、`REPORT.md` → vault 清空 `internal/active`、保留 anchors。
+
+**GitHub 与服务器均在 `31f3ee0`，服务器 `git status` 干净。**
+
+> **一步没做成，是结构性阻塞不是判断**：worktree 隔离禁止本会话对共享 checkout 做 git 操作，
+> 所以 `D:/RSI/Meristem` 的 `main` 指针与工作树仍停在 `345e143`。
+> 对象库已含全部提交（`origin/main` 本地即 `31f3ee0`），补一条命令即可：
+> `cd D:/RSI/Meristem && git checkout main && git reset --hard origin/main && git clean -fd`
 
 ---
 
