@@ -11,7 +11,7 @@ import dataclasses
 import os
 import pathlib
 
-from meristem import SEED_READONLY, SEED_WRITABLE
+from meristem import SEED_DIR, SEED_READONLY, SEED_WRITABLE
 from meristem import llm
 
 #: I10 prompt-face budget: build_context's token count must stay <=
@@ -42,18 +42,54 @@ def _estimate_tokens(text: str) -> int:
 
 
 def build_context(task: str, *, config, extra: str = "") -> str:
-    """Assemble the model prompt. Never touches a soil-private path."""
+    """Assemble the model prompt. Never touches a soil-private path.
+
+    **可写面必须进 prompt。** 上一版只拼 task/extra/config —— 于是种子被要求
+    产出整文件替换，**却不知道自己能写哪些文件**。它会去改白名单外的路径，
+    `_validate_paths` 当场拒绝，整拍作废。那样测出来的是「模型能不能猜中白名单」，
+    **不是 H1 要问的「能不能沿梯度爬」** —— 一个每拍都栽在路径上的实验，
+    对假设本身没有产出任何证据。
+
+    宪法（`seed/constitution.md`）在种子的可写面上，因此它是**种子自己的文档**：
+    土壤只负责把它交到模型面前，不负责它写了什么。种子改了它，下一拍读到的就是改后的。
+
+    **仍然不碰任何土壤私有路径**：这里读的两样东西（白名单常量、种子自己的宪法）
+    都在种子的可见面内。隐藏用例库、台账、配额数字一律不在此列（§8.1.2 / §8.1.3）——
+    CA-3 断言种子代码里连这些名字都不该出现，本 docstring 因此也避开它们。
+    """
     parts = [
         "You are the seed's mutation engine. Reply with ONLY a JSON object "
         "mapping relative file path to the FULL new file content "
         "(whole-file replacement, not a diff).",
+        "Writable paths (anything else is refused before any write, and the "
+        "whole mutation is discarded): " + ", ".join(SEED_WRITABLE),
+        "Read-only (never write these): " + ", ".join(SEED_READONLY),
         f"Task: {task}",
     ]
+    constitution = _read_constitution()
+    if constitution:
+        parts.append(constitution)
     if extra:
         parts.append(extra)
     if config:
         parts.append(f"Config: {config}")
     return "\n\n".join(parts)
+
+
+def _read_constitution() -> str:
+    """种子宪法。读不到就不读 —— **它缺席不该让一拍失败**。
+
+    宪法是种子可写的：种子可以删掉它。那不是故障，是它的权限。
+    真正不许缺席的是机制（路径校验、判决、台账），而那些一条也不依赖本文件。
+    """
+    try:
+        text = (SEED_DIR / "constitution.md").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    return ("Your constitution (you may rewrite it; the mechanisms it describes "
+            f"are enforced regardless of what this file says):\n{text}")
 
 
 def _is_writable_path(rel: str) -> bool:
