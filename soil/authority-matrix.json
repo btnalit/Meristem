@@ -1,0 +1,241 @@
+{
+  "_meta": {
+    "generated_from": "docs/MERISTEM-V5-SPEC.md §16 (v5.8-frozen)",
+    "authority_status": "TRANSCRIPTION, NOT YET AUTHORITATIVE. Per §17.8.1 (现状 → 迁移 → 目标): the §16 Markdown table in the spec remains the SOLE authority at this stage. This JSON is the migration transcription produced in that same step, checked cell-by-cell against the Markdown table by SA-2 (tests/ci/test_spec_assertions.py). It is NOT the authoritative source yet -- do not read or treat this file as ground truth in code or docs. §16 only becomes a rendered projection of this file once the spec itself advances to the 'target' phase of §17.8.1 and other tooling begins reading this file instead of the table.",
+    "row_count": 18,
+    "columns": ["seed_read", "seed_write", "soil_read", "soil_write", "soil_execute", "root_write", "in_report"],
+    "column_labels": {
+      "seed_read": "Seed 读",
+      "seed_write": "Seed 写",
+      "soil_read": "Soil 读",
+      "soil_write": "Soil 写",
+      "soil_execute": "Soil 执行",
+      "root_write": "Root 写",
+      "in_report": "进报告"
+    },
+    "cell_value_legend": {
+      "✓": "allowed / applies",
+      "✗": "forbidden / does not apply",
+      "—": "explicit not-applicable (distinct from a missing cell; see SA-3)",
+      "other strings (e.g. 摘要, 只读摘要, 方向, 裁决)": "qualified / partial value, verbatim from §16"
+    }
+  },
+  "rows": [
+    {
+      "id": "active-probe-cases",
+      "name": "active probe cases",
+      "path": null,
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "✓",
+      "root_write": "✗",
+      "in_report": "摘要"
+    },
+    {
+      "id": "internal-probe-proposal-file",
+      "name": "internal probe 提案文件（seed/）",
+      "path": null,
+      "seed_read": "✓",
+      "seed_write": "✓",
+      "soil_read": "✓",
+      "soil_write": "✗",
+      "soil_execute": "✗",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "internal-probe-frozen-registration",
+      "name": "internal probe 冻结登记（土壤）",
+      "path": null,
+      "seed_read": "摘要",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "vault-frozen-manifest",
+      "name": "vault frozen manifest",
+      "path": null,
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "✓",
+      "root_write": "✗",
+      "in_report": "✗"
+    },
+    {
+      "id": "anchor-rubric",
+      "name": "anchor rubric",
+      "path": null,
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "✓",
+      "root_write": "✗",
+      "in_report": "✗"
+    },
+    {
+      "id": "fitness",
+      "name": "fitness",
+      "path": null,
+      "seed_read": "只读摘要",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "soil-model-policy",
+      "name": "soil model policy",
+      "path": "soil/model-policy.toml",
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "✓",
+      "root_write": "✗",
+      "in_report": "✗"
+    },
+    {
+      "id": "model-interface",
+      "name": "model interface",
+      "path": "seed/model-interface.json",
+      "seed_read": "✓",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✗"
+    },
+    {
+      "id": "task-proposal",
+      "name": "task 提案",
+      "path": null,
+      "seed_read": "✓",
+      "seed_write": "✓",
+      "soil_read": "✓",
+      "soil_write": "✗",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "方向"
+    },
+    {
+      "id": "task-decision",
+      "name": "TaskDecision",
+      "path": null,
+      "seed_read": "✓",
+      "seed_write": "✓",
+      "soil_read": "✓",
+      "soil_write": "裁决",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "promotion-verdict",
+      "name": "promotion verdict",
+      "path": null,
+      "seed_read": "摘要",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "✓",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "observed-fitness-to-panel",
+      "name": "observed fitness → 面板",
+      "path": null,
+      "seed_read": "—",
+      "seed_write": "—",
+      "soil_read": "—",
+      "soil_write": "—",
+      "soil_execute": "✗ 不传（锚定风险）",
+      "root_write": "—",
+      "in_report": "—"
+    },
+    {
+      "id": "soil-ledger",
+      "name": "soil-ledger（state/soil-ledger.jsonl）",
+      "path": "state/soil-ledger.jsonl",
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "soil-scoreboard",
+      "name": "scoreboard（state/soil-scoreboard.jsonl）",
+      "path": "state/soil-scoreboard.jsonl",
+      "seed_read": "摘要",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "seed-narrative",
+      "name": "seed narrative",
+      "path": "seed/narrative.md",
+      "seed_read": "✓",
+      "seed_write": "✓",
+      "soil_read": "✓",
+      "soil_write": "✗",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "seed-feedback-json",
+      "name": "seed/feedback.json",
+      "path": "seed/feedback.json",
+      "seed_read": "✓",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "—",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "report-facts",
+      "name": "report facts（soil/ 权威副本）",
+      "path": "soil/report-facts.json",
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✓",
+      "soil_execute": "✓",
+      "root_write": "✗",
+      "in_report": "✓"
+    },
+    {
+      "id": "recovery-manifest",
+      "name": "recovery manifest",
+      "path": null,
+      "seed_read": "✗",
+      "seed_write": "✗",
+      "soil_read": "✓",
+      "soil_write": "✗",
+      "soil_execute": "✗",
+      "root_write": "✓",
+      "in_report": "✓"
+    }
+  ]
+}

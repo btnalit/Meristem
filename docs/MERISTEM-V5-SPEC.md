@@ -3,7 +3,7 @@
 > 全新种子。除必要土壤层外，v3.1 的一切不继承。
 > 本文档是**可开工的规格**，不是回顾报告——每个模块给出职责、不变量、数据结构、函数签名、验收判据。
 
-**spec-v5.8-frozen** · 日期：2026-08-23 · 方法：本体论优先（Ontology → Domain → Invariants → State → Capability → Schema → Contract → Implementation → Verification）
+**spec-v5.9-frozen** · 日期：2026-08-23 · 方法：本体论优先（Ontology → Domain → Invariants → State → Capability → Schema → Contract → Implementation → Verification）
 
 > **正文冻结**（§17.7 终止条款）。v5.8 修掉外部独立审计判定的 **1 项 P0 + 6 项 bootstrap/P1**；
 > 该审计对架构的裁定是 **APPROVED**，对开工的裁定是 **APPROVED WITH BOOTSTRAP FIXES**——**修完即开工**。
@@ -671,6 +671,7 @@ v5 的探针运行器**在土壤**：`substrate/probe_runner.py`，直接读 vau
 │   ├── fitness.py           【新】fitness 记录与 schema（S5）  ~70 行
 │   ├── budget.py            【新】预算执行（S7）              ~60 行
 │   ├── pipeline.py          【新】候选处理流水线（S2+S4+S5） 150–250 行
+│   ├── model_gateway.py     【新】模型网关（S7 的执行端）      ~80 行
 │   └── panel.py             【新】面板（P0-b 主体工程）       100–150 行
 ├── meristem/                全新种子（P0-a ~415 行）
 │   ├── __init__.py          路径常量 + 只读助手              ~35
@@ -784,7 +785,12 @@ def run_all(tree: Path, vault: Path) -> list[ProbeRun]
 ```
 
 `ProbeRun` 字段：`probe_id, score, checks_passed, checks_total, detail`，
-**外加三个版本维度** `probe_manifest_sha, runner_version, execution_policy_version`。
+**外加 §4.1 Measurement 身份的全部四项** `probe_manifest_sha, tree_sha, runner_version, execution_policy_version`。
+
+> **`tree_sha` 是 v5.9 补的（落地时由 A1 上报）**：本节前一版漏了它，而 §8.2 的 records schema
+> 要求 `tree_before` / `tree_after` 两个字段——`pair(before, after, commit)` 只收**一个** commit，
+> **那两个字段填不出来**。§4.1 的 Measurement 身份本来就含 `tree_sha`，是本节漏抄。
+> 补上之后 `pair()` 直接从 `before.tree_sha` / `after.tree_sha` 取值，无需额外入参。
 
 > 三个版本维度**必须由 runner 在测量时刻产出**，不能事后补。
 > 它们是 Measurement 身份的一部分（§4.1）；不在 `ProbeRun` 里，`fitness.pair()` 就无从比对，
@@ -805,9 +811,19 @@ def pair(before: list[ProbeRun], after: list[ProbeRun], commit: str) -> list[dic
     #   before.execution_policy_version == after.execution_policy_version
     # 任一不等 → status = "unmeasured"，delta 置 None，**不得产出 improved**。
     # 不可比就是不可比；把它算成一次进步，就是 proved_better_by 换了个藏身处。
-def write(records: list[dict], ledger: Path) -> None
+def has_regression(records: list[dict]) -> bool
+    # 任一 record 的 status == "regressed" 即为真。§10 pipeline 调它。
 def degenerate_probes(ledger: Path, window: int) -> list[str]   # I3
 ```
+
+> **`write()` 已删除（v5.9，落地时由 A1 上报）。** 本节前一版声明 `write(records, ledger)`，
+> 但 §10 的 pipeline 伪码**从不调用它**——写台账走 `ctx.ledger.append({...})`，因为
+> §8.2 的六个强制字段只有 `SoilContext` 拿得到。`write()` 按其签名**填不出那六个字段**，
+> 谁调它谁就产出一条 schema 违规事件。
+>
+> 反过来，pipeline 调的 `has_regression()` 上一版**没有被声明**。一个声明了没人调、
+> 一个被调了没声明——**正是 CA-6 双向性要防的那对症状，也是 `advance()` 零调用点的同一种病。**
+> 台账的唯一写入路径是 pipeline，这与 C4「唯一权威台账，唯一写入者」一致。
 
 #### `substrate/budget.py`（S7）
 
@@ -1379,8 +1395,8 @@ if candidate_parent != current_head:
 
 不是双文件。三条理由全部来自本实验：
 
-1. 种子可写的事件流会与 `report-narrative.md` **给同一个东西两个家**，是语义漂移的温床
-2. 共享写入面永远被逐渐扩权——journal 起初也「只是记录」，后来 `proved_better_by` 就住在里面
+1. 种子可写的事件流会与 `seed/narrative.md` **给同一个东西两个家**，是语义漂移的温床
+2. 共享写入面永远被逐渐扩权——**v3.1 的 journal** 起初也「只是记录」，后来 `proved_better_by` 就住在里面
 3. **种子要传给土壤的一切都已有更硬的载体**：Task 声明是文件、拒绝是 `TaskDecision`、叙事是 narrative 文件。**台账里没有任何一种记录必须由种子亲手写。**
 
 **唯一权威台账 `state/soil-ledger.jsonl`，唯一写入者：土壤。**
@@ -1600,7 +1616,13 @@ for w in scoreboard 记分板 primary_probe probe_manifest_sha ignition-status \
          source_ledger_tail_hash counts_as_progress; do
     echo "== $w"; grep -n "$w" "$SPEC"; done
 
-# ② 已退役名字：除 §18 勘误行与显式的「本轮勘误」注记外，命中数必须为 0
+# ② 已退役名字：除下列三类豁免外，命中数必须为 0
+#    (a) §18 勘误行
+#    (b) 显式的「本轮勘误」注记
+#    (c) **前版历史引用**——「初稿把…」「v5.7 的 X 是笔误」这类叙述
+#        本文档是一份讲「为什么不再这样做」的文档,谈论旧名字是它的正当职能。
+#        与 SA-1 对 `journal` 的处理**同一依据、同一纪律**：白名单逐条人工核准,
+#        新增一条要说明它为什么是历史叙述而不是漏改。
 for w in journal control/ report.py probe.json "四 新模块" \
          vault_manifest_sha frozen_vault_manifest_sha '"kind":"fitness"' \
          'panel=None' 'is_ignition_event(ev, task)' 'ev.get('; do
@@ -1782,6 +1804,7 @@ CA-2 是全套断言里**唯一直接检验执行隔离是否真实生效**的�
 
 | 版本 | 来源 | 主要变更 |
 |---|---|---|
+| **v5.9** | **P0-a 落地（四个实现子智能体上报，主会话裁决）** | **规格只有被实现才会暴露的四处缺陷。** ① `ProbeRun` 补 `tree_sha`——§8.2 要求每条 record 带 `tree_before`/`tree_after`，而 §10.2 没给树字段、`pair()` 只收一个 commit，**那两个字段填不出来**；§4.1 的 Measurement 身份本就含它，是 §10.2 漏抄 · ② `fitness.write()` 删除、`has_regression()` 补声明——前者 pipeline 从不调用且填不出 §8.2 的六个强制字段（谁调谁产出违规事件），后者被 pipeline 调用却从未声明；**一个声明了没人调、一个被调了没声明，正是 CA-6 双向性要防的那对症状** · ③ 新增土壤模块 `substrate/model_gateway.py`（~80 行）——`llm.py` 要「经土壤 IPC 请求一次调用」，而 §10 的土壤清单里**没有任何模块会应答**，IPC 只有一端；网关读 `soil/model-policy.toml`、引用 `budget.check()` 的判定、只回 `allowed/refused/deferred`（**不与 budget.py 合并**：预算判定藏进调用执行，正是 S7 那次死锁的成因） · ④ §17.7 退役名豁免补第三类「前版历史引用」——与 SA-1 对 `journal` 的既有处理同一依据，逐条人工核准。**另修一处陈旧名字**：C4 的论据里写 `report-narrative.md`，v5 叫 `seed/narrative.md`；同段裸写的 `journal` 改为「v3.1 的 journal」，否则读者会以为 v5 也有一个 |
 | **v5.8** | **外部独立审计（裁定 APPROVED WITH BOOTSTRAP FIXES）** | **P0（唯一）：`accepted_fitness` 缺 Task 身份，`ignition-status` 只扫台账因而无从解析事件属于哪个 Task——§1.2 判据名义唯一、实际不可自包含求值、不可重放。** 修法：封套携带 `task_id` / `primary_probe` / `generation` / `soil_cycle`（六个强制字段成表，缺键即 schema 违例），谓词签名收紧为 **`is_ignition_event(ev)` —— 单条台账行的纯函数**，不接 task、不查注册表、不做多跳追溯。**另六项**：② CA-6 拆 CA-6a（真实台账 ⊆ 规格集合）+ CA-6b（fixture 覆盖），防「为了 CI 变绿往正式 ledger 塞测试事件」· ③ CA-2 跳过时置 `SECURITY_ASSURANCE=BEST_EFFORT` 并写入台账与 report-facts，**`BEST_EFFORT` 下 P0-a 不得标记 fully verified** · ④ `manual-cycle` 明确为 **Panel adapter**（y/n 落在 Verdict 位置而非 merge 位置），新增 **CA-11** 断言 manual 与 panel 事件序列逐字相同 · ⑤ CA-10 由「数量相等」改为**事务链逐字段一一对应**（source/commit/parent），防 A 的 accepted 配 B 的 committed · ⑥ 投影加来源指纹并在启动时阻塞校验，新增 **CA-12** · ⑦ `state/` 前缀族收紧为 `^state/soil-[a-z0-9-]+\.jsonl$` + 禁 symlink/hardlink + 临时与备份文件不得落在 `state/`。**顺带修正 v5.7 自己的两处**：`.get()` 兜底在 `calibration` 与 `counts_as_progress` 上**方向相反**，改为强制字段 + 缺键抛错；§12.0.2 的 `panel=None` 与 §10 签名注释矛盾，改回 `manual_prompt` |
 | **v5.7** | **第五轮交接项收尾 + 顾问** | **5 项交接债全部关闭**：① `state/soil-*.jsonl` **前缀族**属主取代单文件名保护，scoreboard 定名 `state/soil-scoreboard.jsonl` 并补进权威矩阵 · ② Fitness 身份补三个版本维度，`pair()` 失配即 `unmeasured` · ③ `primary_probe` 必为 internal，**anchor 非对称**（回归即拒 / 上升不加分 / `overfit_suspected`）· ④ §1.2 成为出生判据的**全文唯一定义点**，`ignition-status` 为唯一求值点 · ⑤ **§17.8 SA/CA 断言集**——§17.5 与 §16 的机械化落地，并把 §17.7 冻结条款的执行机制从「记得遵守」换成 CI。**顺带勘误（6 处，均由本轮机械扫描抓到，非外部审查）**：删除从不存在的 `kind:"fitness"` · `probe_manifest_sha` 三名统一 · S2 与 §16 关于「种子读记分板」的直接矛盾 · §10 失败路径表列头 `kind` 拆为 `kind` + `outcome`（v5.5 的 T3 统一出口后未同步，照表实现会写出规格里没有的 kind）· C3 伪代码 `kind:"stale"` 改走 `finalize_nonpromotion()`（同一处病的第二个实例）· 补回本表缺失的 v5.6 行并改为降序。**另加 2 处 advisor 复审勘误**：§10 pipeline 两处 `append` 补显式 `calibration` 键——缺键会让 **CA-7 空真恒过**（一条永远绿、也永远不检查任何东西的断言），**而这个洞正是本轮新增文本自己引入的** · `ignition-status` 的 `excluded` 归因顺序定死为「第一个不满足的合取项」 |
 | **v5.6** | **第五轮外部独立审查** | **三个 P0**：`seed/` 目录前缀白名单穿透 S7 与 T5（改为文件级白名单）· 晋升三步非原子缺崩溃恢复（`promotion_intent` + `reconcile_on_start`）· 特殊 Task 未从 Change pipeline 分流；另修权威矩阵读权限错误。**本轮同时列出 5 项未落交接项——由 v5.7 关闭**（当时仅改了 header 版本号，未记入本表） |
