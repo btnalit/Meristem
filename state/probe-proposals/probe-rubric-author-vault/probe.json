@@ -1,6 +1,0 @@
-{
-  "id": "probe-rubric-author-vault",
-  "capability_domain": "immune-behavior",
-  "organ": "rubric-author",
-  "description": "Verifies rubric-author writes rubrics to the vault and no check.py appears in body/"
-}

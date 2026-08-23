@@ -1,6 +1,0 @@
-{
-  "id": "probe-feasibility-check-feasible",
-  "capability_domain": "feasibility-check",
-  "organ": "feasibility-check",
-  "description": "Verify the feasibility-check organ correctly identifies a clearly feasible task as feasible."
-}

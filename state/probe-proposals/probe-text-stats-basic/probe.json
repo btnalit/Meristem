@@ -1,6 +1,0 @@
-{
-  "id": "probe-text-stats-basic",
-  "capability_domain": "text-processing",
-  "organ": "text-stats",
-  "description": "Basic correctness probe for the text-stats organ: word count, character count, and line count over the organ's stdin/stdout ABI."
-}

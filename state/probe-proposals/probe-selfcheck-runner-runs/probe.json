@@ -1,7 +1,0 @@
-{
-  "id": "probe-selfcheck-runner-runs",
-  "capability_domain": "selfcheck-runner",
-  "description": "Verifies the selfcheck-runner organ actually executes each cycle by querying the journal for kind='selfcheck-runner' entries. Passes when at least one entry exists in the last N cycles; fails when the runner has not run, creating a regression guard for G-009.",
-  "n_cycles": 5,
-  "measuring_stick": "score=100 when at least one selfcheck-runner journal entry exists within the last 5 cycles; score=0 otherwise"
-}

@@ -1,6 +1,0 @@
-{
-  "id": "probe-failure-aggregator-classify",
-  "capability_domain": "failure-classification",
-  "organ": "failure-aggregator",
-  "description": "Verifies the failure-aggregator's classification output matches expected classes for known failure patterns (gate-weakening, probe-regression, closure-budget)."
-}

@@ -1,6 +1,0 @@
-{
-  "id": "probe-memory-graph-basic",
-  "capability_domain": "self-knowledge",
-  "organ": "memory-graph",
-  "description": "Verifies the memory-graph organ builds a decaying knowledge graph from state records and correctly ranks stale nodes by activation."
-}

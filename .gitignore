@@ -18,8 +18,14 @@ meristem-canary/
 # forbids deleting or rewriting them; that is satisfied by their living
 # append-only on the deployment's disk. Committing them would dirty the tree
 # every cycle, conflict between deployments, and publish operational traces.
-# The .md registers (patterns, gaps, backlog) ARE knowledge and stay tracked.
-state/*.jsonl
+#
+# v5: state/ holds ONLY the soil-owned ledgers (state/soil-*.jsonl, spec 8.1.5),
+# so the whole directory is runtime. Soil creates it at startup. It is
+# deliberately NOT tracked with a .gitkeep: CA-8 asserts that every file under
+# state/ matches ^state/soil-[a-z0-9-]+\.jsonl$, and a placeholder would need an
+# exception carved into that assertion -- which is how enumerated boundaries leak.
+# v3.1's .md registers (patterns, gaps, backlog) no longer exist.
+state/
 
 .env
 *.tmp

@@ -2,118 +2,80 @@
 
 > **Everything grows from what remains small.**
 
-A minimal self-growing intelligence kernel: it continuously expands its
-capabilities while keeping the machinery of its own growth small enough to
-review completely.
-
 A meristem is the tissue that produces an entire tree while itself staying a
 few millimetres across. That is the architecture, not a metaphor.
 
-```
-core size     ────────────────────────────▶  constant
-capability    ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱▶  unbounded
-```
+## Status — read this first
+
+**v3.1 is retired.** It ran 400 cycles, promoted 37 changes, and produced
+**zero** measured improvements. Its kernel, organs, gates and tests were
+removed on 2026-08-23; the full history is preserved in this repository and in
+a verified `git bundle` archive off-repo. What the run actually demonstrated is
+written up in the spec: the scale was binary, so `improved` was **structurally
+impossible to produce**, and the system reported progress anyway.
+
+**v5 is specified but not implemented.** The authority is:
+
+- **[`docs/MERISTEM-V5-SPEC.md`](docs/MERISTEM-V5-SPEC.md)** — frozen at
+  `v5.8-frozen`. Per-module responsibilities, invariants, data schemas,
+  function signatures, and acceptance criteria. Written to be built from.
+- [`docs/MERISTEM-CHECKLIST.md`](docs/MERISTEM-CHECKLIST.md) — task log.
+
+Nothing under `seed/`, `soil/` or `substrate/` beyond `supervisor.py` exists
+yet. **Do not read this README as a description of running code.**
 
 ## The thesis
 
-The safe rate of recursive self-improvement is bounded by **reviewability**.
-A gate that cannot see the whole of what it judges is not a gate — and a
-system that expands faster than its immune system can comprehend has already
-lost the immune system; it just does not know yet.
+The safe rate of recursive self-improvement is bounded by **reviewability**. A
+gate that cannot see the whole of what it judges is not a gate.
 
-So the ceiling is not "how big may the system get". It is:
+v3.1 enforced this with a hard ceiling of 3000 kernel lines. That ceiling
+became a monotonic counter with no rolling window, and eventually a deadlock
+the system could not repair from inside. v5 replaces it with **three
+comprehension budgets** — mutation closure, prompt surface, contract surface —
+each with a data structure and an assertion rather than a number in a doc.
 
-> **Any single mutation's review closure must fit in one review context.**
-> If it does not fit, the organ splits first.
+The v5 first principle is narrower and testable:
 
-The tree may reach hundreds of thousands of lines. Changing one organ still
-means reviewing kernel + that contract + that organ + its probes — and nothing
-else. *Global small core, locally complete review closures.*
+> **Soil is the set of things the seed may not author, because once it can
+> author them it can fake its own progress.**
+
+Every module assignment in the spec is derived by asking one question of it:
+*if the seed could change this, could it thereby make an unimproved change look
+improved?* If yes, it is soil.
 
 ## Layout
 
-| Path | Tier | Evolvable? |
+| Path | Tier | Status |
 |---|---|---|
-| `root/` | root of trust | **never** — panic, succession, generation registry |
-| `substrate/` | soil | only by succession, never in place |
-| `meristem/` | core (≤3000 lines) | yes, through the gates |
-| `meristem/gates/` | immune | yes, but **may improve, may not weaken** |
-| `control/` | constitution & steering | constitution/purpose human; agenda seed-owned |
-| `body/` | organs | **ships empty** — grows on demand |
-| `state/` | audit memory | three JSONL records are append-only, forever |
-| *(outside the repo)* | eval vault | rubrics, held-outs, fixtures — invisible to the engine |
-
-## Two loops
-
-- **Loop A — optimisation.** *Where am I doing badly?*
-  failure → failure class → probe → sentinel → mutation → gates → promotion
-- **Loop B — growth.** *What can I not yet do, and what is worth becoming
-  able to do?*
-  gap → probe first → grow organ → gates → register → use → measure → keep,
-  evolve, or prune
-
-Six operators, all first class: `mutate`, `grow`, `prune`, `externalize`,
-`internalize`, `reproduce`.
-
-## Quick start
-
-```bash
-python bootstrap.py                       # create the eval vault OUTSIDE the repo
-export MERISTEM_VAULT=/path/to/vault      # make it permanent
-export DEEPSEEK_API_KEY=...               # any OpenAI-compatible endpoint
-
-python -m unittest discover -s tests      # 25 kernel self-tests
-python -m meristem.loop selftest          # immune self-test: do the gates fire?
-python -m meristem.loop status            # cycles, LOC, spend, next task
-python -m meristem.loop cycle             # run one evolution cycle
-python substrate/supervisor.py promote    # canary boot, then promote
-python root/panic.py engage               # full stop
-```
-
-Tasks come from `control/agenda.md`. In P0 the human is the first reflect.
+| `root/` | root of trust — panic latch, succession | **kept from v3.1, unchanged** |
+| `substrate/` | soil — supervisor, and five modules v5 adds | `supervisor.py` kept; the rest **not written** |
+| `soil/` | soil-private — model policy, panel policy, report facts | `model-policy.toml` only |
+| `seed/` | seed-visible — constitution, agenda, narrative, feedback | `model-interface.json` only |
+| `meristem/` | the seed itself | **not written** |
+| `body/organs/` | organs | **not written** |
+| `state/` | soil ledgers, `state/soil-*.jsonl` | runtime; created by soil, not tracked |
+| *(outside the repo)* | eval vault | rubrics and held-outs, invisible to the engine |
 
 ## Design decisions worth knowing
 
-**No coding-agent CLI.** A coding agent exists because its target is too big
-for one context, so it explores — re-sending accumulated context each turn.
-The seed *fits*. Paying to discover "where is the relevant code" when the
-answer is "all of it, here" costs roughly 6–10× the tokens before model-tier
-price differences even apply. Tier A is one structured call returning complete
-replacement files; Tier B (a minimal read/write/run loop) and Tier C (a
-commodity CLI) exist as an escalation ladder. **Escalation is data**: a task
-that needs B or C means the task was underspecified or the kernel is getting
-hard to modify.
-
-**Promotion authority lives in the substrate, not the kernel.** The kernel
-proposes a candidate; the substrate runs its own protected-path check with
-plain git and no kernel code, boots a canary, and only then fast-forwards.
-The code under review does not decide what gets in.
+**Promotion authority lives in the substrate, not the kernel.** The seed
+proposes a candidate; the soil measures it, judges it, and only then
+fast-forwards. The code under review does not decide what gets in. In v5 the
+seed also no longer writes any ledger, renders any score, or runs any probe.
 
 **Rubrics are physically invisible.** Not "the prompt is told not to look" —
-the vault is outside the repository and outside the worktree, only
-`meristem/gates/` may reference it, and a deterministic invariant enforces
-that every cycle.
+the vault lives outside the repository and outside the worktree, and only soil
+code may resolve its path.
 
-**Human gates are prosthetics.** Each carries demotion criteria and steps
-down on evidence: prior approval → post-hoc audit → notification only.
-Tightening is automatic and needs no evidence; loosening always needs both
-evidence and a human. The ratchet turns freely only toward safety.
+**The seed may narrate direction; it may not narrate results.** v3.1's
+`proved_better_by` claimed a proven improvement 166 times and it never once
+happened. The file was append-only and the data was never tampered with — the
+lie was in the rendering step. Tamper-proofing does not catch that. So in v5
+the report is a soil-rendered derivative of soil-owned facts.
 
 **The soil is not a parent; it is physics.** The seed grows wherever it
 chooses. It cannot repeal gravity.
-
-## Status: P0
-
-Not yet an RSI system — the minimal base from which recursive improvement can
-safely begin. Birth is defined by seven runtime criteria, not by "the code is
-written": 20 consecutive cycles, 3 accepted self-modifications of the kernel,
-every gate tripped at least once by a fixture, an intentional boot failure
-auto-refused, the engine measurably unable to read rubrics, six-question
-journal entries by construction, and one trivial organ taken through the full
-germline lifecycle. See `control/strategy.md`.
-
-Known gaps are tracked honestly in `state/gaps.md` rather than claimed as
-solved.
 
 ## Lineage
 
