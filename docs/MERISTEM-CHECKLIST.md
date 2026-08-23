@@ -359,6 +359,73 @@ TOCTOU 警告，我改写时把它删了，而竞态还在（审查员第一次�
 4. 大小写不敏感文件系统 vs 大小写敏感白名单：今日不可利用（`SEED_READONLY`
    恰好都不在任何 `SEED_WRITABLE` 前缀之下），但**没有断言在守这个巧合**。
 
+### 2026-08-23 · 第四份独立审查（对准合并后的 main）：双轨运行入口
+
+审查基线 `main@1805816`。裁定 **BLOCKED_FOR_P0A**。
+它确认了骨架真实跑通，也报了**两条我没看见的新问题**。逐条实测。
+
+**真问题 ①：`heartbeat` 是一把上了膛的枪。**
+
+`heartbeat()` 仍走 v3.1 全路径（`promote()` / `promote_probes()` / `_auto_promote()` /
+`_journal()`），一行都没接 v5 流水线。这本身不奇怪 —— **接上去是 P0-c 的工程**（§12）。
+危险在别处，是我实测出来的：
+
+- `heartbeat` 以 `cwd=REPO` 起 `python -m meristem.loop cycle`
+- 而 `meristem.loop` **如今是 v5 的种子**（波次 1 新写的），
+  它的 `run_cycle` 默认 `workdir` 就是 `REPO`
+- 于是**种子会直接提交到主线工作树**，再由 v3.1 的 `promote()` 判决
+
+结果是：**没有 before/after 测量、没有 `soil-ledger`、没有 `accepted_fitness`、
+没有点火记账，而主线已经被改了，台账上不留任何痕迹。**
+这违反最基本的一条：**同一件事只能有一个权威判定入口。**
+
+**修法不是把 heartbeat 接到 v5**（那需要 `model_gateway` / `budget`，是 P0-c），
+而是**让 v3.1 入口默认拒绝执行**：`run` / `promote` / `rollback` / `canary` /
+`heartbeat` 一律退 2 并打印为什么、该用什么。
+诊断 v3.1 时用 `MERISTEM_ALLOW_LEGACY=1` 显式解锁 ——
+**解锁是人的动作，与 panic 闩同一形状：默认安全，例外要显式说出口。**
+
+**真问题 ②：写得进台账、却读不出来的行。**
+
+`Ledger` 校验了封套六个字段，却没校验 `records[]` 的内容。
+`records: [{}]` 能写进去，而 `is_ignition_event` 严格下标 `r["probe_id"]` ——
+**判据的唯一求值点当场 `KeyError` 崩溃**。实测复现。
+
+修了两侧：写入侧补 `records[]` 逐条 schema（`probe_id` / `status` ∈ I5 /
+`before`·`after`·`delta` 类型 / 三个版本维度）；
+`ignition-status` 改为 **fail closed**：读到损坏的行报「台账损坏，判据无法求值」并退 1，
+**而不是把栈打在操作员脸上** —— 那正是判据最需要成立的时刻（崩溃恢复、事后审计）。
+
+> 谓词本身仍然严格下标、缺键即抛错 —— 那是 §1.2 明写的纪律，不动。
+> 变的是**命令**要把它翻译成一句可处置的话。
+
+**补齐了启动材料**：`seed/agenda.md` + `soil/p0a-task.json`（内容由 §12.2 写死，
+不是我发明的：任务=提高 classifier 得分，`primary_probe`=internal，`minimum_delta`=20）。
+
+> **踩到的坑**：`agenda.md` 初版用 Markdown 的 `>` 写导语，
+> 结果首条「任务」变成了那句导语 —— `_agenda_lines` **只认 `#` 是注释**。
+> 这份文件长得像 Markdown，但解析它的不是 Markdown 解析器。
+> 被 `manual-cycle` 的 task_id 身份核对当场拦下 —— **那正是它存在的理由**，
+> 一次没白建。已在文件头写明。
+
+**审查有一处定位偏了（值得记，因为容易被照抄）**
+
+它把「heartbeat 未接 v5」判为 **P0-a 阻断**。但 §12 的路线图里
+**heartbeat / keeper 属于 P0-c**，P0-a 的定义就是「人给任务，人做判决」。
+所以「heartbeat 必须调 v5 pipeline」不是 P0-a 的验收项；
+**真正的 P0 是它现在还能被触发**。两者修法完全不同：前者要造 P0-c，
+后者只需一道拒绝。**按前者理解会去提前造 P0-c，而那需要还不存在的网关。**
+
+另外它报的 `111 passed / 9 skipped` 与本机 `112 / 8` 不是分歧：
+NTFS junction 那条断言在非 Windows 上跳过，一进一出而已。
+
+**仍未闭合（与上一条记录相同，未因本轮变化）**
+
+1. **organ 最小完整性隔离（§15.6 C6）** —— 服务器部署动作，两条 `expectedFailure` 照旧。
+2. **anchor 5 条 case 未写**（由人撰写），反过拟合非对称尚未生效。
+3. `model_gateway` / `budget` / `report_renderer` / `feedback.json` / 冻结登记未实现。
+4. 锁文件 unlink-recreate 竞态在 Linux 上仍未实测。
+
 ---
 
 ## 常用命令

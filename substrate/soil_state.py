@@ -35,6 +35,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from substrate import fitness
+
 #: §8.1.5：`state/` 下的文件名必须**两端锚定**地匹配这个正则。
 #: glob 式的 `soil-*` 会把 `soil-ledger.jsonl.bak` / `soil-ledger.jsonl.tmp`
 #: 一并算进族里 —— 备份与半截临时文件因此获得与权威台账相同的属主与信任
@@ -256,6 +258,43 @@ def _validate_fitness_envelope(kind: str, event: dict) -> None:
     records = event.get("records")
     if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
         raise SoilStateError(f"{kind}.records 必须是对象数组，收到 {type(records).__name__}")
+    for index, record in enumerate(records):
+        _validate_fitness_record(kind, index, record)
+
+
+def _validate_fitness_record(kind: str, index: int, record: dict) -> None:
+    """`records[]` 单条元素的 schema（§8.2）。
+
+    **写入侧与判据侧必须对得上。** §1.2 的谓词严格下标 `r["probe_id"]` / `r["status"]`
+    —— 那是规格要求的（缺键即台账损坏，不许读者猜方向）。但上一版的写入侧只校验
+    「records 是对象数组」，于是 `records: [{}]` 能写进去，而
+    `ignition-status`（判据的**唯一**求值点）读到它就抛 `KeyError` 崩掉。
+    **一个写得进去、却读不出来的台账行，就是把崩溃留给最需要读数的那一刻。**
+    2026-08-23 第三份独立审查复现了这条。
+
+    `before` / `delta` / `checks_before` 允许为 `None`：`fitness.pair()` 在
+    `baseline`（没有前值可比）与 `unmeasured`（版本维度不匹配）两种合法情形下
+    就是产出 `None`，把它们判成非法会让 runner 自己写不出自己的记录。
+    """
+    where = f"{kind}.records[{index}]"
+    probe_id = record.get("probe_id")
+    if not isinstance(probe_id, str) or not probe_id:
+        raise SoilStateError(f"{where}.probe_id 必须是非空字符串，收到 {probe_id!r}")
+    status = record.get("status")
+    if status not in fitness.STATUSES:
+        raise SoilStateError(
+            f"{where}.status 必须属于 I5 枚举 {sorted(fitness.STATUSES)}，收到 {status!r}")
+    for field in ("before", "after", "delta"):
+        value = record.get(field, "__missing__")
+        if value == "__missing__":
+            raise SoilStateError(f"{where} 缺字段 {field!r}")
+        if value is not None and not isinstance(value, (int, float)):
+            raise SoilStateError(f"{where}.{field} 必须是数字或 None，收到 {value!r}")
+    # 三个版本维度是可比性的前提（§4.1 / §8.3）。缺了它们，不可比会静默发生 ——
+    # 规格把这一条叫做「又一个声明了没断言」。
+    for field in ("probe_manifest_sha", "runner_version", "execution_policy_version"):
+        if not isinstance(record.get(field), str) or not record.get(field):
+            raise SoilStateError(f"{where}.{field} 必须是非空字符串（§4.1 可比性三维度）")
 
 
 class Ledger(_AppendOnlyJsonl):
