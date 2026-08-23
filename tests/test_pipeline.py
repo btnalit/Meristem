@@ -10,6 +10,7 @@ vault 一律建在 `tmp_path` 里，**绝不建在仓库附近**（C-65：`.clau
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1048,6 +1049,64 @@ class LegacyEntryPointTests(unittest.TestCase):
         """闩必须有人看。**一个零调用点的安全开关不是安全开关** ——
         这份规格自己写过，`advance()` 零调用点就是这么活过 400 拍的。"""
         self.assertTrue(hasattr(self.supervisor, "_refuse_if_latched"))
+
+
+class SoilCycleCounterTests(unittest.TestCase):
+    """拍号必须能在**闸门拒绝的情况下**继续前进。
+
+    2026-08-24 实测于服务器的死锁：`_next_soil_cycle` 原本数
+    `observed_fitness` 的条数，而那种事件只在 `validate_task()` **通过之后**才写；
+    C1 的 `eligible_after` 又要求「冻结那一拍不可用」，即拍号必须先前进。
+    **于是拍号只能靠穿过闸门来前进，而闸门正用它做判断** —— 永远停在原地。
+
+    与 v3.1 的 `campaign_calls` 同一形状（§13.2）。教训比 I1 更窄也更基本：
+    **推进拍号的动作，不得挂在拍号所守的那道闸后面。**
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name) / "state"
+        self.state.mkdir()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from substrate import supervisor
+        self.supervisor = supervisor
+
+    def _ledger(self):
+        return soil_state.Ledger(self.state / "soil-ledger.jsonl")
+
+    def test_counter_starts_at_one_on_an_empty_ledger(self):
+        self.assertEqual(self.supervisor._next_soil_cycle(Path(self.tmp.name)), 1)
+
+    def test_a_rejected_attempt_still_advances_the_counter(self):
+        """**这一条就是那个死锁的回归。**
+
+        只写一条 `cycle`（一次被拒的尝试也会写它），不写任何 `observed_fitness`。
+        旧实现在这里恒返回 1；正确行为是前进。
+        """
+        self._ledger().append({"kind": "cycle", "commit": None, "task_id": None,
+                               "generation": "gen-0", "soil_cycle": 1,
+                               "exit_code": None})
+        self.assertEqual(self.supervisor._next_soil_cycle(Path(self.tmp.name)), 2)
+
+    def test_multiple_events_in_one_beat_do_not_over_advance(self):
+        """一拍里写了多条带拍号的事件，拍号只前进一格 ——
+        取 `max` 而不是计数，正是为了这个。"""
+        ledger = self._ledger()
+        for _ in range(3):
+            ledger.append({"kind": "cycle", "commit": None, "task_id": None,
+                           "generation": "gen-0", "soil_cycle": 4, "exit_code": None})
+        self.assertEqual(self.supervisor._next_soil_cycle(Path(self.tmp.name)), 5)
+
+    def test_counter_is_recomputable_from_any_copy_of_the_ledger(self):
+        """不另设计数文件：台账就是权威，这个数可在任意副本上离线重算。"""
+        ledger = self._ledger()
+        ledger.append({"kind": "cycle", "commit": None, "task_id": None,
+                       "generation": "gen-0", "soil_cycle": 7, "exit_code": None})
+        copy_dir = Path(self.tmp.name) / "copy"
+        (copy_dir / "state").mkdir(parents=True)
+        shutil.copy(ledger.path, copy_dir / "state" / "soil-ledger.jsonl")
+        self.assertEqual(self.supervisor._next_soil_cycle(copy_dir), 8)
 
 
 class SoilStateTests(unittest.TestCase):

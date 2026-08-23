@@ -103,13 +103,29 @@ def _generation(repo=None) -> str:
 
 
 def _next_soil_cycle(repo) -> int:
-    """本次是第几个被测候选 = 台账里已有的 `observed_fitness` 数 + 1。
+    """下一个拍号 = 台账里出现过的最大 `soil_cycle` + 1。
 
-    **不另设计数文件**：多一份可变状态就多一处可与台账不一致的地方，
-    而台账本身就是权威（§8.2）。这个数因此可在任意一份台账副本上离线重算。
+    **上一版数的是 `observed_fitness` 的条数，那是一个死锁。** 实测于服务器：
+    `observed_fitness` 只在 `validate_task()` **通过之后**才写；而 C1 的
+    `eligible_after` 要求「冻结那一拍不可用」，即拍号必须先前进。
+    于是拍号只能靠穿过闸门来前进，而闸门用拍号判断能不能过 ——
+    **计数器永远停在原地，任务永远被拒。**
+
+    这与 v3.1 的 `campaign_calls` 是同一个形状（§13.2）：
+    **一个只能穿过闸门才能前进的计数器，而那道闸门正用它做判断。**
+    I1 把「一切计数皆滚动窗口」写成规则，是为了防这类东西；
+    这里的教训更窄也更基本：**推进拍号的动作，不得挂在拍号所守的那道闸后面。**
+
+    改用「台账里出现过的最大拍号 + 1」，并由 `manual_cycle()` 在**任何校验之前**
+    先写一条 `kind:"cycle"` —— 于是一次被拒的尝试同样让拍号前进。
+    取 `max` 而不是计数，也让「一拍里写了多条带拍号的事件」不会把计数推歪。
+
+    仍然**不另设计数文件**：台账就是权威（§8.2），这个数可在任意副本上离线重算。
     """
     ledger = _soil_state.Ledger(pathlib.Path(repo) / "state" / "soil-ledger.jsonl")
-    return sum(1 for r in ledger.read() if r.get("kind") == "observed_fitness") + 1
+    seen = [r["soil_cycle"] for r in ledger.read()
+            if isinstance(r.get("soil_cycle"), int) and not isinstance(r.get("soil_cycle"), bool)]
+    return (max(seen) + 1) if seen else 1
 
 
 def _task_id(text: str) -> str:
@@ -269,6 +285,17 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
     for commit, outcome in _pipeline.reconcile_on_start(repo, ctx):
         print(f"reconcile: {commit[:12]} -> {outcome.name}")
 
+    # **先记这一拍发生过，再做任何校验。**
+    # 拍号由台账里的最大拍号推进（见 `_next_soil_cycle`）；若只在校验通过后才写
+    # 带拍号的事件，一次被拒的尝试就不推进拍号 —— 而 C1 的 `eligible_after`
+    # 恰恰要求拍号先前进。那会死锁，实测过。
+    # **推进拍号的动作，不得挂在拍号所守的那道闸后面。**
+    ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": None,
+                       "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
+                       "exit_code": None,
+                       "path": "candidate" if candidate else "seed",
+                       "calibration": calibration})
+
     if calibration and candidate is None:
         print("--calibration 必须配 --candidate <sha>：校准是**人工给定的确定能提升的"
               "变更**（§12.0.1），不经种子产出。", file=sys.stderr)
@@ -287,6 +314,12 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
     try:
         outcome = _pipeline.process_candidate(commit, task, repo=repo,
                                               panel=manual_prompt, ctx=ctx)
+    except _pipeline.TaskDeclarationError as exc:
+        # **设计内的拒绝不该以 traceback 出现。** Task 声明违反 §8.1.4 是一个
+        # 预期结果（C1 的 eligible_after 就是靠它生效的），操作员该看到的是
+        # 一句说明为什么，不是一段栈 —— 栈会让人以为土壤坏了。
+        print(f"Task 声明被拒：{exc}", file=sys.stderr)
+        return 2
     finally:
         if worktree is not None:
             _drop_worktree(repo, worktree)
