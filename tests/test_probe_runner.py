@@ -293,5 +293,55 @@ class RealClassifierOrganIntegrationTests(unittest.TestCase):
         self.assertNotEqual(run.detail[0]["result"], "unmeasured")
 
 
+class MalformedManifestShapeTests(unittest.TestCase):
+    """独立审查发现的第四类坏 manifest：合法 JSON，但形状不对。
+
+    这些**曾经抛未捕获的 TypeError 炸穿 run_all**，而不是走 None 出口。
+    崩溃比「少一把尺的清单」更糟 —— 它连优雅退化成 UNMEASURED 都做不到。
+    每一种都必须与「缺字段」走同一条出口。
+    """
+
+    def _vault_with(self, tmp: Path, content: str) -> Path:
+        vault = tmp / "vault"
+        probe_dir = vault / "internal" / "active" / "probe-bad"
+        probe_dir.mkdir(parents=True)
+        (probe_dir / "probe.json").write_text(content, encoding="utf-8")
+        return vault
+
+    def test_valid_json_that_is_not_an_object_yields_none(self):
+        # 42 / null / true 会让 `"entrypoint" in manifest` 抛 TypeError；
+        # 数组和裸字符串更坏 —— 它们支持 `in`，会悄悄混进清单直到 run_probe 才崩。
+        for content in ("42", "null", "true", "[1, 2, 3]", '"a string"'):
+            with self.subTest(content=content):
+                with tempfile.TemporaryDirectory() as tmp:
+                    vault = self._vault_with(Path(tmp), content)
+                    self.assertIsNone(probe_runner.catalogue(vault))
+                    self.assertIsNone(probe_runner.run_all(vault, vault))
+
+    def test_run_probe_on_non_dict_manifest_yields_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = _make_tree(Path(tmp))
+            for manifest in (42, None, True, [1, 2, 3], "a string"):
+                with self.subTest(manifest=manifest):
+                    self.assertIsNone(probe_runner.run_probe(manifest, tree))
+
+    def test_checks_wrong_type_yields_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = _make_tree(Path(tmp))
+            for checks in (None, "not a list", 7, [1, 2], ["str"], [None]):
+                with self.subTest(checks=checks):
+                    m = {"id": "p1", "organ": "echoer", "checks": checks}
+                    self.assertIsNone(probe_runner.run_probe(m, tree))
+
+    def test_legal_manifest_still_measures(self):
+        """绿的一半：形状校验不能把合法 manifest 一起挡掉。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = _make_tree(Path(tmp))
+            m = _manifest(checks=[{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}])
+            run = probe_runner.run_probe(m, tree)
+            self.assertIsNotNone(run)
+            self.assertEqual(run.score, 100.0)
+
+
 if __name__ == "__main__":
     unittest.main()

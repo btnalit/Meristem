@@ -153,14 +153,26 @@ def catalogue(vault):
     """扫描 vault/internal/active/*/probe.json，返回冻结 manifest 全集。
 
     **返回 None 表示这份清单这一次编不出来**——与 `run_probe` / `run_all` 已有的
-    「一把坏尺，整轮 UNMEASURED」契约一致。三种情形都返回 None，而不是悄悄跳过
-    那一条、把其余的凑成一份清单交出去：
+    「一把坏尺，整轮 UNMEASURED」契约一致，而不是悄悄跳过那一条、把其余的凑成
+    一份清单交出去。
 
-    1. 某个 probe 目录下的 `probe.json` 读不到（缺文件 / 不是普通文件）。
-    2. 某个 `probe.json` 解析不出合法 JSON。
-    3. 某个 manifest 含 `entrypoint` 字段（§8.1.1：种子可写 schema 里没有这个
-       字段，出现即拒绝——CA-5 的语义是「出现即拒绝」，不是「出现即假装没看见」；
-       冻结阶段本应已挡过一次，这里是纵深防御的第二层）。
+    **判定原则（不是清单）**：只要有任何一个 probe 目录没能产出一份可信的
+    manifest，就返回 None。**刻意不写成穷举列表** —— 上一版这里写「三种情形」，
+    独立审查随即找出了第四种（合法 JSON 但不是对象：`42` / `null` / 数组 /
+    裸字符串），而那种情形当时会抛未捕获的 TypeError。**一句穷举断言只要漏一项
+    就是假的**，而假注释比没有注释更坏。当前实际拦下的包括但不限于：
+
+    - `probe.json` 读不到（缺文件 / 不是普通文件）
+    - 解析不出合法 JSON
+    - 是合法 JSON 但不是对象
+    - 含 `entrypoint` 字段（§8.1.1：种子可写 schema 里没有这个字段，出现即拒绝
+      —— CA-5 的语义是「出现即拒绝」，不是「出现即假装没看见」）
+
+    > **注**：`entrypoint` 这一道目前是**唯一**在跑的一道，不是「第二层」。
+    > `substrate/supervisor.py` 的 `promote_probes()` 里没有对应检查，且它读的是
+    > `state/probe-proposals`（v3.1 的路径），而 v5 §10.1 把提案面定在
+    > `seed/probe-proposals/` —— CA-5 扫的正是后者。**两个路径对不上，是 §13.3
+    > 列的 supervisor 波次 2 改造项，不是这里能修的。**
 
     原先这三处是 `continue`：一把坏尺被静默略过，`run_all` 拿到的是一份**少一把
     尺的清单**——而 `run_all` 自己的契约明写「不做跳过坏的、凑一批好的，那样
@@ -183,6 +195,13 @@ def catalogue(vault):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
+        if not isinstance(manifest, dict):
+            # 合法 JSON 但不是对象（`42` / `null` / `true` / 裸字符串 / 数组）。
+            # 少了这一行，下一行的 `in` 会对 int/None/bool 抛 TypeError 炸穿 run_all，
+            # 而数组和字符串更坏 —— 它们支持 `in`，于是悄悄混进清单，直到 run_probe
+            # 才崩。**崩溃比「少一把尺的清单」更糟**：它连优雅退化成 UNMEASURED
+            # 都做不到。形状不对与字段缺失走同一条 None 出口。
+            return None
         if "entrypoint" in manifest:
             return None
         manifests.append(manifest)
@@ -203,7 +222,14 @@ def run_probe(manifest: dict, tree):
         checks = manifest["checks"]
         organ = manifest["organ"]
         probe_id = manifest["id"]
-    except KeyError:
+    except (KeyError, TypeError):
+        # TypeError：manifest 根本不是 dict（下标操作抛的）。缺字段与形状不对
+        # 是同一类事故 —— 这把尺读不出来 —— 必须走同一条 None 出口，不能一条
+        # 优雅退化、另一条抛异常炸穿调用者。
+        return None
+    if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
+        # `"checks": null` 或 checks 里混了非对象元素。少了这一行，下面的 for
+        # 循环或 check["input"] 会抛 TypeError —— 同一个洞换个位置。
         return None
     entrypoint = _entrypoint(Path(tree), organ)
     detail = []

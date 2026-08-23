@@ -778,11 +778,25 @@ open agenda item: <task text>   或   open agenda item: (none)
 #### `substrate/probe_runner.py`（S3）
 
 ```python
-def catalogue(vault: Path) -> list[dict]
-def run_probe(manifest: dict, tree: Path) -> ProbeRun
+def catalogue(vault: Path) -> list[dict] | None
+def run_probe(manifest: dict, tree: Path) -> ProbeRun | None
     # score = passed / len(checks) * 100
-def run_all(tree: Path, vault: Path) -> list[ProbeRun]
+def run_all(tree: Path, vault: Path) -> list[ProbeRun] | None
 ```
+
+> **三个 `| None` 是契约的一部分，不是可选的防御性写法。**
+> `None` 的含义统一为「这一次测不出来」，对应 §10 pipeline 的
+> `if before is None or after is None → Outcome.UNMEASURED` 出口。
+>
+> **任何一把尺读不出来或跑不出来，整轮返回 None，不返回一份少一把尺的清单**——
+> 后者会让 before 与 after 覆盖不同的探针集合，两边根本不可比，而 `fitness.pair()`
+> 对此毫无察觉：它逐 `probe_id` 配对，缺席的那把只是「没配上」，不会报错。
+>
+> **判定原则而非穷举**：只要 manifest 不可信（读不到 / 非法 JSON / 不是对象 /
+> 含 `entrypoint` / 必需字段缺失或类型不对），就走 `None`。**不要在实现里写
+> 「以下三种情形」这类穷举断言**——v5.9 落地时写过一次，独立审查当场找出第四种，
+> 而那种情形当时抛的是未捕获异常。**崩溃比少一把尺更糟：它连退化成 UNMEASURED
+> 都做不到。**
 
 `ProbeRun` 字段：`probe_id, score, checks_passed, checks_total, detail`，
 **外加 §4.1 Measurement 身份的全部四项** `probe_manifest_sha, tree_sha, runner_version, execution_policy_version`。
@@ -1259,6 +1273,7 @@ seed/model-interface.json     种子只读，不含配额数字
 |---|---|---|
 | `STATE_FILES`：`control/agenda.md`、`state/{proposals,mailbox,gaps,patterns,backlog}.md` | `_commit_state()` 每拍提交 | 清单须按 v5 的登记册重列 |
 | `_auto_promote()` | 从 proposals 搬到 agenda | v5 的选题流程若不同则须重写 |
+| **`promote_probes()` 的 `PROBE_STAGING`** | 读 `state/probe-proposals`（v3.1 路径） | **必改**：v5 §10.1 把提案面定在 `seed/probe-proposals/`，**CA-5 扫的正是后者**。两个路径对不上意味着 CA-5 断言的目录与冻结流程实际读的目录不是同一个 —— **一条扫着空处的断言**。且 `promote_probes()` 里没有 `entrypoint` 字段检查，所以 §8.1.1 的拒绝目前**只有 `probe_runner.catalogue()` 一道在跑**，不是纵深两层 |
 | cap case 相关逻辑 | v3.1 的上限治理 | **v5 无 LOC 闸门，整段删除** |
 | `guard_lifecycle()` | 六段生命周期守卫 | v5 两状态，重写或删除 |
 | 失败聚合 / journal event kind | v3.1 的事件名 | v5 的 `kind` 集合须逐一对照 |
