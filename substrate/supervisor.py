@@ -48,6 +48,19 @@ from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
 
+#: §13.3 表 C（v5.9 补）：种子经 `meristem/llm.py` 的每次模型调用都靠这个变量
+#: 转发到 `substrate/model_gateway.py`。**必须是绝对路径，不能是 `python -m
+#: substrate.model_gateway`。** `_seed_candidate()` 给种子子进程的 `PYTHONPATH`
+#: 指向候选 worktree（见下），若网关命令依赖 PYTHONPATH 解析，Python 会把
+#: `substrate.model_gateway` 解析成候选 worktree 里的那份拷贝——种子写不了
+#: `substrate/`（白名单挡着），拷贝内容不会被篡改，但网关随后要靠自己的
+#: `__file__` 找 `soil/model-policy.toml` 与 `state/`：worktree 里的 `state/`
+#: 要么是空的（`state/` 被 gitignore，新 worktree 里根本不存在），要么将来若
+#: 意外产生内容也是一份与真实台账脱钩的影子副本。绝对路径直接指向本仓库的
+#: `model_gateway.py`，它的 `__file__` 落在真实仓库根，与 `budget.py` 的 REPO
+#: 解析同一套逻辑，不依赖调用者的 cwd / PYTHONPATH。
+MODEL_GATEWAY_ENTRYPOINT = f"{sys.executable} {REPO / 'substrate' / 'model_gateway.py'}"
+
 
 def _refuse_if_latched() -> bool:
     """panic 闩：上着就不跑（`root/panic.py`，权威在 root/ 这一级）。
@@ -193,8 +206,19 @@ def _seed_candidate(repo, ctx, task):
     # 整份 `os.environ` 会把 `MERISTEM_VAULT`（C-65 保证一定在）连同任何模型 key、
     # webhook 一起交给它 —— vault 存在的全部理由就是种子看不见它。
     # 与 `pipeline.canary()` 复用同一份 allowlist，不各写各的。
+    #
+    # **`MERISTEM_MODEL_GATEWAY` 必须显式写进这个字典，不能指望它「本来就在
+    # `os.environ` 里、会被带过去」**（§13.3 表 C，v5.9 补）。`_sandboxed_env()`
+    # 是一份不含它的允许列表——哪怕运维在 supervisor 自己的进程环境里正确设置了
+    # 这个变量，`{**_sandboxed_env(), ...}` 也只会原样丢弃它，因为它不在
+    # `_ENV_ALLOWLIST` 里，而这里又没有像 `PYTHONPATH` / `MERISTEM_SOIL_CYCLE`
+    # 那样单独把它加回来。**一个设对了却被静默滤掉的变量，和一个从没设置过的
+    # 变量，效果完全一样**——两者都会让 `llm.py` fail closed 成
+    # `gateway_not_injected`，而这正是 v5.9 那行原文点名要防的「哑故障」。
+    # 与 `MERISTEM_SOIL_CYCLE` 同一处理方式：现算，不依赖继承。
     env = {**_probe_runner._sandboxed_env(), "PYTHONPATH": str(worktree),
-           "MERISTEM_SOIL_CYCLE": str(ctx.soil_cycle)}
+           "MERISTEM_SOIL_CYCLE": str(ctx.soil_cycle),
+           "MERISTEM_MODEL_GATEWAY": MODEL_GATEWAY_ENTRYPOINT}
     try:
         result = subprocess.run([sys.executable, "-m", "meristem.loop", "cycle"],
                                 cwd=str(worktree), env=env, capture_output=True,
