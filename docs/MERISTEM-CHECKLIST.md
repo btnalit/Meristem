@@ -14,9 +14,15 @@
 | **C-2** | SSH 命令保持简单，**复合链要拆开** | `A && B && C & echo $!` 这类即使服务器端成功也会挂到超时；后台启动另行用 `pgrep -af` 确认 |
 | **C-17** | **`pgrep -f` / `pkill -f` 会匹配到 SSH wrapper 自己的命令行** | 2026-08-23 重犯两次：`pkill -f 'tail -qF …'` 杀掉自己的父 shell → SSH 退 255 且无输出；`pgrep -c` 把自己数了进去，差点误报「还有进程在跑」。**写法：`pgrep -af '[r]un_meristem'`**，或先 `pgrep` 取 PID 再 `kill <pid>` |
 | **C-14** | 操作员是唯一不过闸门的变异路径 | v5 已把它写进 §7：操作员走与种子同一条 `emit_change → measure → judge → promote`，只是评审清单换土壤版 |
+| **C-65** | **绝不在 worktree 里跑 bootstrap** —— 任何按 `../meristem-vault` 相对建 vault 的脚本同理 | 2026-08-23 清理时发现：`.claude/worktrees/meristem-vault/` 是一份完整的 anchor vault 副本（含可执行 `rubric/check.py`），建于 8月14，因为有人在 worktree 里跑了 bootstrap，`../` 落在了 `.claude/worktrees/` 而不是仓库外。**`.gitignore` 确实挡住了它进 GitHub，但 gitignore 挡的是发布，挡不住任何一个遍历目录树的进程**——而 vault 存在的全部理由是「物理上不可见胜过要求 prompt 不要看」（bootstrap 自己的 docstring）。这是 C-43/C-47 那两次泄漏的同一形状，只是换了个位置 |
 
 > **C-17 值得单独记一笔**：它在旧清单里写了六天，我今天照样踩了两次。
 > 那份 memory 自己的告诫是「READ it comes first」——**记录不是问题，不读才是。**
+
+> **C-65 给 v5 的 bootstrap 作者**：§10 还要写一个新的 bootstrap。
+> **不要用相对路径定位 vault。** 从 `MERISTEM_VAULT` 读，读不到就拒绝运行并报错，
+> 不要退回任何「相对当前目录往上一层」的缺省——那个缺省正是这次事故的成因，
+> 而它失败时不报错，只是把 vault 建到了错的地方。
 
 ---
 
