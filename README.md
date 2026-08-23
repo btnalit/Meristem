@@ -33,7 +33,8 @@ impossible to produce**, and the system reported progress anyway.
 | **anchor probe (5 hidden cases)** | **not written — human-authored, by design** |
 | `budget.py`, `model_gateway.py`, `panel.py` | not implemented |
 | `soil/report_renderer.py`, `seed/feedback.json` | not implemented |
-| **organ filesystem/network isolation (§15.6 C6, P0-a tier)** | **not implemented** |
+| **organ filesystem/network isolation (§15.6 C6, P0-a tier)** | **implemented and verified on the server** — `worker` UID, no supplementary groups, private netns, isolated organ copy; `SECURITY_ASSURANCE=FULL`. Falls back to a loudly-reported `best_effort` where the host cannot enforce it |
+| calibration control group (§12.0.1) | **run on the server: 40.0 → 60.0, `improved`** — the apparatus measures |
 | **full P0-a loop (three cycles, H1)** | **blocked** |
 
 **Nothing has run yet.** No `state/soil-ledger.jsonl` exists, so no

@@ -193,10 +193,24 @@ class UntrustedExecutionContractTests(unittest.TestCase):
     「**「不继承环境变量」≠「读不到 secrets」，「subprocess」≠「隔离」**：
     同 UID 下可读 `/proc/<pid>/environ`、**可用绝对路径读 vault**、可直接联网。」
 
-    当前 `probe_runner` 只做了裁剪环境变量 + subprocess + 墙钟超时。
-    下面两条是 2026-08-23 外部审查复现过的攻击，**至今未修**，
-    因此标成 `expectedFailure`：修好的那天它们会报 unexpected success。
+    **2026-08-23 起这两条不再是 `expectedFailure`。** `probe_runner` 现在按
+    `isolation_status()` 分两级：
+
+    - `enforced`（Linux + root + util-linux + `worker` 账户）→ **硬断言必须被挡住**
+    - `best_effort`（Windows / 非 root / 缺账户）→ **大声 skip 并说明攻击在此仍然成立**
+
+    这与 CA-2 的处理是同一形状：**区分「平台做不到」与「平台做得到但没做」**。
+    permanent xfail 会让这两者长得一样，而它们对应完全不同的处置 ——
+    前者要换机器，后者是一步没做的部署。
     """
+
+    def _require_enforced(self):
+        level, reason = probe_runner.isolation_status()
+        if level != "enforced":
+            self.skipTest(
+                f"隔离在本机只有 best_effort（{reason}）—— **下面这条攻击在此仍然成立**。"
+                "这不是「不适用」，是「这台机器没兑现 §15.6 的 P0-a 档」。")
+        return level
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -218,10 +232,11 @@ class UntrustedExecutionContractTests(unittest.TestCase):
                     "checks": [{"id": "c1", "input": "x", "cmp": "equals", "expect": "x"}]}
         return probe_runner.run_probe(manifest, self.tree)
 
-    @unittest.expectedFailure
     def test_organ_cannot_read_the_vault_by_absolute_path(self):
         """**vault 不可读**。organ 读到 anchor 的隐藏 case，
         anchor 作为外部锚的全部价值即刻归零 —— 它就是靠种子看不见才成立的。"""
+        self._require_enforced()
+        os.chmod(self.secret, 0o600)  # 模拟 vault：只有属主读得到，worker 不是属主
         self._organ(textwrap.dedent(f"""\
             import json, sys, pathlib
             sys.stdin.read()
@@ -236,11 +251,12 @@ class UntrustedExecutionContractTests(unittest.TestCase):
             "ANCHOR_HIDDEN_CASE_ANSWER" in str(d.get("got", "")) for d in run.detail)
         self.assertFalse(leaked, "organ 用绝对路径读到了 vault 内容（§15.6 C6 P0-a 档）")
 
-    @unittest.expectedFailure
     def test_organ_cannot_write_the_soil_ledger(self):
         """**ledger 不可写**。这条比读 vault 更直接：organ 能往台账追加，
         就能伪造一条 `accepted_fitness` —— **凭空制造出 §1.2 判据要的那个事件**，
         而整个 P0-a 就是拿那个事件来判断 H1 是否成立的。"""
+        self._require_enforced()
+        os.chmod(self.ledger, 0o600)  # 模拟 state/soil-*.jsonl 的 soil:0600
         self._organ(textwrap.dedent(f"""\
             import json, sys
             sys.stdin.read()
@@ -255,6 +271,49 @@ class UntrustedExecutionContractTests(unittest.TestCase):
         self._run_one()
         self.assertEqual(self.ledger.read_text(encoding="utf-8"), "",
                          "organ 往土壤台账里写进去了（§15.6 C6 P0-a 档）")
+
+    def test_organ_cannot_reach_the_network(self):
+        """**禁网**（§15.6 P0-a 档的第三条）。
+
+        此前这一条**连断言都没有** —— 档位表把它列在 P0-a，
+        而实现只在 docstring 里说「留给 P0-b」。规格自身对这一项的归属也自相矛盾
+        （§18 v5.11 已登记）。这里按**更严的那一边**实现并断言：
+        既然私有网络命名空间跟降权是同一条命令拿到的，就没有理由不要它。
+        """
+        self._require_enforced()
+        self._organ(textwrap.dedent("""\
+            import json, socket, sys
+            sys.stdin.read()
+            try:
+                socket.create_connection(("1.1.1.1", 53), timeout=3)
+                got = "REACHED"
+            except Exception:
+                got = "BLOCKED"
+            print(json.dumps({"category": got}))
+            """))
+        run = self._run_one()
+        self.assertIsNotNone(run, "organ 应当正常产出输出")
+        self.assertNotIn("REACHED", str(run.detail),
+                         "organ 连上了外网（§15.6 C6 P0-a 档要求禁网）")
+
+    def test_isolation_status_is_readable_not_just_asserted_in_a_comment(self):
+        """隔离级别必须**能被读出来**。
+
+        「已隔离」若只存在于运行环境里，台账上的分数长得一模一样 ——
+        那就是这个项目反复点名的「声明了没断言」。
+        """
+        level, reason = probe_runner.isolation_status()
+        self.assertIn(level, ("enforced", "best_effort"))
+        self.assertTrue(reason, "任何一级都必须给出理由")
+
+    def test_execution_policy_version_moved_when_the_policy_moved(self):
+        """执行策略变了，`execution_policy_version` 必须跟着变（§4.1）。
+
+        它是 Measurement 身份的三个维度之一，**存在的全部理由就是让不可比显式发生**。
+        加了 worker 降权与网络命名空间却不动版本号，等于让隔离前后的分数
+        看起来可以直接比较。
+        """
+        self.assertEqual(probe_runner.EXECUTION_POLICY_VERSION, "2")
 
     def test_organ_cannot_read_secrets_from_the_environment(self):
         """这一条是**已经生效**的那半 —— §15.6 的验收判据之一：
