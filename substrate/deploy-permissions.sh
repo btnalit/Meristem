@@ -36,6 +36,22 @@ id soil   >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin
 id worker >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin worker
 id soil; id worker
 
+# **每次都核实，不只在创建那一刻。** 上一版只在账户缺席时 useradd，于是一个
+# 早已存在、带着附加组的同名 `worker` 会被照单全收 —— 而「worker 无附加组」
+# 正是整个隔离论证的地基。**一个只在首次部署时为真的不变量，不是不变量。**
+# 幂等 ≠「重跑不报错」，幂等是「重跑之后状态一定对」。
+worker_groups="$(id -Gn worker | tr ' ' '\n' | grep -v '^worker$' || true)"
+if [ -n "$worker_groups" ]; then
+    echo "worker 带有附加组：$(echo "$worker_groups" | tr '\n' ' ')" >&2
+    echo "§15.6 要求无附加组 —— 那是它拿到额外读权限的最短路径。拒绝继续。" >&2
+    exit 3
+fi
+worker_shell="$(getent passwd worker | cut -d: -f7)"
+case "$worker_shell" in
+    */nologin|*/false) ;;
+    *) echo "worker 的 shell 是 '$worker_shell'，应为 nologin。拒绝继续。" >&2; exit 3 ;;
+esac
+
 echo "==> vault：soil 属主，0500 —— worker 不可读"
 # anchor 的隐藏 case 就存在这里。vault 存在的全部理由是「物理上不可见
 # 胜过要求 prompt 不要看」；靠 prompt 不看的那一刻，它就已经不是外部锚了。

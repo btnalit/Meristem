@@ -43,6 +43,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 RUNNER_VERSION = "1"
@@ -125,12 +126,24 @@ def isolation_status() -> tuple:
     if shutil.which("unshare") is None or shutil.which("setpriv") is None:
         return "best_effort", "util-linux unshare/setpriv unavailable"
     try:
+        import grp
         import pwd
-        pwd.getpwnam(WORKER_USER)
+        entry = pwd.getpwnam(WORKER_USER)
     except (ImportError, KeyError):
         return "best_effort", f"no {WORKER_USER!r} account on this host"
-    return "enforced", (f"organ runs as {WORKER_USER} (no supplementary groups) "
-                        "in a private network namespace")
+    # **附加组必须当场核实，不能只核实账户存在。** 「worker 无附加组」是整个隔离
+    # 论证的地基（§15.6 逐字写着「无附加组」），而它此前只在**创建账户那一刻**成立：
+    # 一个早已存在的、带着附加组的同名账户会被照单全收，然后 `isolation_status()`
+    # 照样报 `enforced`。**一个只在首次部署时为真的不变量，不是不变量。**
+    extra = sorted(g.gr_name for g in grp.getgrall()
+                   if WORKER_USER in g.gr_mem and g.gr_gid != entry.pw_gid)
+    if extra:
+        return "best_effort", (f"{WORKER_USER!r} has supplementary groups {extra} — "
+                               "§15.6 requires none; they are the shortest path to "
+                               "extra read access")
+    return "enforced", (f"organ runs as {WORKER_USER} (uid={entry.pw_uid}, no "
+                        f"supplementary groups) in a private network namespace; "
+                        f"soil euid={os.geteuid()}")
 
 
 def _isolation_prefix() -> list:
@@ -147,6 +160,36 @@ def _isolation_prefix() -> list:
             "setpriv", "--reuid", WORKER_USER, "--regid", WORKER_USER, "--clear-groups"]
 
 
+class OrganRefused(Exception):
+    """organ 的形状本身不可信，这一次测不出来（走 `unmeasured` 出口）。"""
+
+
+def _refuse_links_in_organ(organ_dir: Path) -> None:
+    """organ 目录里**不得存在任何链接**，有就拒绝执行。
+
+    **这是主防线，`symlinks=True` 只是纵深。** 理由：organ 是种子拥有的代码
+    （`body/organs/` 在种子可写白名单上），而任何遍历它的土壤侧动作都带着土壤的
+    权限。保住「不解引用」只挡住了复制这一条路径；**下一个遍历它的人未必记得**
+    ——校验和、打包、渲染报告、统计行数，每一个都是同一个洞的新入口。
+
+    organ 没有任何正当理由需要链接：它是一个 `input -> label` 的纯函数，
+    §10.2 把入口写死为 `body/organs/<organ>/run.py`。**不列举攻击，直接不允许这类文件。**
+    """
+    if not organ_dir.is_dir():
+        return
+    for path in [organ_dir, *organ_dir.rglob("*")]:
+        if path.is_symlink():
+            raise OrganRefused(
+                f"organ 目录含符号链接，拒绝执行：{path.relative_to(organ_dir.parent)}")
+        try:
+            attributes = os.stat(path, follow_symlinks=False).st_file_attributes
+        except (OSError, AttributeError):
+            continue
+        if attributes & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT（junction 等）
+            raise OrganRefused(
+                f"organ 目录含 reparse point，拒绝执行：{path.relative_to(organ_dir.parent)}")
+
+
 @contextlib.contextmanager
 def _isolated_organ(entrypoint: Path):
     """把 organ 复制成**它自己的隔离工作副本**再执行，用完即毁。
@@ -157,10 +200,19 @@ def _isolated_organ(entrypoint: Path):
     把整棵被测树对本机所有用户敞开。复制一份更小、更好收回，
     而且天然满足「只读自己那份」。
     """
+    _refuse_links_in_organ(entrypoint.parent)
     staging = Path(tempfile.mkdtemp(prefix="meristem-organ-"))
     try:
         work = staging / "organ"
-        shutil.copytree(entrypoint.parent, work)
+        # **`symlinks=True` 不可省。** 默认的 `symlinks=False` 会**解引用**链接：
+        # 把目标的内容读出来、落成普通文件 —— 而这次读取发生在**土壤进程里、
+        # 降权之前**，土壤有 vault 的完整读权限。于是种子只要在自己的 organ 目录里
+        # 放一个指向 vault 的链接，vault 就被搬进 worker 自己的工作副本，
+        # organ 再用一个普通相对路径读走它。**为隔离而加的这一步，
+        # 恰好成了绕过隔离的那条路**（2026-08-23 独立审查实测，单文件与整个
+        # vault 子树两种都成立）。链接指向目录时 copytree 会递归进去，
+        # 一个链接就够把整棵 vault 复制出来。
+        shutil.copytree(entrypoint.parent, work, symlinks=True)
         level, _ = isolation_status()
         os.chmod(staging, 0o755)
         for path in [work, *work.rglob("*")]:
@@ -194,16 +246,27 @@ def _invoke(entrypoint: Path, check_input) -> tuple[bool, str]:
     entrypoint = entrypoint.resolve()
     if not entrypoint.is_file():
         return False, "entrypoint missing"
+    started = time.monotonic()
     try:
         with _isolated_organ(entrypoint) as isolated:
+            # **超时预算要盖住准备阶段，不只是 exec。** `_isolated_organ` 的复制与
+            # chmod/chown 遍历发生在 `subprocess.run` 之前，原先完全不在任何时限内 ——
+            # 一个够大（或够坏）的 organ 目录能在那里把 runner 拖住，
+            # 而 `--kill-child` 那套只管 exec 之后。**卡死 runner 是 §15.6 点名要防的。**
+            remaining = PROBE_TIMEOUT_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                return False, "timeout preparing isolated organ copy"
             result = subprocess.run(
                 [*_isolation_prefix(), sys.executable, str(isolated)],
                 input=json.dumps({"input": check_input}),
                 capture_output=True, text=True,
-                timeout=PROBE_TIMEOUT_SECONDS,
+                timeout=remaining,
                 cwd=str(isolated.parent),
                 env=_sandboxed_env(),
             )
+    except OrganRefused as exc:
+        # 形状不可信 -> 这一次测不出来（unmeasured），不是 0 分。
+        return False, str(exc)
     except subprocess.TimeoutExpired:
         return False, "timeout"
     except OSError as exc:

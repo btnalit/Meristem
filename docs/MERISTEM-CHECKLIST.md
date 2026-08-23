@@ -514,6 +514,114 @@ python3 -m pytest tests/ -q               # CA-2 与三条隔离断言来验收
   但等种子真去爬这条梯度时，没有 anchor 就分不清真变强和硬编码。
 - `model_gateway` / `budget` 仍缺，种子还不能自己产出候选。
 
+### 2026-08-24 · 服务器 v3.1 遗留清盘
+
+**做法：先存档、再清理** —— 与 2026-08-23 那次三地同步同一条纪律，
+不是 `rm -rf`。全部移入 `/RSI/meristem-v3-archive/leftovers-20260824/`：
+
+| 去处 | 内容 |
+|---|---|
+| `logs/` | 24 项：`beat/brain*/campaign/cycles*/ext*/init*/heartbeat-compress/keeper_stdout/overnight` 日志 · `keeper.lock` · `keeper_rollbacks` · `agenda.working.bak` |
+| `runners/` | `run_meristem.sh` · `run_meristem.sh.bak-p077` · `run-cycles.sh` · `audit_rings.py` |
+| `workdirs/` | `p078/`（一整份 v3.1 工作副本）· `vault-quarantine-20260820/` · `vault-quarantine-20260821/` |
+| （根） | `meristem-env.bak-20260817-025508`（**含旧密钥，权限保持 0600**） |
+
+**清理后 `/RSI` 只剩 5 项**：`Meristem/` · `meristem-control/`（PANIC 闩）·
+`meristem-env` · `meristem-v3-archive/` · `meristem-vault/`。
+
+**清盘前先确认没有东西在跑**：无 cron、无 systemd unit、无进程。
+
+> **C-17 第三次现身**：`pgrep -af '[m]eristem'` 唯一的"匹配"就是 SSH wrapper 自己 ——
+> 因为它的命令行里含有那个词（在 `echo` 的回退串里）。方括号技巧挡得住模式自匹配，
+> **挡不住命令行其余部分里出现同一个词**。读结果时要认出这一点，否则会误报"还有进程"。
+
+**清盘中途被纠正了方向 —— 这一条比清盘本身重要**
+
+我最初的做法是**给 v3.1 入口加闸**（`heartbeat`/`run`/`promote`/`canary`/`rollback`
+默认退 2，keeper 同样默认停用），还留了 `MERISTEM_ALLOW_LEGACY=1` 后门。
+
+用户否掉了这个方向：**要保留的必须为融合进 v5 重新设计，不该还有「为 v3.1 而存在」的东西。**
+
+**§13.3 本来就是这么写的，我没照做**：「cap case 相关逻辑 → **v5 无 LOC 闸门，整段删除**」·
+「`guard_lifecycle()` → **重写或删除**」·结论那句是「**保留骨架、重写判决回路**」。
+一个加了锁的第二入口仍然是第二入口；而那个后门存在的唯一理由就是 v3.1。
+
+**改为整块删除**：
+
+| 对象 | 处置 |
+|---|---|
+| `substrate/supervisor.py` | **1588 → 331 行**。删掉 promote/canary/heartbeat/rollback/run · journal/proposals/agenda 状态面 · cap case · lifecycle 守卫 · probe staging · `MERISTEM_ALLOW_LEGACY` |
+| `substrate/run_meristem.sh` | **删除**（v3.1 keeper）。P0-c 要 keeper/breaker 时按 v5 语义重新设计，从 git 历史取材 |
+| `vault/anchors/probe-kernel-selftest` + `vault/manifest.json` | **移入归档**。前者测的是已删除的 v3.1 内核；后者是 v3.1 的冻结登记，v5 代码不读它（`catalogue()` 只扫 `internal/active/`） |
+
+**删掉的东西没有丢**：git 历史与归档 bundle 里都在。
+
+**panic 闩从 v3.1 遗物改造成 v5 机制。** v3.1 删掉后，闩本来会变成一个**零调用点的
+安全开关** —— 而这份规格自己写过，`advance()` 零调用点就是这么活过 400 拍的。
+现在 `manual-cycle` 启动即检查闩，上着就退 3；`ignition-status` 是只读读数，不受闩影响
+（**停机时最需要看的就是它**）。
+
+> **后果要说清楚**：闩现在也挡 v5。它当前仍上着，内容写的是「v3.1 retired for v5 rebuild」
+> —— 那句话已经过期。**要跑 v5 就得清闩，而清闩是人的动作**（`python3 root/panic.py clear`）。
+
+> **中途还踩到一个下游后果**：加闸方案下，被拒绝的 `heartbeat` 退 2，
+> 而 keeper 把「非 3、非 ≥128」当瞬时失败 → 冷却 → 重试 → **永远空转**。
+> 整块删除之后这个问题自动消失。**教训仍然成立：给一个入口加拒绝时，
+> 要看谁在调它、以及调用方怎么解读退出码 —— 只改被调方，是把「会跑错」换成「会空转」。**
+
+**没动的（说明理由）**：`state/soil-ledger.jsonl` 是校准跑出来的**真实台账**，不是遗留。
+
+### 2026-08-24 · 独立 code review：我为隔离加的那一步，正是绕过隔离的路
+
+审查对象是 PR #3（worker 隔离）。它报了一个 **P0，把整套隔离从根上打穿**，我复现确认。
+
+**`shutil.copytree` 默认 `symlinks=False` 会解引用。**
+
+`_isolated_organ()` 把 organ 复制成隔离副本 —— 而 `body/organs/` **在种子可写白名单上**。
+种子在自己的 organ 目录里放一个指向 vault 的链接，`copytree` 就把目标内容**读出来落成普通文件**。
+**那次读取发生在土壤进程里、降权之前**，土壤有 vault 的完整读权限。
+于是 vault 被搬进 worker 自己的工作副本，organ 再用一个**普通相对路径**读走。
+
+服务器实测（对着真实 vault）：
+
+```
+symlinks=False -> is_symlink=False, 内容='{ "version": 1, "note": "F...'   <- 真的读出来了
+symlinks=True  -> is_symlink=True                                          <- 保住链接
+```
+
+链接指向**目录**时 `copytree` 会递归进去 —— **一个链接就能把整棵 vault 复制出来**。
+
+**而我那三条新断言一条都覆盖不到它**：它们测的是「organ 硬编码绝对路径去 `open`」，
+可真实攻击根本不需要知道绝对路径 —— 一个 `../../..` 形状的相对链接同样成立。
+
+**修法**：主防线是**直接拒绝含任何链接的 organ 目录**（记 `unmeasured`），
+`symlinks=True` 只作纵深。为什么主防线是「不允许这类文件」而不是「不解引用」：
+保住 copytree 只挡住了**复制这一条路径**，而下一个遍历 organ 目录的土壤侧动作
+（校验和、打包、渲染报告、统计行数）都是同一个洞的新入口。**organ 是
+`input -> label` 的纯函数，没有任何正当理由需要链接。**
+
+服务器验证：指向文件的链接、指向整个 vault 的链接，两种都被拒绝，隔离副本无残留。
+
+**同轮修掉的其余审查项**
+
+- **`worker` 无附加组这条不变量此前只在创建账户那一刻成立** —— 已存在的同名账户
+  会被 `id worker || useradd` 照单全收，而 `isolation_status()` 只查账户存在。
+  **一个只在首次部署时为真的不变量，不是不变量。** 现在运行时与部署脚本都逐次核实
+  （附加组 + nologin shell），不合即 `best_effort` / 退 3。
+- **超时预算盖不住准备阶段**：复制与 chmod/chown 遍历在 `subprocess.run` 之前，
+  原先完全不在时限内 —— 而卡死 runner 正是 §15.6 点名要防的。现在用同一份预算。
+
+**审查还提了两条我没在本轮闭合的，记下来不假装闭合**
+
+1. **土壤实际是以 root 在跑，而 §15.6 的身份模型写的是 `soil` UID。**
+   `isolation_status()` 要求 `euid==0` 才报 `enforced`，等于把「root vs 其余」
+   当成了「soil vs worker」。真正建立那条边界需要给 `unshare`/`setpriv` 配 file
+   capabilities 或窄 sudo 规则，并让 vault 留出 soil 自己的写路径。
+   **本轮至少让 `isolation_status()` 把 `soil euid=` 打出来，不再隐含。**
+2. **`SECURITY_ASSURANCE=FULL` 并不观测本轮新增的三条属性** —— 它只看 CA-2 的
+   属主与写位。三条隔离断言住在另一个文件里，回归了徽章也不会变色。
+   要么把它们并进 CA-2 的取值，要么收窄 §17.8.3 对 `FULL` 的措辞。
+
 ---
 
 ## 常用命令

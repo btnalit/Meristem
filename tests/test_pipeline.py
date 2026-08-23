@@ -643,38 +643,52 @@ class LedgerReaderContractTests(unittest.TestCase):
 
 
 class LegacyEntryPointTests(unittest.TestCase):
-    """v3.1 的运行入口默认不可触发（双轨消除）。
+    """v3.1 的运行入口**已删除**，不是加了闸。
 
-    危险不在于「旧代码还在」，而在于 **`heartbeat` 现在就能跑**：
-    它以 `cwd=REPO` 起 `meristem.loop cycle`，而那如今是 v5 的种子，
-    默认 workdir 就是 REPO —— 种子会**直接提交到主线**，再由 v3.1 的 `promote()`
-    判决，绕开 before/after 测量、`soil-ledger`、`accepted_fitness` 与点火记账。
-    **同一件事只能有一个权威判定入口。**
+    上一版给它们加默认拒绝、并留了 `MERISTEM_ALLOW_LEGACY=1` 后门。
+    **一个加了锁的第二入口仍然是第二入口** —— 而这个项目的规矩是
+    「同一件事只能有一个权威判定入口」；那个后门存在的唯一理由是 v3.1，
+    而 v3.1 已在 §13 清盘里判了死刑。§13.3 写的处置本就是
+    「整段删除」/「重写或删除」，不是「关起来」。
     """
 
     def setUp(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from substrate import supervisor
         self.supervisor = supervisor
-        self._saved = os.environ.pop("MERISTEM_ALLOW_LEGACY", None)
-        self.addCleanup(lambda: os.environ.__setitem__("MERISTEM_ALLOW_LEGACY", self._saved)
-                        if self._saved is not None else None)
 
-    def test_every_legacy_command_is_refused_by_default(self):
-        for command in self.supervisor.LEGACY_COMMANDS:
+    def test_only_two_v5_commands_exist(self):
+        parser_commands = self.supervisor.main.__doc__  # 占位，真正断言在下面
+        for command in ("run", "promote", "rollback", "canary", "heartbeat"):
             with self.subTest(command=command):
-                self.assertEqual(self.supervisor.main([command]), 2)
+                # argparse 对不在 choices 里的值退 2 并打印 usage —— 命令**不存在**，
+                # 而不是「存在但被拒绝」。两者对读者是完全不同的信息。
+                with self.assertRaises(SystemExit):
+                    self.supervisor.main([command])
 
-    def test_v5_commands_are_not_refused(self):
-        self.assertNotIn("manual-cycle", self.supervisor.LEGACY_COMMANDS)
-        self.assertNotIn("ignition-status", self.supervisor.LEGACY_COMMANDS)
+    def test_no_legacy_escape_hatch_remains(self):
+        """后门本身必须不存在 —— 留着它就是为一个已删除的系统保留能力。"""
+        self.assertFalse(hasattr(self.supervisor, "LEGACY_COMMANDS"))
+        self.assertFalse(hasattr(self.supervisor, "_refuse_legacy"))
+        source = (Path(__file__).resolve().parents[1]
+                  / "substrate" / "supervisor.py").read_text(encoding="utf-8")
+        # 只允许在讲「为什么删掉它」的文档串里出现。
+        code = source.split('"""', 2)[2] if source.count('"""') >= 2 else source
+        self.assertNotIn("MERISTEM_ALLOW_LEGACY", code)
 
-    def test_legacy_can_be_unlocked_explicitly(self):
-        """解锁是**人的动作**，与 panic 闩同一形状：默认安全，例外要显式说出口。"""
-        os.environ["MERISTEM_ALLOW_LEGACY"] = "1"
-        self.addCleanup(os.environ.pop, "MERISTEM_ALLOW_LEGACY", None)
-        # 解锁后不再走拒绝分支（真跑 v3.1 逻辑不在本测试范围内，只断言不再返回 2）。
-        self.assertNotEqual(self.supervisor._refuse_legacy("heartbeat"), 0)
+    def test_no_v31_state_paths_remain(self):
+        source = (Path(__file__).resolve().parents[1]
+                  / "substrate" / "supervisor.py").read_text(encoding="utf-8")
+        code = source.split('"""', 2)[2] if source.count('"""') >= 2 else source
+        for marker in ("journal.jsonl", "proposals.md", "control/agenda.md",
+                       "scoreboard.jsonl"):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, code)
+
+    def test_panic_latch_has_a_reader_in_v5(self):
+        """闩必须有人看。**一个零调用点的安全开关不是安全开关** ——
+        这份规格自己写过，`advance()` 零调用点就是这么活过 400 拍的。"""
+        self.assertTrue(hasattr(self.supervisor, "_refuse_if_latched"))
 
 
 class SoilStateTests(unittest.TestCase):

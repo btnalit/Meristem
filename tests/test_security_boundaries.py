@@ -296,6 +296,58 @@ class UntrustedExecutionContractTests(unittest.TestCase):
         self.assertNotIn("REACHED", str(run.detail),
                          "organ 连上了外网（§15.6 C6 P0-a 档要求禁网）")
 
+    def test_symlink_planted_in_the_organ_dir_cannot_exfiltrate_anything(self):
+        """**这条是 2026-08-23 独立审查打穿隔离的那个洞。**
+
+        `body/organs/` 在种子可写白名单上。种子在自己的 organ 目录里放一个指向
+        vault 的链接，而 `_isolated_organ()` 的 `shutil.copytree` 默认
+        `symlinks=False` —— 它会**解引用**：把目标内容读出来落成普通文件。
+        **那次读取发生在土壤进程里、降权之前**，土壤有 vault 的完整读权限。
+        于是 vault 被搬进 worker 自己的工作副本，organ 再用一个普通相对路径读走。
+
+        **为隔离而加的那一步，恰好成了绕过隔离的那条路。** 而且它不需要知道
+        任何绝对路径 —— 一个 `../../..` 形状的相对链接同样成立，
+        所以此前那条"organ 硬编码绝对路径去 open"的断言完全覆盖不到它。
+
+        现在的主防线是**直接拒绝含链接的 organ 目录**（记 `unmeasured`），
+        `symlinks=True` 只作纵深。
+        """
+        if not _can_symlink(self.root):
+            self.skipTest("平台不允许建 symlink（非缺陷，是环境限制）")
+        self._organ('import json,sys\nsys.stdin.read()\nprint(json.dumps({"category":"x"}))\n')
+        organ_dir = self.tree / "body" / "organs" / "classifier"
+        os.symlink(self.secret, organ_dir / "leak")
+
+        run = self._run_one()
+
+        # 整把尺记 unmeasured —— 拒绝一个不可信的 organ 不是「它得 0 分」。
+        self.assertIsNone(run, "含链接的 organ 目录必须被拒绝执行")
+        # 而且**内容一个字节都不许出现在任何副本里**。
+        leaked = list(Path(tempfile.gettempdir()).glob("meristem-organ-*/organ/leak"))
+        self.assertEqual(leaked, [], "organ 的隔离副本里出现了被解引用的链接")
+
+    def test_directory_symlink_in_the_organ_dir_is_refused_too(self):
+        """链接指向**目录**时 `copytree` 会递归进去 —— 一个链接就能把整棵 vault
+        复制出来。所以拒绝的是「任何链接」，不是「指向文件的链接」。"""
+        if not _can_symlink(self.root):
+            self.skipTest("平台不允许建 symlink（非缺陷，是环境限制）")
+        self._organ('import json,sys\nsys.stdin.read()\nprint(json.dumps({"category":"x"}))\n')
+        vault_like = self.root / "vault-like"
+        vault_like.mkdir()
+        (vault_like / "hidden.json").write_text("SUPER_SECRET", encoding="utf-8")
+        os.symlink(vault_like, self.tree / "body" / "organs" / "classifier" / "v",
+                   target_is_directory=True)
+
+        self.assertIsNone(self._run_one(), "含目录链接的 organ 目录必须被拒绝执行")
+
+    def test_a_clean_organ_still_runs(self):
+        """拒绝规则不能把正常 organ 一起挡掉 —— 否则这道修复只是把门焊死。"""
+        self._organ('import json,sys\np=json.loads(sys.stdin.read())\n'
+                    'print(json.dumps({"category":p["input"]}))\n')
+        run = self._run_one()
+        self.assertIsNotNone(run)
+        self.assertEqual(run.checks_passed, 1)
+
     def test_isolation_status_is_readable_not_just_asserted_in_a_comment(self):
         """隔离级别必须**能被读出来**。
 
