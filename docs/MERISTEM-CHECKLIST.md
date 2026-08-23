@@ -426,6 +426,94 @@ NTFS junction 那条断言在非 Windows 上跳过，一进一出而已。
 3. `model_gateway` / `budget` / `report_renderer` / `feedback.json` / 冻结登记未实现。
 4. 锁文件 unlink-recreate 竞态在 Linux 上仍未实测。
 
+### 2026-08-23 · 服务器部署：organ 隔离落地，装置对照组跑通
+
+**这一条是从「写下来」变成「做出来并量过」的那一次。**
+
+**1. 执行身份模型上线（§15.6）**
+
+服务器 `hermes-media`（Debian，Python 3.13.12，root，util-linux 齐全）：
+
+| 做了什么 | 验证 |
+|---|---|
+| 建 `soil` / `worker` 系统账户，`worker` **无附加组** | `id worker` → 只有自己的组 |
+| vault → `soil:soil` `0500` | `setpriv --reuid worker cat vault/manifest.json` → **Permission denied** |
+| `state/` → `soil:soil` `0700`，台账 `0600` | organ 写台账断言从 xfail 变 **pass** |
+| organ 跑在 `unshare --net --fork --kill-child -- setpriv --reuid worker --clear-groups` 下 | 三条隔离断言全部实机通过 |
+| organ 只看得见**自己的隔离工作副本**（复制后执行，用完即毁） | §15.6 逐字要求的那句话 |
+
+**建完账户的当下，CA-2 立刻从 SKIP 变成 FAIL** —— 它一直在等这一刻。
+那正是 `446ead3` 那次「CA-2 要区分『做不到』与『没去做』」的兑现：
+属主设好后它转为 PASS，并打印 **`SECURITY_ASSURANCE=FULL`**（此前恒为 `BEST_EFFORT`）。
+
+**两条 `expectedFailure` 就此摘除**，改为按 `isolation_status()` 分级：
+`enforced` → 硬断言；`best_effort` → **大声 skip 并说明攻击在此仍然成立**。
+这与 CA-2 同一形状 —— permanent xfail 会让「平台做不到」和「没去做」长得一样。
+
+**顺带补上一条从来没有过的断言**：禁网。§15.6 把它列在 P0-a，
+而实现一直在 docstring 里说「留给 P0-b」，**两边都没人写断言**。现在有了。
+
+**`execution_policy_version` 由 `1` 升到 `2`** —— 执行策略变了，
+隔离前后的分数不可直接比较。让这种不可比**显式发生**，正是那三个维度存在的理由。
+
+**2. 装置对照组跑通了（§12.0.1）——「土壤没坏」**
+
+冻结 internal probe 进 vault，人工给定确定能提升的变更
+（就是 organ 自己 docstring 里写的那个：加 `"closure"` 修好 c1，
+而加裸 `"budget"` 会偷走 c4 —— 那份注释救了一次时间），跑：
+
+```
+manual-cycle --calibration --candidate 6b92f7a
+→ outcome: CALIBRATION
+台账：observed_fitness  calibration=True
+      probe-classify-basic  40.0 → 60.0  improved  2/5 → 3/5
+      promotion_outcome  CALIBRATION
+      **没有 accepted_fitness**
+ignition-status → ignition events: 0   excluded: 2 kind≠accepted_fitness
+```
+
+**§12.0.1 要回答的问题得到了确定的回答：土壤没坏。**
+测量、配对、候选树传递、隔离执行全链路可用。
+此后若三圈内不出现 `improved`，那是**种子/档位**的问题，不是装置的问题 ——
+H1 否证条款可以放心用了，而在此之前用它是没有根据的。
+
+> 校准正确地**没有**被计入点火：归因报的是 `kind`（第一个不满足的合取项），
+> 不是 `calibration` —— 因为 kind 先不满足。**归因顺序按规格执行，没有走样。**
+
+**3. 台账真实存在之后，断言自己上岗了**
+
+skip 从 8 条降到 **4 条**：CA-6a / CA-7 / CA-8 / CA-10 全部转为 PASS。
+剩下 4 条是诚实的：冻结登记未落盘（CA-9）、尚无两种 authority 的晋升（CA-11）、
+投影未实现（CA-12）、junction 是 NTFS 概念（平台差异）。
+
+服务器全套：**129 passed, 4 skipped, 0 failed**。
+
+**4. 权限是部署的一部分，不是仓库的一部分**
+
+`git reset --hard` 重写文件时会把属主打回 root。
+固化成 `substrate/deploy-permissions.sh`（幂等、自检、失败即退非零），
+**每次部署后必须重跑**：
+
+```bash
+cd /RSI/Meristem && git fetch origin && git reset --hard origin/main
+set -a && . /RSI/meristem-env && set +a   # MERISTEM_VAULT 从这里来
+bash substrate/deploy-permissions.sh      # <-- 别忘了
+python3 -m pytest tests/ -q               # CA-2 与三条隔离断言来验收
+```
+
+> **不 source env 就跑，脚本会拒绝并退 2**（C-65）。写这条是因为我自己第一次
+> 就这么跑了，还把输出丢进了 `/dev/null` —— 于是「脚本没跑成」表现为「CA-2 挂了」。
+> **拒绝是对的，看不见拒绝才是问题：别把部署脚本的输出丢掉。**
+
+**没做的事，说清楚**
+
+- **panic 闩没动**（`/RSI/meristem-control/PANIC` 仍在）。清闩=决定重启 v3.1，那是人的决定。
+- **anchor 仍未写**。vault 里那个 `probe-kernel-selftest` 是 v3.1 时代的 anchor，
+  不是 P0-a classifier 的。**§12.2 的反过拟合非对称依旧未生效** ——
+  今天这次 40→60 是**人工给定**的，不是种子挣来的，所以不涉及过拟合；
+  但等种子真去爬这条梯度时，没有 anchor 就分不清真变强和硬编码。
+- `model_gateway` / `budget` 仍缺，种子还不能自己产出候选。
+
 ---
 
 ## 常用命令

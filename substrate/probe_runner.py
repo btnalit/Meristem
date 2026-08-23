@@ -11,10 +11,18 @@ organ 是种子拥有的代码，不得直接跑在土壤权威进程内 —— 
 墙钟超时 + 非法输出记 `unmeasured`（不是 0 分：0 分在后续修好后会被读成一次
 `improved`，凭空制造点火事件，见 §15.6 末尾）。
 
-已知不足（best effort，写明而不是假装做到）：本档不做「禁网」的操作系统级强制 ——
-无 root/无 namespace 的开发环境里，标准库 subprocess 无法真正切断一个决心联网的
-子进程的 socket。此处只裁剪了环境变量与工作目录，联网仍是**信任边界之外的攻击**，
-留给 P0-b 的资源强化档处理。
+**隔离分两级，级别可被读出（`isolation_status()`），不靠注释声明。**
+
+- `enforced`（Linux + root + `unshare`/`setpriv` + `worker` 账户）：
+  organ 跑在 **worker UID、无附加组、私有网络命名空间**里，且只看得见
+  **自己的隔离工作副本**。配合 vault `soil:0500` 与 `state/soil-*.jsonl` `soil:0600`，
+  §15.6 P0-a 档的三条（vault 不可读 · ledger 不可写 · 禁网）**由操作系统强制**。
+- `best_effort`（Windows / 非 root / 缺 util-linux / 无 worker 账户）：
+  退回「subprocess + 裁剪环境 + 超时」。此时 **vault 可被绝对路径读取、
+  台账可被写入、可联网** —— 这不是理论风险，是复现过的攻击。
+  **本级别下不得声称满足 §15.6 的 P0-a 档。**
+
+写明而不是假装做到：§15.6 自己要求，环境兑现不了时必须列出哪些隔离只是 best effort。
 
 organ 入口路径（`body/organs/<organ>/run.py`）与输出 ABI（恰好一个字符串值的
 JSON 对象，key 名不固定）现由规格写死（§10.2「organ 入口与输出 ABI」），不再是
@@ -25,18 +33,31 @@ JSON 对象，key 名不固定）现由规格写死（§10.2「organ 入口与�
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 RUNNER_VERSION = "1"
-EXECUTION_POLICY_VERSION = "1"
+
+#: **由 "1" 升到 "2"：执行策略变了，旧分数与新分数不可直接比较。**
+#: `execution_policy_version` 是 Measurement 身份的三个维度之一（§4.1），
+#: 它存在的全部理由就是让这种不可比**显式发生**而不是静默发生。
+#: v1 = subprocess + 裁剪环境 + 超时（最小完整性隔离**未兑现**）。
+#: v2 = 外加 worker UID 降权 + 私有网络命名空间 + organ 独立工作副本。
+EXECUTION_POLICY_VERSION = "2"
+
 PROBE_TIMEOUT_SECONDS = 5.0
+
+#: §15.6 的执行身份模型：organ / rubric worker 跑在 `worker` UID，**无附加组**。
+WORKER_USER = "worker"
 
 #: cmp 白名单（§8.1.1）。regex 只接受这里预置的命名正则，不接受种子提供的字面量。
 #: P0-a 尚无 internal probe 用到 regex；新增时在此登记，不接受调用方传入的模式串。
@@ -89,6 +110,70 @@ def _sandboxed_env() -> dict:
     return {k: os.environ[k] for k in _ENV_ALLOWLIST if k in os.environ}
 
 
+def isolation_status() -> tuple:
+    """本机能否兑现 §15.6 的「最小完整性隔离」。返回 `(level, reason)`。
+
+    `level` ∈ `{"enforced", "best_effort"}`。**必须能被读出来**：隔离是否真的生效
+    只存在于运行环境里，而台账上的分数长得一模一样 —— 不把它读出来，
+    「已隔离」就又是一句声明了没断言的话。§15.6 也明确要求，
+    环境兑现不了时必须写明**哪些隔离只是 best effort**。
+    """
+    if os.name != "posix":
+        return "best_effort", f"platform is not POSIX (os.name={os.name!r})"
+    if os.geteuid() != 0:
+        return "best_effort", "no privilege to drop to a separate worker UID"
+    if shutil.which("unshare") is None or shutil.which("setpriv") is None:
+        return "best_effort", "util-linux unshare/setpriv unavailable"
+    try:
+        import pwd
+        pwd.getpwnam(WORKER_USER)
+    except (ImportError, KeyError):
+        return "best_effort", f"no {WORKER_USER!r} account on this host"
+    return "enforced", (f"organ runs as {WORKER_USER} (no supplementary groups) "
+                        "in a private network namespace")
+
+
+def _isolation_prefix() -> list:
+    """argv 前缀：私有网络命名空间 + 降权到 worker。
+
+    `--fork --kill-child` 是为了超时能真的杀干净：`subprocess.run(timeout=...)`
+    只杀直接子进程（`unshare`），中间隔一层的话孙子进程会活下来 ——
+    **一个杀不掉的 organ 就是 §15.6 要防的「卡死 runner」**。
+    """
+    level, _ = isolation_status()
+    if level != "enforced":
+        return []
+    return ["unshare", "--net", "--fork", "--kill-child", "--",
+            "setpriv", "--reuid", WORKER_USER, "--regid", WORKER_USER, "--clear-groups"]
+
+
+@contextlib.contextmanager
+def _isolated_organ(entrypoint: Path):
+    """把 organ 复制成**它自己的隔离工作副本**再执行，用完即毁。
+
+    §15.6 的执行身份模型逐字写着 worker「只能读写自己的隔离工作副本」——
+    这就是那句话的实现。**不直接在候选树里跑**：那棵树属主是土壤，
+    要让 worker 读得到就得放宽整棵树的权限，等于为了跑一个 organ
+    把整棵被测树对本机所有用户敞开。复制一份更小、更好收回，
+    而且天然满足「只读自己那份」。
+    """
+    staging = Path(tempfile.mkdtemp(prefix="meristem-organ-"))
+    try:
+        work = staging / "organ"
+        shutil.copytree(entrypoint.parent, work)
+        level, _ = isolation_status()
+        os.chmod(staging, 0o755)
+        for path in [work, *work.rglob("*")]:
+            os.chmod(path, 0o755 if path.is_dir() else 0o644)
+        if level == "enforced":
+            # 副本归 worker —— 它可以读写自己这份，仅此而已。
+            for path in [staging, work, *work.rglob("*")]:
+                shutil.chown(path, user=WORKER_USER, group=WORKER_USER)
+        yield work / entrypoint.name
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def _entrypoint(tree: Path, organ: str) -> Path:
     # 固定路径，规格写死（§10.2「organ 入口与输出 ABI」；没有 entrypoint 字段，
     # 见 §8.1.1）：body/organs/<organ>/run.py。与本仓库现有的
@@ -110,14 +195,15 @@ def _invoke(entrypoint: Path, check_input) -> tuple[bool, str]:
     if not entrypoint.is_file():
         return False, "entrypoint missing"
     try:
-        result = subprocess.run(
-            [sys.executable, str(entrypoint)],
-            input=json.dumps({"input": check_input}),
-            capture_output=True, text=True,
-            timeout=PROBE_TIMEOUT_SECONDS,
-            cwd=str(entrypoint.parent),
-            env=_sandboxed_env(),
-        )
+        with _isolated_organ(entrypoint) as isolated:
+            result = subprocess.run(
+                [*_isolation_prefix(), sys.executable, str(isolated)],
+                input=json.dumps({"input": check_input}),
+                capture_output=True, text=True,
+                timeout=PROBE_TIMEOUT_SECONDS,
+                cwd=str(isolated.parent),
+                env=_sandboxed_env(),
+            )
     except subprocess.TimeoutExpired:
         return False, "timeout"
     except OSError as exc:
