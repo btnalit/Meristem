@@ -31,8 +31,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
+from types import SimpleNamespace
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -801,7 +803,14 @@ def publish() -> None:
 #: this half did not exist. No probe the seed ever wrote had scored anything,
 #: so Loop B ("the measuring stick precedes the capability") was an open
 #: circuit: it kept making sticks that never measured.
-VAULT = pathlib.Path(os.environ.get("MERISTEM_VAULT", REPO.parent / "meristem-vault"))
+#: C-65：vault **只从 `MERISTEM_VAULT` 读，不提供相对路径缺省**。
+#: 这里原本是 `os.environ.get("MERISTEM_VAULT", REPO.parent / "meristem-vault")`。
+#: 2026-08-23 发现 `.claude/worktrees/meristem-vault/` 是一份完整的 anchor vault
+#: 副本——有人在 worktree 里跑了 bootstrap，`REPO.parent` 落在 `.claude/worktrees/`
+#: 而不是仓库外。**那个缺省失败时不报错，只是把 vault 定位到错的地方**，
+#: 而 vault 存在的全部理由就是「物理上不可见胜过要求 prompt 不要看」。
+#: 同一条纪律的 v5 侧实现见 `substrate/soil_state.resolve_vault()`。
+VAULT = pathlib.Path(os.environ["MERISTEM_VAULT"]) if os.environ.get("MERISTEM_VAULT") else None
 PROBE_STAGING = REPO / "state" / "probe-proposals"
 
 
@@ -849,6 +858,10 @@ def promote_probes(vault=None, staging=None, workdir=None) -> int:
     a number instead of a paragraph.
     """
     vault = pathlib.Path(vault) if vault is not None else VAULT
+    if vault is None:
+        # C-65：宁可拒绝运行，也不猜一个 vault 路径。猜错时它不报错，
+        # 只是把冻结后的 probe 写到别处——而那正是 2026-08-23 那次泄漏的形状。
+        raise RuntimeError("MERISTEM_VAULT 未设置，拒绝定位 vault（C-65）")
     staging = pathlib.Path(staging) if staging is not None else PROBE_STAGING
     workdir = pathlib.Path(workdir) if workdir is not None else REPO
     if not staging.is_dir():
@@ -1227,10 +1240,241 @@ def pending_task() -> bool:
     return False
 
 
+# ===========================================================================
+# v5 P0-a 土壤入口：manual-cycle / ignition-status（§12.0.2）
+#
+# 与上方 v3.1 的 promote/canary/heartbeat 并存，但**不共用任何判定逻辑**：
+# v3.1 那套把测量与判决做在种子里（违反 S2/S3），v5 全部搬进 substrate/pipeline.py。
+# **不要在两套之间借用函数** —— 借一个就等于把 v3.1 的语义偷渡进 v5 的判据，
+# 而同一件事有两个判定处，正是 §17.5 点名的漂移温床。
+# ===========================================================================
+from substrate import pipeline as _pipeline  # noqa: E402
+from substrate import soil_state as _soil_state  # noqa: E402
+
+#: P0-a 的 Task 声明。**放在土壤侧而不是 `seed/`**：P0-a 是「人给任务，人做判决」
+#: （§12.0），任务由实验者给出；而 §10.1 的种子可写白名单里本来就没有任何
+#: Task 声明文件，种子此刻既写不了它、也不该写它——它是判自己的那张声明。
+#: **未闭合**：P0-b「种子自己选题」需要一条种子可写的声明路径，§10.1 尚未给出。
+DEFAULT_TASK_DECLARATION = "soil/p0a-task.json"
+
+
+def _generation(repo=None) -> str:
+    """世代权威在 `root/`（root of trust），不在土壤自己手里。
+
+    读不到就**抛错，不退回 `gen-0`**：`generation` 是 §8.2 的六个强制字段之一，
+    猜一个值会让台账带着一个看起来正常的错标签，而错标签比缺字段更坏——它像数据。
+    """
+    path = (pathlib.Path(repo) if repo is not None else REPO) / "root" / "generations.json"
+    return json.loads(path.read_text(encoding="utf-8"))["live"]
+
+
+def _next_soil_cycle(repo) -> int:
+    """本次是第几个被测候选 = 台账里已有的 `observed_fitness` 数 + 1。
+
+    **不另设计数文件**：多一份可变状态就多一处可与台账不一致的地方，
+    而台账本身就是权威（§8.2）。这个数因此可在任意一份台账副本上离线重算。
+    """
+    ledger = _soil_state.Ledger(pathlib.Path(repo) / "state" / "soil-ledger.jsonl")
+    return sum(1 for r in ledger.read() if r.get("kind") == "observed_fitness") + 1
+
+
+def _task_id(text: str) -> str:
+    """镜像 `meristem.task.task_id`（内容哈希即身份，§4.1）。
+
+    **土壤不导入种子**（I9 / CA-4 断言 `substrate/` 不得 import `meristem`），
+    所以这里复刻规则而不是调用它——与 `_is_guarded_proposal` 复刻围栏、
+    `_score_probe` 复刻 rubric 契约同一个理由：**让种子回答「种子做得对不对」，
+    等于让它给自己判分。** 代价是两处须保持一致，而这一致性**目前没有断言在守**。
+    """
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def _agenda_first_task(repo):
+    """议程首条可做的任务文本；没有议程返回 None。
+
+    复刻 `meristem.task.take_task` 的取题规则（理由同 `_task_id`），但**只复刻到
+    「首条非空非注释行」为止**：done/parked 过滤要读 `seed/feedback.json`，
+    而那份投影 P0-a 尚未产出。两者在 P0-a 等价，之后不等价——记为未闭合项。
+    """
+    agenda = pathlib.Path(repo) / "seed" / "agenda.md"
+    if not agenda.is_file():
+        return None
+    for raw in agenda.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line[:2] in ("- ", "* "):
+            line = line[2:].strip()
+        if line:
+            return line
+    return None
+
+
+def _load_task(repo, task_path=None):
+    """读 Task 声明，并与议程首条**核对身份**。
+
+    不一致即拒绝：**一个任务两个身份**正是本规格反复点名的那种漂移
+    （`campaign` 一词的代价是循环死锁），而 `task_id` 是台账里事件↔Task 的唯一锚。
+    """
+    path = pathlib.Path(task_path) if task_path else pathlib.Path(repo) / DEFAULT_TASK_DECLARATION
+    if not path.is_file():
+        raise SystemExit(f"Task 声明不存在：{path}（§8.1.4；P0-a 由实验者给出）")
+    task = _pipeline.Task.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    agenda_text = _agenda_first_task(repo)
+    if agenda_text is not None and task.task_id != _task_id(agenda_text):
+        raise SystemExit(
+            f"task_id 与议程首条不一致：声明 {task.task_id}，"
+            f"议程 {_task_id(agenda_text)}（{agenda_text[:60]!r}）。"
+            "一个任务只能有一个身份，拒绝继续。")
+    return task
+
+
+def manual_prompt(commit: str, diff: str, task):
+    """P0-a 的 **Panel adapter**（§12.0.2）。
+
+    **y/n 落在 Verdict 位置，不落在 merge 位置** —— `process_candidate` 一行不改，
+    `promotion_intent` / scoreboard / `accepted_fitness` / `promotion_committed`
+    这条晋升事务链完整走完。P0-b 把这个函数换成真 panel，其余代码一行不动：
+    **拆脚手架 = 换一个函数指针。**
+
+    **不打印 fitness。** §12.0.2 的散文写着「`manual_prompt` 把 fitness 打给实验者」，
+    而 §10.2 的签名与其理由写着「面板只收 diff + 任务声明，**不传 observed** ——
+    评审员看见 +20 分会锚定向批准，判决就被测量污染了」。两处冲突，**按 §10.2 实现**：
+    它是签名的定义处，且带着不变量的理由；§12.0.2 那句是描述性散文。
+    已记入 §18 勘误（v5.10）。
+    """
+    print(f"\n=== 候选 {commit[:12]} ===")
+    print(f"任务 {task.task_id} · target={task.target} · expected={task.expected} "
+          f"· minimum_delta={task.minimum_delta}")
+    print(f"--- diff（{len(diff.splitlines())} 行）---")
+    print(diff)
+    print("--- diff 结束 ---")
+    print("按土壤版评审清单判决。**你看不到分数，这是刻意的**："
+          "兑现声明的核验由 task_evaluator 在判决之外已经做完。")
+    passed = input("accept? [y/N] ").strip().lower() in ("y", "yes")
+    reason = "manual accept" if passed else (input("拒绝理由：").strip() or "manual reject")
+    return _pipeline.Verdict(passed=passed, authority="manual", reason=reason)
+
+
+def _seed_candidate(repo, ctx, task):
+    """跑一次种子 `cycle`，产出候选 commit。返回 `(commit, worktree_path)`。
+
+    种子在**独立 worktree** 里提交，主线 HEAD 不动 —— 于是
+    `candidate.parent == HEAD` 成立，C3 的祖先检查才有意义（§10.1「提交到 worktree」）。
+    若种子直接提交在主线上，HEAD 会跟着候选一起走，那条检查恒假。
+
+    `kind:"cycle"` 记录**由土壤据退出码与 commit 生成**，种子不写台账（C4 / §10.1）。
+    """
+    base = _pipeline.git(repo, "rev-parse", "HEAD")
+    worktree = pathlib.Path(tempfile.mkdtemp(prefix="meristem-candidate-")) / "wt"
+    _pipeline.git(repo, "worktree", "add", "-q", "--detach", str(worktree), base)
+    env = {**os.environ, "PYTHONPATH": str(worktree),
+           "MERISTEM_SOIL_CYCLE": str(ctx.soil_cycle)}
+    try:
+        result = subprocess.run([sys.executable, "-m", "meristem.loop", "cycle"],
+                                cwd=str(worktree), env=env, capture_output=True,
+                                text=True, timeout=1800)
+    except (subprocess.SubprocessError, OSError) as exc:
+        result = SimpleNamespace(returncode=-1, stdout="", stderr=str(exc))
+    commit = _pipeline.git(worktree, "rev-parse", "HEAD") if result.returncode == 0 else None
+    ctx.ledger.append({"kind": "cycle", "commit": commit, "task_id": task.task_id,
+                       "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
+                       "exit_code": result.returncode})
+    if commit is None or commit == base:
+        print(f"种子未产出候选（exit {result.returncode}）："
+              f"{(result.stdout + result.stderr)[-400:]}", file=sys.stderr)
+        return None, worktree
+    return commit, worktree
+
+
+def _drop_worktree(repo, worktree) -> None:
+    subprocess.run(["git", "worktree", "remove", "--force", str(worktree)],
+                   cwd=str(repo), capture_output=True)
+
+
+def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -> int:
+    """§12.0.2：**走与未来 heartbeat 完全相同的代码路径。** 唯一的区别是判决位上坐着人。"""
+    repo = REPO
+    ctx = _soil_state.SoilContext.open(
+        repo, generation=_generation(repo), soil_cycle=_next_soil_cycle(repo),
+        calibration=calibration)
+
+    # 启动必跑。**P0-a 不只是在测种子，也是在测土壤自己的事务链**：
+    # 崩溃恢复要到 P0-c 无人值守时才第一次被真正需要，绕过它就等于没测（§12.0.2）。
+    for commit, outcome in _pipeline.reconcile_on_start(repo, ctx):
+        print(f"reconcile: {commit[:12]} -> {outcome.name}")
+
+    if calibration and candidate is None:
+        print("--calibration 必须配 --candidate <sha>：校准是**人工给定的确定能提升的"
+              "变更**（§12.0.1），不经种子产出。", file=sys.stderr)
+        return 2
+
+    task = _load_task(repo, task_path)
+    worktree = None
+    if candidate is None:
+        commit, worktree = _seed_candidate(repo, ctx, task)
+        if commit is None:
+            _drop_worktree(repo, worktree)
+            return 1
+    else:
+        commit = _pipeline.git(repo, "rev-parse", candidate)
+
+    try:
+        outcome = _pipeline.process_candidate(commit, task, repo=repo,
+                                              panel=manual_prompt, ctx=ctx)
+    finally:
+        if worktree is not None:
+            _drop_worktree(repo, worktree)
+
+    print(f"outcome: {outcome.name}")
+    if calibration:
+        print("校准：已测量、强制回滚、**永不 merge** —— 结构上产不出 accepted_fitness"
+              "，因此永不计入点火（§12.0.1）。")
+    return 0
+
+
+def ignition_status(repo=None) -> int:
+    """§1.2 判据的**唯一求值点**（§12.0.2）。只读台账，不查 task registry。
+
+    退出码恒为 0：这是一份读数，不是一道闸门。**给它一个规格没定义的退出码语义**，
+    下一个读者就会拿 `if ignition-status; then` 当判据用——而判据的定义在 §1.2，
+    不在某个人对退出码的理解里。计数与 `excluded` 都印在 stdout。
+    """
+    repo = pathlib.Path(repo) if repo is not None else REPO
+    rows = _soil_state.Ledger(repo / "state" / "soil-ledger.jsonl").read()
+    hits = [ev for ev in rows if _pipeline.is_ignition_event(ev)]
+
+    print(f"ignition events: {len(hits)}   (criterion §1.2)")
+    for ev in hits:
+        rec = next(r for r in ev["records"]
+                   if r["probe_id"] == ev["primary_probe"] and r["status"] == "improved")
+        print(f"  soil_cycle {ev['soil_cycle']}  commit {str(ev['commit'])[:12]}  "
+              f"task {ev['task_id']}  {ev['primary_probe']}  "
+              f"{rec['before']} → {rec['after']}")
+
+    counts: dict = {}
+    for ev in rows:
+        reason = _pipeline.ignition_exclusion_reason(ev)
+        if reason is not None:
+            counts[reason] = counts.get(reason, 0) + 1
+    # 归因顺序定死（§12.0.2）：读数不稳定的仪表比没有仪表更坏。
+    order = ("kind≠accepted_fitness", "calibration", "counts_as_progress", "primary_probe")
+    parts = [f"{counts[key]} {key}" for key in order if key in counts]
+    print("excluded: " + (" · ".join(parts) if parts else "0"))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="supervisor")
     parser.add_argument("command",
-                        choices=["run", "promote", "rollback", "canary", "heartbeat"])
+                        choices=["run", "promote", "rollback", "canary", "heartbeat",
+                                 "manual-cycle", "ignition-status"])
+    parser.add_argument("--calibration", action="store_true",
+                        help="装置对照组（§12.0.1）：人工给定的变更，强制回滚、永不 merge")
+    parser.add_argument("--candidate", default=None,
+                        help="处理一个已存在的候选 commit，而不是跑种子产出候选")
+    parser.add_argument("--task", default=None,
+                        help=f"Task 声明路径（默认 {DEFAULT_TASK_DECLARATION}）")
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--beats", type=int, default=8)
     parser.add_argument("--dry", action="store_true",
@@ -1238,6 +1482,11 @@ def main(argv=None) -> int:
     parser.add_argument("--reason", default="manual")
     args = parser.parse_args(argv)
 
+    if args.command == "manual-cycle":
+        return manual_cycle(calibration=args.calibration, candidate=args.candidate,
+                            task_path=args.task)
+    if args.command == "ignition-status":
+        return ignition_status()
     if args.command == "heartbeat":
         return heartbeat(args.beats, args.dry)
     if args.command == "run":

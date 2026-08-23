@@ -313,20 +313,17 @@ class SA5IgnitionPredicateImplementationExists(unittest.TestCase):
     itself is meant to live in substrate/pipeline.py per the wave-2 dispatch
     plan for this repo).
 
-    substrate/pipeline.py does not exist yet in this wave (P0-a wave 1 only
-    landed substrate/supervisor.py + run_meristem.sh). Per explicit dispatch
-    instruction: "SA-5 你做不了...把 SA-5 写成实现缺席即 FAIL，并打印缺失路径" --
-    this MUST fail loudly (not skip) so it is impossible to miss once
-    substrate/pipeline.py lands in wave 2.
+    substrate/pipeline.py landed in wave 2 and the predicate now matches §1.2
+    byte-for-byte, so this assertion is live: it FAILS if the two ever diverge.
+
+    **`@unittest.expectedFailure` 已摘除（wave 2）。** 它原本挂在这里，是因为
+    波次 2 之前判据的唯一实现点还不存在；用 expectedFailure 而不是 skip，正是为了
+    让 pipeline.py 一落地就报 **unexpected success** —— 「该摘掉这个标记了」的提醒。
+    2026-08-23 那次提醒如约出现，标记随即摘除。**这是它设计时就写好的结局，不是意外**：
+    skip 不会提醒任何人，于是标记会一直挂着，而这份规格自己就写过：
+    `advance()` 零调用点就是这么活过 400 拍的。
     """
 
-    # 波次 2 落地 substrate/pipeline.py 之前，本条必然失败 —— 判据的唯一实现点还不存在。
-    #
-    # 用 expectedFailure 而不是 skip：skip 会让「还没做」和「不适用」长得一样。
-    # 更要紧的是反向信号 —— 一旦 pipeline.py 落地让它通过，unittest 会报
-    # **unexpected success**，那正是「该摘掉这个标记了」的提醒。skip 不会提醒任何人，
-    # 于是标记会一直挂着，而这份规格自己就写过：`advance()` 零调用点就是这么活过 400 拍的。
-    @unittest.expectedFailure
     def test_sa5_is_ignition_event_implementation_matches_spec(self):
         substrate_dir = REPO_ROOT / "substrate"
         candidates = sorted(substrate_dir.glob("*.py")) if substrate_dir.is_dir() else []
@@ -345,8 +342,8 @@ class SA5IgnitionPredicateImplementationExists(unittest.TestCase):
         if not found_in:
             print(f"SA-5: FAIL -- no `def is_ignition_event(...)` found under {substrate_dir}.")
             print(f"SA-5: missing expected implementation path: {expected_path}")
-            print("SA-5: this is expected to fail until wave 2 lands substrate/pipeline.py "
-                  "(the predicate's sole implementation point per §1.2 / §12.0.2).")
+            print("SA-5: the predicate's sole implementation point (§1.2 / §12.0.2) has "
+                  "gone missing -- it landed in wave 2 and something has since removed it.")
             self.fail(
                 f"SA-5 FAIL: is_ignition_event has no implementation under {substrate_dir} "
                 f"(expected at {expected_path}); §1.2's code block therefore has nothing to "
