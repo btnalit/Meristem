@@ -1376,11 +1376,15 @@ def _seed_candidate(repo, ctx, task):
                                 text=True, timeout=1800)
     except (subprocess.SubprocessError, OSError) as exc:
         result = SimpleNamespace(returncode=-1, stdout="", stderr=str(exc))
-    commit = _pipeline.git(worktree, "rev-parse", "HEAD") if result.returncode == 0 else None
+    head = _pipeline.git(worktree, "rev-parse", "HEAD") if result.returncode == 0 else None
+    # 退出码 0 但 HEAD 没动 = 种子没提交任何东西。**那不是一个候选**，
+    # 台账里就不能把 base 记成本拍产出的 commit —— 错标签比没有标签更坏，
+    # 它看起来像数据（同 loop.py 拒绝把未知拍号伪造成 0 的理由）。
+    commit = head if head is not None and head != base else None
     ctx.ledger.append({"kind": "cycle", "commit": commit, "task_id": task.task_id,
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                        "exit_code": result.returncode})
-    if commit is None or commit == base:
+    if commit is None:
         print(f"种子未产出候选（exit {result.returncode}）："
               f"{(result.stdout + result.stderr)[-400:]}", file=sys.stderr)
         return None, worktree
