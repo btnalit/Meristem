@@ -3,10 +3,11 @@
 > 全新种子。除必要土壤层外，v3.1 的一切不继承。
 > 本文档是**可开工的规格**，不是回顾报告——每个模块给出职责、不变量、数据结构、函数签名、验收判据。
 
-**spec-v5.7-frozen** · 日期：2026-08-23 · 方法：本体论优先（Ontology → Domain → Invariants → State → Capability → Schema → Contract → Implementation → Verification）
+**spec-v5.8-frozen** · 日期：2026-08-23 · 方法：本体论优先（Ontology → Domain → Invariants → State → Capability → Schema → Contract → Implementation → Verification）
 
-> **正文冻结**（§17.7 终止条款）。v5.7 关闭了 v5.6 宣布冻结时仍挂着的 5 项交接债，
-> 并把冻结的执行机制从「记得遵守」换成 §17.8 的 CI 断言集。此后新发现走代码评审 + §18 勘误行。
+> **正文冻结**（§17.7 终止条款）。v5.8 修掉外部独立审计判定的 **1 项 P0 + 6 项 bootstrap/P1**；
+> 该审计对架构的裁定是 **APPROVED**，对开工的裁定是 **APPROVED WITH BOOTSTRAP FIXES**——**修完即开工**。
+> 冻结靠的是 §17.8 的 CI 断言集，不是自觉。此后新发现走代码评审 + §18 勘误行。
 
 ---
 
@@ -37,14 +38,27 @@ v3.1 的根本错误：**直接假设 H3，从未检验 H1**。
 **机器判据（`state/soil-ledger.jsonl` 上的事件谓词；实现者不得自撰等价物）：**
 
 ```python
-def is_ignition_event(ev, task) -> bool:
+def is_ignition_event(ev) -> bool:
+    """**单条台账行的纯函数。** 不接 task 参数、不查任何注册表、不做多跳关联。"""
     return (ev["kind"] == "accepted_fitness"           # C2：仅已 merge 进 main 的
-        and ev.get("calibration") is not True          # §12.0.1：校准永不计数
-        and ev.get("counts_as_progress") is True       # §10：唯一非晋升出口写 False
-        and any(r["probe_id"] == task["primary_probe"]  # §8.1.4：primary 必为 internal
-                and r["status"] == "improved"           # I5 枚举
-                for r in ev["records"]))                # §8.2：records 是封套内元素
+        and ev["calibration"] is not True              # §12.0.1：校准永不计数
+        and ev["counts_as_progress"] is True           # §10：唯一非晋升出口写 False
+        and any(r["probe_id"] == ev["primary_probe"]   # 事件自带；不查 task registry
+                and r["status"] == "improved"          # I5 枚举
+                for r in ev["records"]))               # §8.2：records 是封套内元素
 ```
+
+> **为什么必须是纯函数（v5.8，外部独立审计的 P0）。**
+> v5.7 的签名是 `is_ignition_event(ev, task)`，而 `ignition-status` 只扫 `soil-ledger`——
+> **它无从知道某条 `accepted_fitness` 属于哪个 Task，也就取不到那个 Task 的 `primary_probe`**。
+> 判据名义上唯一，实际上不可自包含求值、**不可重放**。
+> 修法是让事件自带 Task 身份（§8.2），而不是让判据去做 `source → observed → task_id → registry` 的多跳追溯——
+> **多跳追溯在崩溃恢复与审计时最先断，而那正是最需要它成立的时刻。**
+>
+> **严格下标，不用 `.get()`（同轮修正 v5.7 自己的错）。** v5.7 在这里写 `.get()` 并称之为「读者侧的纵深」。
+> 那个说法是错的：`.get("calibration") is not True` 在缺键时**判True，事件被计入**；
+> `.get("counts_as_progress") is True` 在缺键时**判False，事件不计入**——**同一种缺失，两个相反的方向**。
+> 字段既已是强制的（§8.2），缺键就是台账损坏，**应当当场抛错，而不是由读者猜一个方向**。
 
 **四个合取项各挡住一种误计，缺一不可：**
 
@@ -53,7 +67,12 @@ def is_ignition_event(ev, task) -> bool:
 | `kind == "accepted_fitness"` | 被面板或 canary 拒掉的候选 | 一个 `grep '"status":"improved"'` 就把 `observed_fitness` 一并算进来 |
 | `calibration is not True` | 实验者自己造的确定提升 | **用装置对照组的读数宣布装置活着——循环论证** |
 | `counts_as_progress is True` | 任何非晋升出口 | `finalize_nonpromotion()` 写的记录被当成进步 |
-| `probe_id == primary_probe` | anchor 的上升 | anchor 从外部锚变成第二把可挑的尺（§12.2） |
+| `probe_id == ev["primary_probe"]` | anchor 的上升 | anchor 从外部锚变成第二把可挑的尺（§12.2） |
+
+> **事件上的 `primary_probe` 由谁写、能不能被伪造**：由**土壤**在 `process_candidate` 写入事件时，
+> 从已校验的 Task 声明**复制**进来（§8.1.4 已强制它必须是 internal probe）。
+> 种子既不能写台账（C4），也就无法事后改动它。**复制发生在校验之后、写入的同一步**，
+> 中间没有种子可介入的窗口。
 
 **求值只有一个实现点**：`python -m substrate.supervisor ignition-status`（§12.0.2）。
 本判据在全文其余各处**只被引用，不被复述**（§12、§12.0、C2）。
@@ -505,11 +524,22 @@ soil recovery path（root 持有，不可递归）
 
 | 规则 | 效果 |
 |---|---|
-| 一切土壤独占写入的记录文件，路径必须匹配 **`state/soil-*.jsonl`** | **命名即归属** |
+| 一切土壤独占写入的记录文件，路径必须匹配严格正则 **`^state/soil-[a-z0-9-]+\.jsonl$`** | **命名即归属** |
 | 属主与权限按**前缀族**授予（§15.6），不按文件名逐个授予 | 新增 `state/soil-measurements.jsonl` 默认就在保护面内，不需要有人记得去加一行 |
-| `state/` 下不得存在不匹配该前缀的文件 | 由 **CA-8** 断言（§17.8） |
+| `state/` 下不得存在不匹配该正则的文件 | 由 **CA-8** 断言（§17.8） |
+| **`state/` 下不得存在 symlink，也不得存在指向 `seed/` 或 `soil/` 的 hardlink** | 由 **CA-8** 断言 |
+| **临时文件与备份文件一律不得落在 `state/`** | 写入路径：临时文件置于同分区他处 → `O_NOFOLLOW` → **原子 rename** 就位 |
 
 **P0-a 的两个成员**：`state/soil-ledger.jsonl`（§8.2）· `state/soil-scoreboard.jsonl`（§8.3）。
+
+> **为什么正则要严格到 `^…$`（v5.8，外部审计 P1）。**
+> glob 式的 `soil-*` 会把 `soil-ledger.jsonl.bak`、`soil-scoreboard.jsonl.tmp` 一并算进族里——
+> **备份和半截临时文件因此获得与权威台账相同的属主与信任**；
+> 而实现者若改用别的写法，又可能把合法文件排除在外。**一条两端锚定的正则，两个方向同时封死。**
+>
+> **为什么还要禁 symlink / hardlink。** 前缀族是**路径**规则，而文件系统语义可以让路径与内容脱钩：
+> `state/soil-fake.jsonl` 若是一个指向 `seed/` 的 hardlink，**名字合规、属主合规，内容却坐在种子的可写面上**。
+> §10.1 已经为 `seed/` 白名单写过 `O_NOFOLLOW` 与链接检查——**同一条攻击换个方向而已，这里必须同样封死。**
 
 > 这是 §10.1「目录结构是唯一能把边界做成非列举式的地方」在 `state/` 内部的应用：
 > **目录给出保护面，前缀给出可 grep 的族身份**——两者都不靠列举维持。
@@ -526,8 +556,10 @@ soil recovery path（root 持有，不可递归）
 
 ```json
 {"ts":"...","kind":"observed_fitness","commit":"abc123","source":null,
+ "task_id":"…","primary_probe":"probe-classify-basic",
+ "generation":"g0","soil_cycle":123,
  "candidate_state":"measured","promotion_state":"pending",
- "calibration":false,"records":[ … ]}
+ "calibration":false,"counts_as_progress":false,"records":[ … ]}
 ```
 
 **`records[]` 的元素 schema**（fitness 记录本身，**无 `kind` 字段**）：
@@ -545,14 +577,27 @@ soil recovery path（root 持有，不可递归）
 **`calibration` 标在封套上，不标在记录里**（§12.0.1）——判据要能一次读出，
 不必下钻到 `records[]`；标在记录里就等于要求每个读者自己去聚合，**那是下一个「声明了没断言」**。
 
-**且必须显式携带，不得靠缺省**：每个 fitness 类事件封套（`observed_fitness` / `accepted_fitness`）
-**必须显式写出 `calibration` 键**，缺键即 schema 违例（§10 pipeline 的两处 `append` 已按此写）。
+#### 封套的六个强制字段（缺一即 schema 违例）
 
-> **理由是 CA-7 会空真。** 断言「台账中不存在 `calibration: true` 的 `accepted_fitness`」
-> 在这个键从不存在时**恒为真**——**一条永远绿、也永远不检查任何东西的断言**。
-> §1.2 谓词里的 `ev.get("calibration") is not True` 是**读者侧的纵深，不是写者侧的许可**：
-> 靠 `.get` 的默认值兜住，是"碰巧不误判"，不是约定。
-> 本条是 v5.7 advisor 复审抓到的——**而它正是本轮新增文本自己引入的**，同一种病换了个位置。
+| 字段 | 写入者 | 取自 | 为什么强制 |
+|---|---|---|---|
+| `task_id` | **土壤** | 当前 Task 声明 | 事件↔Task 的关联；审计与重放的锚 |
+| `primary_probe` | **土壤** | Task 声明（已校验必为 internal，§8.1.4） | **§1.2 谓词得以自包含求值** |
+| `generation` | **土壤** | `ctx.generation` | 跨世代可比性；与 C1 `eligible_after` **同名同义**，不引入变体 |
+| `soil_cycle` | **土壤** | `ctx.soil_cycle` | 事件在时间线上的位置；同上 |
+| `calibration` | **土壤** | 是否走 `manual-cycle --calibration` | §12.0.1；**CA-7 的咬合面** |
+| `counts_as_progress` | **土壤** | 是否晋升 | §10 唯一非晋升出口写 `False` |
+
+**六个字段必须显式写出；缺键即台账损坏，读取方应当抛错，不得取默认值。**
+六个全部由土壤写入，**种子不写台账（C4），因此无一可被种子伪造**。
+
+> **理由：缺省值会让断言空真。** CA-7 断言「台账中不存在 `calibration: true` 的 `accepted_fitness`」——
+> 键若从不存在，断言**恒为真**：一条永远绿、也永远不检查任何东西的断言。
+> 同样的空真会在 `primary_probe` 上原样重演：字段缺失而读者取默认，§1.2 的第四个合取项就形同虚设。
+>
+> **v5.7 曾把 `.get()` 称作「读者侧的纵深」，那个说法是错的**（详见 §1.2）：
+> 缺省在不同字段上的兜底方向**相反**——所谓「纵深」，实际上是两个方向不一致的猜测。
+> **强制写入 + 缺键抛错**才是一致的。
 
 **种子不产出任何关于自身进步的断言字段。**
 
@@ -785,6 +830,7 @@ def process_candidate(
         repo: Path,
         panel: Panel,                 # P0-a 传 manual_prompt
         ctx: SoilContext,             # ledger / vault / scoreboard / policy
+                                      # + generation / soil_cycle / calibration（§8.2 强制字段之源）
 ) -> Outcome:
     """候选处理流水线。无隐式全局；每个非晋升出口都写 promotion_outcome。
 
@@ -812,9 +858,16 @@ def process_candidate(
 
         observed = fitness.pair(before, after, commit)              # S5
         oid = ctx.ledger.append({"kind": "observed_fitness", "records": observed,
+                                 "commit": commit, "source": None,
+                                 # ── §8.2 的六个强制字段，全部由土壤在此处写入 ──
+                                 "task_id":       task.task_id,
+                                 "primary_probe": task.primary_probe,   # 已校验必为 internal
+                                 "generation":    ctx.generation,       # 与 C1 eligible_after 同名同义
+                                 "soil_cycle":    ctx.soil_cycle,
+                                 "calibration":   ctx.calibration,
+                                 "counts_as_progress": False,           # 此刻尚未晋升
                                  "candidate_state": "measured",
-                                 "promotion_state": "pending",
-                                 "calibration": False})   # §8.2：必须显式，不得缺键
+                                 "promotion_state": "pending"})
 
         if fitness.has_regression(observed):
             return finalize_nonpromotion(ctx, Outcome.REGRESSED, oid,
@@ -847,8 +900,14 @@ def process_candidate(
         merge_ff(repo, commit)
         ctx.scoreboard.write(after, commit)                         # S2
         ctx.ledger.append({"kind": "accepted_fitness", "source": oid,
-                           "counts_as_progress": True, "records": observed,
-                           "calibration": False})       # §8.2：CA-7 的咬合面
+                           "commit": commit, "records": observed,
+                           # ── §8.2 六个强制字段：§1.2 谓词靠它们自包含求值 ──
+                           "task_id":       task.task_id,
+                           "primary_probe": task.primary_probe,
+                           "generation":    ctx.generation,
+                           "soil_cycle":    ctx.soil_cycle,
+                           "calibration":   False,      # 校准强制回滚，永不到达此处（§12.0.1）
+                           "counts_as_progress": True})
         ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
         return Outcome.PROMOTED
 
@@ -984,17 +1043,41 @@ python -m substrate.supervisor manual-cycle --calibration   # §12.0.1 装置对
 python -m substrate.supervisor ignition-status              # §1.2 判据的唯一求值点
 ```
 
-它走**与未来 heartbeat 完全相同的代码路径**：调 seed `cycle` → `pipeline.process_candidate(panel=None)` → 打印 fitness 给实验者 → 实验者敲 y/n → merge 或 discard。
+它走**与未来 heartbeat 完全相同的代码路径**：调 seed `cycle` →
+`pipeline.process_candidate(panel=manual_prompt)` → `manual_prompt` 把 fitness 打给实验者 →
+实验者敲 y/n → **`manual_prompt` 返回一个 `Verdict`** → 流水线照常继续。
+
+**y/n 落在 Verdict 位置，不落在 merge 位置（v5.8，外部审计第 4 项）：**
+
+| 错的读法 | 对的读法 |
+|---|---|
+| `manual-cycle` 是一条特殊晋升路径，人敲 y 就 merge | **`manual_prompt` 只是一个 Panel adapter** |
+| 会绕过 `promotion_intent` / scoreboard / `accepted_fitness` / `promotion_committed` | `process_candidate` 一行不改，**晋升事务链完整** |
+
+> **为什么这条必须写死。** 若 y/n 直接执行 merge，`reconcile_on_start` 在整个 P0-a 期间都无事可做——
+> 而**崩溃恢复要到 P0-c 无人值守时才第一次被真正需要**，那时它从未被跑过一次。
+> **P0-a 不只是在测种子，也是在测土壤自己的事务链；绕过它就等于没测。**
+
+`Verdict` 携带 `authority ∈ {manual, panel}`，**这是 manual 与 panel 之间唯一的差别**。
+断言见 **CA-11**（§17.8）：同一候选下，manual accept 与 panel accept 必须产生
+**逐字相同的事件序列**，仅 `verdict.authority` 取值不同。
+
+> **v5.7 的 `panel=None` 是笔误**，与 §10 签名注释「P0-a 传 `manual_prompt`」矛盾。
+> 照 `None` 实现，判决位上就没有 adapter，只剩一条特殊路径——正是本项要防的东西。
 
 #### `ignition-status`：判据的唯一求值点（§1.2）
 
-土壤扫 `state/soil-ledger.jsonl`，对每条事件求 `is_ignition_event()`，输出形如：
+土壤扫 `state/soil-ledger.jsonl`，对每条事件求 `is_ignition_event(ev)`——
+**只读台账，不查 task registry、不做多跳追溯**。这一点在 §8.2 让事件自带 Task 身份之后才成立，
+它的价值是：`ignition-status` 可在**任何一份台账副本上离线重放**，包括崩溃恢复后与事后审计时。
+
+输出形如：
 
 ```
-ignition events: 2   (criterion §1.2, primary_probe=probe-classify-basic)
-  cycle 3  commit abc123  40.0 → 60.0
-  cycle 5  commit def456  60.0 → 80.0
-excluded: 4 observed_fitness (未晋升) · 1 calibration · 1 anchor-only improvement
+ignition events: 2   (criterion §1.2)
+  soil_cycle 3  commit abc123  task task-7f2a  probe-classify-basic  40.0 → 60.0
+  soil_cycle 5  commit def456  task task-7f2a  probe-classify-basic  60.0 → 80.0
+excluded: 4 kind≠accepted_fitness · 1 calibration · 1 primary_probe（anchor 上升）
 ```
 
 **`excluded` 的归因规则（必须定死，否则同一事件会有两种报法）**：
@@ -1033,6 +1116,27 @@ v3.1 靠 `core_pressure` 逼种子外化——那条上限已被砍掉（正确�
 **通道（T5，此前缺失）**：这些事实的权威副本在 `soil/report-facts.json`（种子不可读）。
 土壤另写一份**只读投影** `seed/feedback.json` 供种子读取——
 否则「把事实反馈给种子」在 v5 里没有任何实际通道。
+
+#### 投影的新鲜度契约（v5.8，外部审计 P1 第 5 项）
+
+投影是台账的派生物，**而派生物会滞后**：土壤渲染中途崩溃，就会出现
+「台账已有新事件，而 facts / feedback / REPORT 仍是旧版」。这不造成安全问题，
+但会造成**种子读到滞后事实、报告与台账不一致**——**且没有任何东西会提醒你**。
+
+每个投影必须携带来源指纹：
+
+```json
+{"source_ledger_tail_hash":"…","source_ledger_offset":1234,
+ "generated_at":"…","schema_version":1,
+ "facts":{ … }}
+```
+
+**启动时校验**：投影的 `source_ledger_tail_hash` 若不等于当前 `soil-ledger` 的 tail hash，
+**土壤先重建投影，再放行 seed cycle**——是阻塞，不是警告。由 **CA-12** 断言（§17.8）。
+
+> **为什么必须阻塞而不是警告。** 种子的下一步选题就建立在这些事实之上（这正是本节存在的全部意义）。
+> 让它在滞后的事实上选题，等于派它去修一个已经不存在的问题——
+> **而它还会为此写下一条 narrative，把滞后固化成叙事**，下一拍再从那条叙事出发。
 
 ### 12.1 为什么 P0-a 的手工评审不是人工门
 
@@ -1490,12 +1594,15 @@ SPEC=docs/MERISTEM-V5-SPEC.md
 # ① 现役名字：出现处必须彼此一致
 for w in scoreboard 记分板 primary_probe probe_manifest_sha ignition-status \
          authority-matrix overfit_suspected accepted_fitness observed_fitness \
-         calibration degenerate soil-ledger; do
+         calibration degenerate soil-ledger \
+         task_id soil_cycle generation authority SECURITY_ASSURANCE \
+         source_ledger_tail_hash counts_as_progress; do
     echo "== $w"; grep -n "$w" "$SPEC"; done
 
 # ② 已退役名字：除 §18 勘误行与显式的「本轮勘误」注记外，命中数必须为 0
 for w in journal control/ report.py probe.json "四 新模块" \
-         vault_manifest_sha frozen_vault_manifest_sha '"kind":"fitness"'; do
+         vault_manifest_sha frozen_vault_manifest_sha '"kind":"fitness"' \
+         'panel=None' 'is_ignition_event(ev, task)' 'ev.get('; do
     echo "== RETIRED $w"; grep -n "$w" "$SPEC"; done
 ```
 
@@ -1529,6 +1636,28 @@ v5.7 只做两件事：
 
 > 这正是本文档反复对种子讲的那句话，终于用到了它自己身上：**「全部由机制强制，不靠提示词」**（§5 抬头）。
 > **一份要求别人机制化的规格，自己却靠自觉冻结——那是这个项目的家族病最后的藏身处。**
+
+#### v5.8：冻结第二次被打开，以及这件事说明了什么
+
+v5.7 冻结之后，**外部独立审计判定了一项 P0**：`ignition-status` 只扫台账，
+而 `accepted_fitness` 不带 Task 身份——**出生判据不可自包含求值、不可重放**。
+
+**冻结条款照常成立，因为它挡的是打磨，不挡 P0。** 条款原文说的是「新发现走**代码评审**修」，
+而这一项的性质决定了它留不到代码评审：**判据是 P0-a 的唯一出口；它若不可重放，
+写出来的代码就没有可对照的判据。** 纸上是这一项唯一修得动的地方。
+
+**判别标准，写死以免下次靠感觉：**
+
+| 该开正文 | 该走 §18 勘误行 |
+|---|---|
+| 判据 / schema / 权威归属**不可实现或不可验证** | 措辞、举例、交叉引用、可读性 |
+| **实现者照抄会写出错的东西** | 实现者照抄能得到对的东西，只是读着别扭 |
+
+> **两次打开冻结，两次都是同一个形态：宣布冻结时自己还带着债。**
+> v5.6 带着 5 项交接项，v5.7 带着这项 P0。
+> **真正的结论不是「不该冻结」，而是「冻结不该由作者自己宣布」**——
+> 这与 S4「判决归土壤」、S8「种子不得叙述成绩」是同一条原则：**作者不该给自己的规格判合格。**
+> **v5.8 的冻结由外部审计裁定，不由本文档自称。**
 
 ---
 
@@ -1585,25 +1714,63 @@ CI 无处附着，改动无从追溯，误删无从恢复。
 | **CA-3** | 种子代码（`meristem/`、`body/`）中不出现 vault / soil-ledger / scoreboard 路径常量 | 全仓 grep | S2 / S3 穿透 |
 | **CA-4** | `substrate/` 不 import `meristem` | 全仓 grep | I9（已存在，纳入本集统一管理） |
 | **CA-5** | `seed/probe-proposals/*.json` 不含 `entrypoint` 字段 | §8.1.1 | 种子在土壤内执行任意代码 |
-| **CA-6** | 台账出现的 `kind` 集合 ⊆ 规格声明集合，**且**规格声明的每个 kind 都至少被写过一次 | §8.2 + §10 | **双向**，见下 |
-| **CA-7** | 台账中不存在 `calibration: true` 的 `accepted_fitness` | §12.0.1 | 用装置对照组的读数宣布装置活着 |
-| **CA-8** | `state/` 下每个文件都匹配 `soil-*.jsonl` | §8.1.5 | 新增台账落在保护面之外 |
+| **CA-6a** | **实际台账**出现的 `kind` 集合 ⊆ 规格声明集合 | §8.2 + §10 | 实现冒出规格里没有的 kind |
+| **CA-6b** | **测试 fixture** `tests/fixtures/soil-ledger-all-kinds.jsonl` 覆盖规格声明的每一个 kind | 同上 | 规格声明了、却从未被实现的 kind |
+| **CA-7** | 台账中不存在 `calibration: true` 的 `accepted_fitness`；**且**每条 fitness 类事件都带齐 §8.2 的六个强制字段 | §8.2 + §12.0.1 | 用装置对照组的读数宣布装置活着；缺键让断言空真 |
+| **CA-8** | `state/` 下每个文件都匹配 `^state/soil-[a-z0-9-]+\.jsonl$`；**且**无 symlink、无指向 `seed/`/`soil/` 的 hardlink | §8.1.5 | 新增台账落在保护面外；路径族被文件系统语义绕过 |
 | **CA-9** | 每条 Measurement 的 `probe_manifest_sha` == 该 probe 冻结登记的 `frozen_probe_manifest_sha` | §4.1 + C1 | 保持 `probe_id` 不变、偷换 vault 内容 |
-| **CA-10** | 每条 `accepted_fitness` 都有对应的 `promotion_committed`，反之亦然 | §10 | 三步非原子晋升留下的半截事实（`reconcile_on_start` 的断言形态） |
+| **CA-10** | **一次晋升的事件链完整且逐字段对应**：`accepted_fitness.source == promotion_intent.source` · `accepted_fitness.commit == promotion_committed.commit` · `== scoreboard.commit` · `parent` 一致 | §10 | **数量相等但张冠李戴**，见下 |
+| **CA-11** | 同一候选下，manual accept 与 panel accept 产生**逐字相同的事件序列**，仅 `verdict.authority` 不同 | §12.0.2 | `manual-cycle` 退化成绕过事务链的特殊晋升路径 |
+| **CA-12** | 每个投影（`soil/report-facts.json`、`seed/feedback.json`）的 `source_ledger_tail_hash` 等于当前 ledger tail；不等则**先重建投影，再放行 seed cycle** | §12.0.3 | 种子读到滞后事实；报告与台账不一致 |
 
-**CA-6 的双向性是刻意的**：只查「实现 ⊆ 规格」，规格里那些从没被写过的 kind 会永远留着——
-**v3.1 的 `advance()` 零调用点就是这么活过 400 拍的。**
+**CA-6 为什么必须拆成两条（v5.8，外部审计第 2 项）。**
+v5.7 的 CA-6 要求「规格声明的每个 kind 都至少被写过一次」——**在刚初始化的空仓库里这天然为假**：
+`accepted_fitness` / `promotion_outcome` / `stale` 在第一次 CI 运行时都还没有真实事件。
+危险的不是「CI 红一阵子」，而是**有人为了让它变绿，往正式 ledger 里塞测试事件**——
+那会永久污染实验历史，**而实验历史正是这整份规格要保护的东西**。
+
+拆开之后：**覆盖度由 fixture 承担（CA-6b），真实台账只需满足包含关系（CA-6a）。**
+`tests/fixtures/soil-ledger-all-kinds.jsonl` **只喂 CA-6b，永不进入 `state/soil-ledger.jsonl`。**
+（这也是 CA-8 禁止 `state/` 出现非族文件的又一个理由：fixture 放错地方就会变成台账。）
+
+> **fixture 的归属**：`tests/` 在 `SEED_WRITABLE` 内（§10.1），**种子可以改这个 fixture**。
+> **这不是洞**——fixture 不喂任何权威判据，种子篡改它最多让自己的 CI 变红。
+> 之所以写明，是因为 §17.5 要求新增任何资产都过一遍归属这道题：**填得出，才算想清楚了。**
+
+**CA-10 为什么必须查对应关系而不是数数（v5.8，外部审计第 6 项）。**
+v5.7 只要求「每条 `accepted_fitness` 都有对应的 `promotion_committed`，反之亦然」——
+**候选 A 的 `accepted_fitness` 配上候选 B 的 `promotion_committed`，数量照样相等，断言照样通过。**
+晋升是三步非原子操作，要防的恰恰是**中途崩溃后事件错配**，而按数量核对对这种错配完全无感。
+**逐字段一一对应才是这条断言原本要说的话。**
 
 ### 17.8.3 断言集自身的失效模式（写明，否则它就是下一份「声明了没断言」）
 
 | 失效 | 处置 |
 |---|---|
-| CA-2 在无法真正拆 UID 的环境下不可断言 | 降级 best-effort，且 CI 输出必须打印 `SKIPPED (no UID separation)`——§15.6 已要求「必须在此明写」，**跳过必须可见；静默跳过等于没有** |
+| CA-2 在无法真正拆 UID 的环境下不可断言 | 降级 best-effort；CI 必须打印 `SKIPPED (no UID separation)` **并置 `SECURITY_ASSURANCE=BEST_EFFORT`**（见下）——§15.6 已要求「必须在此明写」，**跳过必须可见；静默跳过等于没有** |
 | 断言集本身无人维护 | 新增数据/能力时，「§16 加行」与「本节加断言」是同一个动作；SA-3 保证前者，**无人保证后者**——**留作已知缺口，不假装闭合** |
 | CI 未接入 | 与 §17.8.0 同批完成；未接入之前，**本节等同于未生效**，不得据此声称一致性已被保证 |
 
-> **本节不假装自己完备。** 它只把五轮审查里**已经发生过**的失配转成断言，
-> 不承诺挡住尚未发生的那一类。**「规格能穷尽风险」这个假设本身，正是这份文档四轮返工的根因。**
+#### `SECURITY_ASSURANCE`：CI 全绿 ≠ 隔离已被证明（v5.8，外部审计第 3 项）
+
+CA-2 是全套断言里**唯一直接检验执行隔离是否真实生效**的一条。它一旦被跳过，
+其余断言全绿也只说明「代码逻辑自洽」，**完全没说明 soil / worker 的 UID 隔离成立**。
+
+| 取值 | 条件 | 允许的叙述 |
+|---|---|---|
+| `SECURITY_ASSURANCE=FULL` | CA-2 实跑且通过 | 可以说「执行隔离已被验证」 |
+| `SECURITY_ASSURANCE=BEST_EFFORT` | CA-2 被跳过 | **只能说「代码测试通过」**；不得声称隔离已被证明 |
+
+该取值必须**同时写入 `soil-ledger` 与 `soil/report-facts.json`**，
+从而进入报告渲染链（S8）——而不是只活在一次 CI 的终端输出里。
+**终端输出会滚走，台账不会。**
+
+> **`BEST_EFFORT` 下，P0-a 不得被标记为 fully verified。**
+> 这条是 S8「不得叙述成绩」用在**实验装置自己**身上：把「CI 全绿」讲成「隔离已被证明」，
+> 与 v3.1 把 `score > 0` 讲成 `proved_better_by`——**是同一个渲染层的谎言，只换了题材。**
+
+> **本节不假装自己完备。** 它只把审查里**已经发生过**的失配转成断言，
+> 不承诺挡住尚未发生的那一类。**「规格能穷尽风险」这个假设本身，正是这份文档多轮返工的根因。**
 
 ---
 
@@ -1614,6 +1781,7 @@ CI 无处附着，改动无从追溯，误删无从恢复。
 
 | 版本 | 来源 | 主要变更 |
 |---|---|---|
+| **v5.8** | **外部独立审计（裁定 APPROVED WITH BOOTSTRAP FIXES）** | **P0（唯一）：`accepted_fitness` 缺 Task 身份，`ignition-status` 只扫台账因而无从解析事件属于哪个 Task——§1.2 判据名义唯一、实际不可自包含求值、不可重放。** 修法：封套携带 `task_id` / `primary_probe` / `generation` / `soil_cycle`（六个强制字段成表，缺键即 schema 违例），谓词签名收紧为 **`is_ignition_event(ev)` —— 单条台账行的纯函数**，不接 task、不查注册表、不做多跳追溯。**另六项**：② CA-6 拆 CA-6a（真实台账 ⊆ 规格集合）+ CA-6b（fixture 覆盖），防「为了 CI 变绿往正式 ledger 塞测试事件」· ③ CA-2 跳过时置 `SECURITY_ASSURANCE=BEST_EFFORT` 并写入台账与 report-facts，**`BEST_EFFORT` 下 P0-a 不得标记 fully verified** · ④ `manual-cycle` 明确为 **Panel adapter**（y/n 落在 Verdict 位置而非 merge 位置），新增 **CA-11** 断言 manual 与 panel 事件序列逐字相同 · ⑤ CA-10 由「数量相等」改为**事务链逐字段一一对应**（source/commit/parent），防 A 的 accepted 配 B 的 committed · ⑥ 投影加来源指纹并在启动时阻塞校验，新增 **CA-12** · ⑦ `state/` 前缀族收紧为 `^state/soil-[a-z0-9-]+\.jsonl$` + 禁 symlink/hardlink + 临时与备份文件不得落在 `state/`。**顺带修正 v5.7 自己的两处**：`.get()` 兜底在 `calibration` 与 `counts_as_progress` 上**方向相反**，改为强制字段 + 缺键抛错；§12.0.2 的 `panel=None` 与 §10 签名注释矛盾，改回 `manual_prompt` |
 | **v5.7** | **第五轮交接项收尾 + 顾问** | **5 项交接债全部关闭**：① `state/soil-*.jsonl` **前缀族**属主取代单文件名保护，scoreboard 定名 `state/soil-scoreboard.jsonl` 并补进权威矩阵 · ② Fitness 身份补三个版本维度，`pair()` 失配即 `unmeasured` · ③ `primary_probe` 必为 internal，**anchor 非对称**（回归即拒 / 上升不加分 / `overfit_suspected`）· ④ §1.2 成为出生判据的**全文唯一定义点**，`ignition-status` 为唯一求值点 · ⑤ **§17.8 SA/CA 断言集**——§17.5 与 §16 的机械化落地，并把 §17.7 冻结条款的执行机制从「记得遵守」换成 CI。**顺带勘误（6 处，均由本轮机械扫描抓到，非外部审查）**：删除从不存在的 `kind:"fitness"` · `probe_manifest_sha` 三名统一 · S2 与 §16 关于「种子读记分板」的直接矛盾 · §10 失败路径表列头 `kind` 拆为 `kind` + `outcome`（v5.5 的 T3 统一出口后未同步，照表实现会写出规格里没有的 kind）· C3 伪代码 `kind:"stale"` 改走 `finalize_nonpromotion()`（同一处病的第二个实例）· 补回本表缺失的 v5.6 行并改为降序。**另加 2 处 advisor 复审勘误**：§10 pipeline 两处 `append` 补显式 `calibration` 键——缺键会让 **CA-7 空真恒过**（一条永远绿、也永远不检查任何东西的断言），**而这个洞正是本轮新增文本自己引入的** · `ignition-status` 的 `excluded` 归因顺序定死为「第一个不满足的合取项」 |
 | **v5.6** | **第五轮外部独立审查** | **三个 P0**：`seed/` 目录前缀白名单穿透 S7 与 T5（改为文件级白名单）· 晋升三步非原子缺崩溃恢复（`promotion_intent` + `reconcile_on_start`）· 特殊 Task 未从 Change pipeline 分流；另修权威矩阵读权限错误。**本轮同时列出 5 项未落交接项——由 v5.7 关闭**（当时仅改了 header 版本号，未记入本表） |
 | v5.5 | 第四轮落地 | T1–T6 全部写进正文：pipeline 显式上下文 · merge 前二次 ancestry + `promotion_lock` · `finalize_nonpromotion()` 唯一非晋升出口 · `unfulfilled` 语义与额度 · `seed/feedback.json` 事实投影 |
