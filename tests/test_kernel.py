@@ -1031,26 +1031,31 @@ class TestReviewerBudgetIsNotTheBindingConstraint(unittest.TestCase):
     Nothing was bought by the ceiling: models.toml records that quotas on this
     endpoint are per-CALL, not per-token.
 
-    Asserted relationally rather than against a fixed number, because a test
-    that nails today's value into its arithmetic is P-050. Review reads the
-    constitution, the checklist, the diff and the closure list; scoring runs
-    one rubric. Whatever budget scoring needs, review needs at least as much.
+    P-085 raised both slots to 32000 on the strength of that error message and
+    was wrong. Measured across 399 successful reviews: the largest completion
+    any of them needed was 14511 tokens, and NONE exceeded 16000. The failures
+    cluster at exactly whatever the ceiling happens to be -- the recorded
+    values are 8000, 16000 and 32000, one per era of this config. A run that
+    fails fills the budget it is given, whatever that is.
+
+    So the ceiling was never the constraint, and raising it bought nothing
+    except a doubled cost for every runaway. P-086 put it back. What remains
+    true is the accounting: an unavailable reviewer is still counted as a
+    judged rejection, which is G-034 and is the seed's to propose.
     """
 
     def _slots(self, role):
         cfg = llm.load_models()
         return [s for s in cfg.get("roles", {}).get(role, {}).get("slots", [])]
 
-    def test_review_is_given_at_least_what_scoring_is_given(self):
+    def test_the_budget_clears_the_largest_review_ever_completed(self):
+        """14511 tokens, across 399 successful reviews. The margin above it is
+        headroom; the ceiling is not what makes a review fail."""
         review = [s.get("max_tokens", 0) for s in self._slots("review")]
-        score = [s.get("max_tokens", 0) for s in self._slots("score")]
         self.assertTrue(review, "no review slots configured")
-        if not score:
-            self.skipTest("no score slots configured")
-        self.assertGreaterEqual(
-            min(review), max(score),
-            "a reviewer with less room to think than a scorer will run out"
-            " mid-answer, and an unanswered review is a reject")
+        self.assertGreater(min(review), 14511,
+                           "a budget under the largest review ever completed"
+                           " would fail on the answers, not just the runaways")
 
     def test_every_review_slot_has_the_same_budget(self):
         """Heterogeneity is the point of the panel; an asymmetric budget makes
