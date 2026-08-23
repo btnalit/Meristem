@@ -589,6 +589,59 @@ class TaskDeclarationTests(PipelineTestCase):
         self.repo = _make_repo(self.root)
         self.ctx = self._ctx(self.repo)
 
+    def test_anchor_present_in_the_measured_set_is_still_refused_as_primary(self):
+        """**这一条以前是靠 anchor 缺席才通过的。**
+
+        旧写法是「在清单里找不到就拒绝」，而当时的清单根本不含 anchor ——
+        碰巧奏效。§12.2 的「anchor 回归即拒」要求 anchor 必须真的在被测集合里；
+        它一进去，靠缺席的判别就**静默失效**，种子从此可以拿外部锚当自己的尺。
+        现在按来源目录判别，anchor 在场也照样被拒。
+        """
+        anchor_dir = self.vault / "anchors" / "probe-anchor-x"
+        anchor_dir.mkdir(parents=True)
+        _write(anchor_dir / "probe.json", json.dumps({
+            "id": "probe-anchor-x", "capability": "c", "organ": "classifier",
+            "checks": CHECKS}, ensure_ascii=False))
+
+        # 前提：anchor 确实进了被测集合（否则这条测试又在测缺席）。
+        ids = {m["id"] for m in probe_runner.catalogue(self.vault)}
+        self.assertIn("probe-anchor-x", ids)
+        self.assertIn(PROBE_ID, ids)
+
+        task = pipeline.Task(task_id="t", kind="repair", target="classifier",
+                             primary_probe="probe-anchor-x")
+        with self.assertRaises(pipeline.TaskDeclarationError) as caught:
+            pipeline.validate_task(task, self.ctx)
+        self.assertIn("anchor", str(caught.exception))
+
+    def test_anchor_regression_rejects_the_candidate(self):
+        """§12.2 的非对称第一半：**anchor 回归 → 候选被拒**。
+
+        这一条不新增机制 —— `run_all` 本就跑全套、`has_regression` 对任一 probe
+        触发。它断言的是「anchor 确实在那个『全套』里」，而那正是接线之前不成立的事。
+        """
+        anchor_dir = self.vault / "anchors" / "probe-anchor-x"
+        anchor_dir.mkdir(parents=True)
+        # anchor 用 internal 覆盖不到的输入取样。
+        _write(anchor_dir / "probe.json", json.dumps({
+            "id": "probe-anchor-x", "capability": "c", "organ": "classifier",
+            "checks": [{"id": "x1", "input": "anchor only sample",
+                        "cmp": "equals", "expect": "anchor-label"}]}, ensure_ascii=False))
+        # 本类的 setUp 已经建过一个 repo，这里另起一处，避免撞名。
+        elsewhere = self.root / "anchor-regression"
+        elsewhere.mkdir()
+        repo = _make_repo(elsewhere, table=dict(KNOWS_TWO,
+                                                **{"anchor only sample": "anchor-label"}))
+        # 候选修好了 internal 的一条，却把 anchor 那条弄坏了。
+        candidate = _make_candidate(repo, table=KNOWS_THREE)
+        ctx = self._ctx(repo)
+
+        outcome = pipeline.process_candidate(candidate, _task(), repo=repo,
+                                             panel=_accept, ctx=ctx)
+
+        self.assertIs(outcome, pipeline.Outcome.REGRESSED)
+        self.assertNotIn("accepted_fitness", [r["kind"] for r in ctx.ledger.read()])
+
     def test_anchor_cannot_be_declared_primary_probe(self):
         task = pipeline.Task(task_id="t", kind="repair", target="classifier",
                              primary_probe="probe-anchor-hidden")

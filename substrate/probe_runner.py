@@ -310,7 +310,15 @@ def _cmp(kind: str, output: str, expect: str) -> bool:
 
 
 def catalogue(vault):
-    """扫描 vault/internal/active/*/probe.json，返回冻结 manifest 全集。
+    """**全套探针**：internal（`internal/active/`）+ anchor（`anchors/`）。
+
+    `run_all` 量的就是这一套 —— §12.2 写死了 anchor 的非对称处置
+    「回归即拒 / 上升不加分」，而**「回归即拒」要成立，anchor 必须真的在被测集合里**：
+    `run_all` 本就跑全套、`has_regression` 对任一 probe 触发，此处只是把 anchor
+    接进那个「全套」。接线之前，反过拟合是一句形容词。
+
+    需要区分类别时用 `catalogue_by_class()` —— `primary_probe` 的校验必须按**来源**
+    判别 anchor，不能靠它缺席（见该函数的 docstring）。
 
     **返回 None 表示这份清单这一次编不出来**——与 `run_probe` / `run_all` 已有的
     「一把坏尺，整轮 UNMEASURED」契约一致，而不是悄悄跳过那一条、把其余的凑成
@@ -343,7 +351,40 @@ def catalogue(vault):
     vault 尚未存在（还没冻结过任何 probe）不算「坏」，返回空列表 `[]`——这是
     合法的初始状态，不是某把尺读不出来。
     """
-    root = Path(vault) / "internal" / "active"
+    by_class = catalogue_by_class(vault)
+    if by_class is None:
+        return None
+    return by_class["internal"] + by_class["anchor"]
+
+
+#: vault 里两类探针各自的位置（§8.1 的二分：internal 冻结后入 vault，anchor 土壤私有）。
+#: **两类共享同一个 Probe schema**（§12.2「anchor 不设 I2 豁免」），
+#: 因此走同一个 runner、同一套形状校验，只有**来源目录**不同。
+INTERNAL_SUBPATH = ("internal", "active")
+ANCHOR_SUBPATH = ("anchors",)
+
+
+def catalogue_by_class(vault):
+    """按类别返回 `{"internal": [...], "anchor": [...]}`；任一把坏尺 → `None`。
+
+    **为什么要分类别，而不是给 `catalogue()` 加个 anchor 目录了事。**
+    §8.1.4 硬性要求 `primary_probe` 必须是 internal —— anchor 不得被声明为 primary，
+    否则 evaluator 面前摆着两把尺，哪把有利就用哪把。
+    上一版 `validate_task()` 是靠「在清单里找不到就拒绝」来实现这条的，
+    而那份清单当时**根本不含 anchor** —— 也就是说它挡住 anchor 靠的是 anchor 缺席。
+    **靠缺席做判别，正是 anchor 一进入被测集合就会静默失效的写法。**
+    分类别之后，判别依据变成来源目录，anchor 在场也照样被拒。
+    """
+    result = {}
+    for name, subpath in (("internal", INTERNAL_SUBPATH), ("anchor", ANCHOR_SUBPATH)):
+        scanned = _scan_probe_dir(Path(vault).joinpath(*subpath))
+        if scanned is None:
+            return None
+        result[name] = scanned
+    return result
+
+
+def _scan_probe_dir(root: Path):
     manifests = []
     if not root.is_dir():
         return manifests

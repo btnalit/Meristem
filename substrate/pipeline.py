@@ -240,14 +240,14 @@ def validate_task(task: Task, ctx) -> None:
     """§8.1.4 的硬约束，违反即拒绝该声明。
 
     **`primary_probe` 必须是 internal probe，anchor 不得被声明为 primary** ——
-    否则 evaluator 面前摆着两把尺，哪把有利就用哪把。这里的判别方式是
-    「在 internal 清单里找得到」：`probe_runner.catalogue()` 只扫
-    `vault/internal/active/`，anchor 不在其中。
+    否则 evaluator 面前摆着两把尺，哪把有利就用哪把。判别按**来源目录**做
+    （`probe_runner.catalogue_by_class()`），不是靠 anchor 在清单里找不到。
 
-    **已知未闭合**：anchor 目前根本不在被测集合里（见 `ignition-status` 的
-    open item），所以这条检查现在等价于「probe 必须是已冻结的 internal probe」。
-    anchor 进入被测集合之后，判别必须改为按来源目录区分，**而不是靠「找不到」**——
-    靠缺席做判别，正是 anchor 一旦加入就会静默失效的那种写法。
+    **这一条以前是靠缺席实现的，而那是个定时炸弹**：anchor 当时根本不在被测集合里，
+    所以「找不到就拒绝」碰巧奏效。anchor 一接进被测集合（§12.2 的「回归即拒」
+    要求它必须在），那种写法就会**静默失效** —— 种子从此可以拿 anchor 当 primary，
+    而 anchor 恰恰是它看不见 case、最容易显得"进步"的那把尺。
+    现在 anchor 在场也照样被拒，并且拒绝理由会说明它是 anchor。
 
     **C1（§8.1.4 硬约束表第二行）**：「该 probe 须处于 `active`，且已过 C1 的
     `eligible_after`」。上面那条 catalogue 检查只问「vault 里有没有这把尺」，
@@ -261,10 +261,18 @@ def validate_task(task: Task, ctx) -> None:
     if task.regression_policy != REQUIRED_REGRESSION_POLICY:
         raise TaskDeclarationError(
             f"regression_policy 固定为 {REQUIRED_REGRESSION_POLICY!r}，种子不可改（§8.1.4）")
-    manifests = probe_runner.catalogue(ctx.vault)
-    if manifests is None:
+    by_class = probe_runner.catalogue_by_class(ctx.vault)
+    if by_class is None:
         raise TaskDeclarationError("probe 清单这一次编不出来，无法校验 primary_probe")
-    internal_ids = {m.get("id") for m in manifests}
+    internal_ids = {m.get("id") for m in by_class["internal"]}
+    anchor_ids = {m.get("id") for m in by_class["anchor"]}
+    if task.primary_probe in anchor_ids:
+        # **单独一条分支，不与「找不到」合并**：把它并进下面那条通用拒绝，
+        # 读者只会看到「不是 internal probe」，而真正发生的事是
+        # **种子试图拿外部锚当自己的尺**。两者该被区分地报出来。
+        raise TaskDeclarationError(
+            f"primary_probe={task.primary_probe!r} 是 anchor —— anchor 不得被声明为 "
+            "primary（§8.1.4）。它只做 anti-overfit：回归即拒，上升不加分。")
     if task.primary_probe not in internal_ids:
         raise TaskDeclarationError(
             f"primary_probe={task.primary_probe!r} 不是已冻结的 internal probe"
