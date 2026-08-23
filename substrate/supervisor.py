@@ -298,6 +298,35 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
     return 0
 
 
+def freeze_probe(proposal: str, repo=None) -> int:
+    """把一份提案冻结进 vault 并写 C1 登记（`§7 author_probe` 的土壤半）。
+
+    **没有这条命令，冻结机制就没有调用方** —— 而一个零调用点的机制，
+    这份规格自己写过它能怎样活过 400 拍。C1 的实现落地时刻意把 CLI 留在范围外
+    （交付机制与测试），这里补上那一步。
+
+    `proposed_commit` 取当前 HEAD：冻结这个动作发生在**这棵树**上，
+    `eligible_after` 因此从当前拍号起算 —— 这正是 C1 要挡的东西：
+    **同一个 Change 里先写尺、再写刚好通过这把尺的能力**，
+    那样写出来的尺在它自己那一拍不可用。
+    """
+    repo = pathlib.Path(repo) if repo is not None else REPO
+    ctx = _soil_state.SoilContext.open(
+        repo, generation=_generation(repo), soil_cycle=_next_soil_cycle(repo))
+    try:
+        entry = _pipeline.freeze_proposal(
+            proposal, ctx=ctx,
+            proposed_commit=_pipeline.git(repo, "rev-parse", "HEAD"),
+            created_by="operator")
+    except _probe_runner.ProbeProposalError as exc:
+        print(f"冻结被拒：{exc}", file=sys.stderr)
+        return 1
+    print(f"已冻结 {entry['probe_id']}：")
+    print(f"  frozen_probe_manifest_sha = {entry['frozen_probe_manifest_sha']}")
+    print(f"  eligible_after            = {entry['eligible_after']}")
+    return 0
+
+
 def ignition_status(repo=None) -> int:
     """§1.2 判据的**唯一求值点**（§12.0.2）。只读台账，不查 task registry。
 
@@ -356,7 +385,10 @@ def ignition_status(repo=None) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="supervisor")
-    parser.add_argument("command", choices=["manual-cycle", "ignition-status"])
+    parser.add_argument("command",
+                        choices=["manual-cycle", "ignition-status", "freeze-probe"])
+    parser.add_argument("--proposal", default=None,
+                        help="freeze-probe：要冻结的提案文件（seed/probe-proposals/<id>.json）")
     parser.add_argument("--calibration", action="store_true",
                         help="装置对照组（§12.0.1）：人工给定的变更，强制回滚、永不 merge")
     parser.add_argument("--candidate", default=None,
@@ -371,6 +403,13 @@ def main(argv=None) -> int:
 
     if _refuse_if_latched():
         return 3
+
+    if args.command == "freeze-probe":
+        if not args.proposal:
+            print("freeze-probe 需要 --proposal <path>", file=sys.stderr)
+            return 2
+        return freeze_probe(args.proposal)
+
     return manual_cycle(calibration=args.calibration, candidate=args.candidate,
                         task_path=args.task)
 
