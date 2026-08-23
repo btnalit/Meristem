@@ -282,3 +282,33 @@ it can only refuse a cycle after that cycle has already made its calls.
 Not stated here: what should change. The pre-proposal closure estimate at
 loop.py:898 is an existing example of a cap consulted before the model call
 rather than after, and it parks the task instead of failing the cycle.
+
+## G-034 — An unavailable reviewer is recorded as a considered rejection
+
+At cycle 395 the review panel returned 0/2. One of those was a verdict:
+review:deepseek rejected the diff and gave three specific reasons. The other
+was this, in the same rejected_by list, in the same shape a reason takes:
+
+    reviewer unavailable: review:sensenova failed after 4 attempts: empty
+    content (finish_reason=length); raise max_tokens -- reasoning consumed
+    the budget
+
+The cycle is recorded with outcome "rejected". breaker.rejections_for() counts
+it as a judged rejection, so three of these park a task. failure_history()
+hands the text to the next attempt at the same task, where it reads as
+feedback about the diff and is not.
+
+This is the P-016 distinction in a place P-016 did not reach. That patch
+separated a FAULT -- an unparseable reply, a rate limit, the mechanism failing
+before any verdict existed -- from a REJECTION, the gates working. A review
+slot that cannot answer is the mechanism failing. It is currently counted as
+the gates working.
+
+Measured over cycles 350-395: review:sensenova failed 8 of 31 calls,
+review:deepseek 3 of 27. Both slots were raised from 16000 to 32000 max_tokens
+at cycle 395 (P-085), which should make this rarer; it does not change how the
+remaining ones are counted.
+
+Not stated here: what should change. Note only that the parts already exist --
+the journal records which slot failed and why, and breaker.py already knows how
+to exclude a cycle from the judged count.
