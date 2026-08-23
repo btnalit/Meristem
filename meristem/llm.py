@@ -21,11 +21,6 @@ from meristem import SEED_DIR, read_json_readonly
 #: retry/backoff policy, which stays invisible to the seed (SS8.1.3).
 _GATEWAY_TIMEOUT_SECONDS = 30
 
-#: The soil is expected to inject the real entrypoint via
-#: MERISTEM_MODEL_GATEWAY. The default below is a placeholder convention --
-#: see delivery report for the integration gap this leaves open.
-_DEFAULT_GATEWAY = [sys.executable, "-m", "substrate.model_gateway"]
-
 
 @dataclasses.dataclass(frozen=True)
 class CallResult:
@@ -39,21 +34,31 @@ def _roles_available() -> set[str]:
     return set(doc.get("roles_available_to_seed", []) or [])
 
 
-def _gateway_argv() -> list[str]:
-    raw = os.environ.get("MERISTEM_MODEL_GATEWAY")
-    return raw.split() if raw else list(_DEFAULT_GATEWAY)
-
-
 def call_model(role: str, prompt: str) -> CallResult:
     """Ask the soil to make one model call. The seed only branches on the
     three-state result; it never touches a secret or a quota number.
+
+    The soil must inject the real gateway entrypoint via
+    MERISTEM_MODEL_GATEWAY (see docs/MERISTEM-V5-SPEC.md SS13.3, table C).
+    No default entrypoint is guessed here anymore: a wrong guess and an
+    absent gateway would both surface to the seed as the identical
+    "refused" outcome -- the hardest kind of integration fault to diagnose,
+    because a permanently-refusing gateway and a gateway that does not
+    exist look the same. A missing env var is therefore its own distinct,
+    greppable failure: fail closed with reason "gateway_not_injected" and a
+    one-line stderr marker, instead of silently trying a guessed subprocess.
     """
     if role not in _roles_available():
         return CallResult(status="refused", reason=f"role not available to seed: {role!r}")
 
+    raw = os.environ.get("MERISTEM_MODEL_GATEWAY")
+    if not raw:
+        print("GATEWAY_NOT_INJECTED", file=sys.stderr)
+        return CallResult(status="refused", reason="gateway_not_injected")
+
     try:
         proc = subprocess.run(
-            _gateway_argv(),
+            raw.split(),
             input=json.dumps({"role": role, "prompt": prompt}),
             capture_output=True,
             text=True,

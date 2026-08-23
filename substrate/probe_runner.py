@@ -17,9 +17,11 @@ organ 是种子拥有的代码，不得直接跑在土壤权威进程内 —— 
 留给 P0-b 的资源强化档处理。
 
 organ 入口路径（`body/organs/<organ>/run.py`）与输出 ABI（恰好一个字符串值的
-JSON 对象，key 名不固定）是本模块的假设，不是规格逐字写定的——规格只给了
-"input -> organ ABI -> output -> cmp(output, expect)" 这句抽象描述。这里选的
-形状经与仓库里已存在的 body/organs/classifier/run.py（只读，未修改）核对一致。
+JSON 对象，key 名不固定）现由规格写死（§10.2「organ 入口与输出 ABI」），不再是
+本模块自己的假设——此前这份约定只分别记在本模块与 body/organs/classifier/run.py
+两处 docstring 里，「两处各写一份应保持一致」正是 §17.7 点名的语义漂移温床。
+这里选的形状经与仓库里已存在的 body/organs/classifier/run.py（只读，未修改）
+核对一致。
 """
 from __future__ import annotations
 
@@ -88,9 +90,9 @@ def _sandboxed_env() -> dict:
 
 
 def _entrypoint(tree: Path, organ: str) -> Path:
-    # 约定的固定路径（没有 entrypoint 字段，见 §8.1.1）：body/organs/<organ>/run.py。
-    # 与本仓库现有的 body/organs/classifier/run.py 对齐（读取，未修改；本模块不
-    # 允许碰 body/）。该文件自己的 docstring 记了同一份 ABI 契约，两处应保持一致。
+    # 固定路径，规格写死（§10.2「organ 入口与输出 ABI」；没有 entrypoint 字段，
+    # 见 §8.1.1）：body/organs/<organ>/run.py。与本仓库现有的
+    # body/organs/classifier/run.py 对齐（读取，未修改；本模块不允许碰 body/）。
     return Path(tree) / "body" / "organs" / organ / "run.py"
 
 
@@ -147,8 +149,28 @@ def _cmp(kind: str, output: str, expect: str) -> bool:
     raise ValueError(f"cmp not in whitelist: {kind!r}")
 
 
-def catalogue(vault) -> list:
-    """扫描 vault/internal/active/*/probe.json，返回冻结 manifest 全集。"""
+def catalogue(vault):
+    """扫描 vault/internal/active/*/probe.json，返回冻结 manifest 全集。
+
+    **返回 None 表示这份清单这一次编不出来**——与 `run_probe` / `run_all` 已有的
+    「一把坏尺，整轮 UNMEASURED」契约一致。三种情形都返回 None，而不是悄悄跳过
+    那一条、把其余的凑成一份清单交出去：
+
+    1. 某个 probe 目录下的 `probe.json` 读不到（缺文件 / 不是普通文件）。
+    2. 某个 `probe.json` 解析不出合法 JSON。
+    3. 某个 manifest 含 `entrypoint` 字段（§8.1.1：种子可写 schema 里没有这个
+       字段，出现即拒绝——CA-5 的语义是「出现即拒绝」，不是「出现即假装没看见」；
+       冻结阶段本应已挡过一次，这里是纵深防御的第二层）。
+
+    原先这三处是 `continue`：一把坏尺被静默略过，`run_all` 拿到的是一份**少一把
+    尺的清单**——而 `run_all` 自己的契约明写「不做跳过坏的、凑一批好的，那样
+    before 与 after 会覆盖不同的探针集合，两边根本不可比，且 `fitness.pair()`
+    对此毫无察觉」。catalogue 曾经在做 run_all 声明绝不做的事；现在两者一致：
+    一把坏尺 → 这一次整份清单都编不出来。
+
+    vault 尚未存在（还没冻结过任何 probe）不算「坏」，返回空列表 `[]`——这是
+    合法的初始状态，不是某把尺读不出来。
+    """
     root = Path(vault) / "internal" / "active"
     manifests = []
     if not root.is_dir():
@@ -156,15 +178,13 @@ def catalogue(vault) -> list:
     for probe_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         manifest_path = probe_dir / "probe.json"
         if not manifest_path.is_file():
-            continue
+            return None
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            continue
+            return None
         if "entrypoint" in manifest:
-            # 种子可写 schema 里没有这个字段（§8.1.1），出现即拒绝 —— 纵深防御，
-            # 冻结阶段本应已挡过一次，这里是第二层。
-            continue
+            return None
         manifests.append(manifest)
     return manifests
 
@@ -232,9 +252,15 @@ def run_all(tree, vault):
     不做「跳过坏的那把、把好的那些凑成一批」——那样 before 与 after 可能覆盖不同的
     探针集合，两边根本不可比，而 fitness.pair() 无从察觉。宁可整轮记 unmeasured
     （机制故障，不计入拒绝额度），也不要一批悄悄换了尺的分数。
+
+    `catalogue()` 本身也可能编不出清单（坏 manifest，见其 docstring）；那种情形
+    同样整体返回 None，而不是拿着一份少一把尺的清单继续跑下去。
     """
+    manifests = catalogue(vault)
+    if manifests is None:
+        return None
     runs = []
-    for manifest in catalogue(vault):
+    for manifest in manifests:
         run = run_probe(manifest, tree)
         if run is None:
             return None

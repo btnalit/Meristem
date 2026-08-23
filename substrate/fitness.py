@@ -5,14 +5,11 @@
 `probe_manifest_sha` / `runner_version` / `execution_policy_version`，任一不等就是
 不可比 —— `status = "unmeasured"`，`delta = None`，绝不产出 `improved`。
 
-已知的规格内部缺口（未自行裁决，见交付报告）：
-- §8.2 records[] 示例含 `tree_before` / `tree_after`，但 §10.2 定义的 `ProbeRun`
-  没有 tree_sha 字段，`pair()` 的入参（before/after ProbeRun 列表 + 一个 commit
-  字符串）也无法派生出两个不同的树哈希。本实现不编造这两个字段。
-- `degenerate_probes()` 的入参是 `ledger`（§10.2 原文），而不是更符合直觉的
-  scoreboard；本实现照 `ledger` 的字面签名读 `state/soil-ledger.jsonl` 里的
-  `observed_fitness` 事件（每个候选恰好写一次，不会重复计入 `accepted_fitness`
-  对同一批 records 的第二次落盘）。
+已知的规格内部缺口（两处），已由 v5.9 裁决关闭，细节见 §18 的 v5.9 行：
+- `ProbeRun` 补了 `tree_sha`；`pair()` 直接从 `before.tree_sha` / `after.tree_sha`
+  取值，填出 §8.2 要求的 `tree_before` / `tree_after`。
+- `write()` 已删除（填不出 §8.2 的六个强制字段，谁调谁产出违规事件）；pipeline
+  实际调用的 `has_regression()` 补齐了声明。
 """
 from __future__ import annotations
 

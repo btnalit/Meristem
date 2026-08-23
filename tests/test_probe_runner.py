@@ -148,7 +148,12 @@ class SecretIsolationTests(unittest.TestCase):
 
 
 class CatalogueTests(unittest.TestCase):
-    """§9.2 / §10.2: catalogue() 是读 vault 的唯一入口；§8.1.1 的 entrypoint 字段即拒绝。"""
+    """§9.2 / §10.2: catalogue() 是读 vault 的唯一入口；§8.1.1 的 entrypoint 字段即拒绝。
+
+    F1: 一把坏尺（读不了文件 / JSON 解析失败 / 含 entrypoint 字段）必须让整份
+    清单编不出来（返回 None），不是悄悄跳过那一把、拿其余的凑一份「少一把尺的
+    清单」出去——那正是 run_all 自己的 docstring 点名绝不做的事。
+    """
 
     def test_catalogue_reads_frozen_manifests(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,9 +174,28 @@ class CatalogueTests(unittest.TestCase):
             manifest = _manifest()
             manifest["entrypoint"] = ["python3", "hack.py"]
             (probe_dir / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
-            self.assertEqual(probe_runner.catalogue(vault), [])
+            # 不是 []（悄悄跳过这把坏尺）——CA-5 的语义是「出现即拒绝」，拒绝必须
+            # 让整份清单这一次编不出来。
+            self.assertIsNone(probe_runner.catalogue(vault))
+
+    def test_catalogue_returns_none_on_malformed_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            probe_dir = vault / "internal" / "active" / "probe-c"
+            probe_dir.mkdir(parents=True)
+            (probe_dir / "probe.json").write_text("{not valid json", encoding="utf-8")
+            self.assertIsNone(probe_runner.catalogue(vault))
+
+    def test_catalogue_returns_none_on_missing_manifest_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            probe_dir = vault / "internal" / "active" / "probe-d"
+            probe_dir.mkdir(parents=True)
+            # probe.json 从不存在——目录在，尺不在。
+            self.assertIsNone(probe_runner.catalogue(vault))
 
     def test_catalogue_on_missing_vault_returns_empty(self):
+        # 尚未冻结过任何 probe 是合法的初始状态，不是一把坏尺；[] 而非 None。
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(probe_runner.catalogue(Path(tmp) / "no-such-vault"), [])
 
@@ -189,6 +213,63 @@ class RunAllTests(unittest.TestCase):
             runs = probe_runner.run_all(tree, vault)
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].score, 100.0)
+
+    def test_run_all_returns_full_list_when_all_manifests_are_legal(self):
+        """绿的一半：全部 manifest 合法时,run_all 返回完整列表,一把都不少。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tree = _make_tree(tmp_path)
+            vault = tmp_path / "vault"
+            for name in ("probe-1", "probe-2", "probe-3"):
+                probe_dir = vault / "internal" / "active" / name
+                probe_dir.mkdir(parents=True)
+                manifest = _manifest(
+                    checks=[{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}])
+                manifest["id"] = name
+                (probe_dir / "probe.json").write_text(json.dumps(manifest), encoding="utf-8")
+            runs = probe_runner.run_all(tree, vault)
+            self.assertIsNotNone(runs)
+            self.assertEqual({r.probe_id for r in runs}, {"probe-1", "probe-2", "probe-3"})
+
+    def test_run_all_returns_none_not_a_short_list_when_one_manifest_has_entrypoint(self):
+        """F1 红：一把尺被拒（entrypoint 字段）不得只是从清单里消失,必须让整轮
+        run_all 测不出来——而不是悄悄返回「另外两把」的列表。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tree = _make_tree(tmp_path)
+            vault = tmp_path / "vault"
+            good_dir = vault / "internal" / "active" / "probe-good"
+            good_dir.mkdir(parents=True)
+            good_manifest = _manifest(
+                checks=[{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}])
+            (good_dir / "probe.json").write_text(json.dumps(good_manifest), encoding="utf-8")
+
+            bad_dir = vault / "internal" / "active" / "probe-bad"
+            bad_dir.mkdir(parents=True)
+            bad_manifest = _manifest()
+            bad_manifest["id"] = "probe-bad"
+            bad_manifest["entrypoint"] = ["python3", "hack.py"]
+            (bad_dir / "probe.json").write_text(json.dumps(bad_manifest), encoding="utf-8")
+
+            self.assertIsNone(probe_runner.run_all(tree, vault))
+
+    def test_run_all_returns_none_not_a_short_list_when_one_manifest_json_is_malformed(self):
+        """F1 红：JSON 解析失败的那一把同样必须让整轮 run_all 测不出来。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tree = _make_tree(tmp_path)
+            vault = tmp_path / "vault"
+            good_dir = vault / "internal" / "active" / "probe-good"
+            good_dir.mkdir(parents=True)
+            good_manifest = _manifest(
+                checks=[{"id": "c1", "input": "a", "cmp": "equals", "expect": "a"}])
+            (good_dir / "probe.json").write_text(json.dumps(good_manifest), encoding="utf-8")
+
+            bad_dir = vault / "internal" / "active" / "probe-bad"
+            bad_dir.mkdir(parents=True)
+            (bad_dir / "probe.json").write_text("{not valid json", encoding="utf-8")
+
+            self.assertIsNone(probe_runner.run_all(tree, vault))
 
 
 class RealClassifierOrganIntegrationTests(unittest.TestCase):

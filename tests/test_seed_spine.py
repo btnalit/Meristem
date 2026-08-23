@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -97,6 +98,27 @@ class PromptBudgetTests(unittest.TestCase):
             mutation = engine.propose("small task", config={})
         self.assertEqual(len(calls), 1)
         self.assertEqual(mutation.files, {"seed/narrative.md": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# F4: llm.call_model must fail closed, loudly and greppably, when the soil
+# has not injected MERISTEM_MODEL_GATEWAY -- no guessed default entrypoint.
+# A wrong guess and an absent gateway would otherwise both surface to the
+# seed as an identical "refused", which is the hardest kind of integration
+# fault to diagnose.
+# ---------------------------------------------------------------------------
+
+class GatewayNotInjectedTests(unittest.TestCase):
+    def test_missing_env_var_is_refused_with_reason_and_stderr_marker(self):
+        with mock.patch.object(llm, "_roles_available", lambda: {"mutate"}):
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("MERISTEM_MODEL_GATEWAY", None)
+                buf = io.StringIO()
+                with contextlib.redirect_stderr(buf):
+                    result = llm.call_model("mutate", "prompt text")
+        self.assertEqual(result.status, "refused")
+        self.assertEqual(result.reason, "gateway_not_injected")
+        self.assertIn("GATEWAY_NOT_INJECTED", buf.getvalue())
 
 
 # ---------------------------------------------------------------------------
