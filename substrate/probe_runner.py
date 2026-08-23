@@ -208,6 +208,35 @@ def catalogue(vault):
     return manifests
 
 
+#: 一个 check 必须带齐的字段与类型（§8.1.1）。
+#: **`cmp` 只认白名单**，与 `_cmp()` 的白名单是同一份来源：那里对未知 kind 抛
+#: ValueError，这里在跑之前就把它挡下来，两处不得各写各的。
+_CMP_WHITELIST = ("equals", "contains", "regex")
+
+
+def _checks_well_formed(checks: list) -> bool:
+    """逐 check 校验。**不校验数量** —— I2（≥5 个子检查）的执行点在
+    「土壤对 seed 提案文件做 schema 校验」（§5 的 I2 行、§7 的 `author_probe`），
+    也就是**冻结路径**，不是运行时。在 runner 入口再加一道数量检查，会把
+    「这把尺不合法」与「这把尺这次测不出来」两件事混成同一个出口，
+    而它们对应完全不同的处置。**I2 目前确实没有执行点** —— 冻结路径尚未实现，
+    这是未闭合项，不是本函数该顺手替它补的。
+    """
+    seen = set()
+    for check in checks:
+        cid = check.get("id")
+        if not isinstance(cid, str) or not cid or cid in seen:
+            return False
+        seen.add(cid)
+        if not isinstance(check.get("input"), str):
+            return False
+        if check.get("cmp") not in _CMP_WHITELIST:
+            return False
+        if not isinstance(check.get("expect"), str):
+            return False
+    return True
+
+
 def run_probe(manifest: dict, tree):
     """input -> organ ABI -> output -> cmp(output, expect)。score = passed/len(checks)*100。
 
@@ -230,6 +259,13 @@ def run_probe(manifest: dict, tree):
     if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
         # `"checks": null` 或 checks 里混了非对象元素。少了这一行，下面的 for
         # 循环或 check["input"] 会抛 TypeError —— 同一个洞换个位置。
+        return None
+    if not _checks_well_formed(checks):
+        # **逐 check 校验，与「形状不对」走同一条 None 出口。**
+        # 少了这一段，一个缺 `cmp` 的 check 会在下面的 `check["cmp"]` 抛
+        # 未捕获的 KeyError，从 run_all 的循环里炸穿到 pipeline —— 而规格要求的
+        # 是记 `unmeasured`。**优雅退化与抛异常必须选一个，不能一半一半**：
+        # 上面刚为 manifest 根对象写过同一条理由，checks 的元素当时没跟上。
         return None
     entrypoint = _entrypoint(Path(tree), organ)
     detail = []

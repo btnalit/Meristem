@@ -222,6 +222,68 @@ SA/CA 断言集（波次 1 的 5 个 commit，**未留任务记录**，见上表
 6. 规格 v5.10 是**作者自己宣布的版本号**。§17.7 写着「冻结不该由作者自己宣布」——
    这一版的五条勘误尚未经独立复审。
 
+### 2026-08-23 · 回应外部独立审查（审查对象是波次 1，早于波次 2）
+
+**审查对象**：`worktree-p0a-impl@0295237`（波次 1）。裁定 **BLOCKED**。
+它列的 P0-1 / P0-2（pipeline、ignition-status 不存在）在波次 2 已经做掉；
+**但它另外报的两个安全漏洞我没碰过，我在当前 HEAD 上逐条复现，两个都还在。**
+
+**复现结果（不引用任何提交说明的结论，全部实测）**
+
+| 审查项 | 在当前 HEAD 的实测 | 处置 |
+|---|---|---|
+| **P0-4 种子经 symlink 写穿受保护文件** | **复现成功**：`seed/narrative.md` 链到 `soil/report-facts.json`，`engine.apply` 返回成功，被保护文件内容变成 `SEED-WROTE-THIS` | **已修** |
+| **P0-3 organ 用绝对路径读 vault / 写台账** | **复现成功**：organ 读出 `ANCHOR_HIDDEN_CASE_ANSWER`，并往台账文件追加了 `FORGED-BY-ORGAN` | **未修**，见下 |
+| P1-1 逐 check schema 校验 | **复现成功**：缺 `cmp` 的 check 抛未捕获 `KeyError` | **已修**（改走 `unmeasured` 出口） |
+| P1-2 README / 状态表滞后 | 属实，README 写着「Nothing under seed/, soil/ or substrate/ beyond supervisor.py exists yet」 | **已修** |
+
+**P0-4 的根因值得单记。** 守卫是写了的，检查的路径错了：
+
+```python
+target = (root / rel).resolve()   # resolve 已经把 symlink 跟掉
+_safe_write(target, ...)          # 里面才问 target.is_symlink() —— 永远为假
+```
+
+§10.1 **逐字写过这个攻击**（「否则 `seed/narrative.md` 可被链到
+`soil/report-facts.json`，白名单被穿透」）。**规格点名了，守卫也写了，
+但守卫站错了位置** —— 这比没写更危险，因为它看起来是有的。
+修法不是再加字符串判断，而是**逐级 lstat、不 resolve、并对 hardlink 查 `st_nlink`**
+（hardlink 不是指向路径的链接，`O_NOFOLLOW` 对它无效）。
+
+**P0-3 为什么没修，而不是「顺手补一下」。**
+§15.6 把「最小完整性隔离」明确切在 **P0-a 档**，要求 **vault 不可读 · ledger 不可写 · 禁网**，
+理由也写死了：*威胁模型不只是恶意的自主种子，更是一个有 bug 的 organ 制造一次假的
+`accepted_fitness`*。而**它同时点名了当前实现的确切不足**：
+「『subprocess』≠『隔离』：同 UID 下可读 `/proc/<pid>/environ`、**可用绝对路径读 vault**、可直接联网」。
+
+真正的修法是 §15.6 自己给的**执行身份模型**：organ 跑在 `worker` UID，
+vault `soil:0500`、`state/soil-*.jsonl` `soil:0600`。
+**那是服务器上的部署动作 + 一段只能在 Linux 上验证的代码**，
+在这台 Windows 开发机上我写得出来、**验不了**。
+写一段验不了的安全代码然后宣布修好，正是这个项目反复点名的「声明了没断言」——
+**所以我把它变成了两条 `expectedFailure` 断言**
+（`tests/test_security_boundaries.py`），修好那天它们会报 unexpected success。
+
+**顺带纠正审查的一处定位**：它说「I2（≥5 checks）没在 runner 入口硬校验」。
+但 §5 的 I2 行写明执行点是「**土壤对 seed 提案文件做 schema 校验**」，
+即**冻结路径**，不是运行时。在 runner 再加一道数量检查，会把「这把尺不合法」
+与「这把尺这次测不出来」混成同一个出口。**I2 确实没有执行点 —— 因为冻结路径整个还没实现**，
+这是未闭合项，位置在 `author_probe`，不在 `run_probe`。
+另外它担心的「0 个 check 得 0 分、修好后读成 improved」这条，
+实际被 `probe_manifest_sha` 挡住了：加 check 会改变 manifest 哈希，
+`fitness.pair()` 判版本不可比 → `unmeasured`，不会产出 `improved`。
+
+**仍未闭合（在上一条记录的六项之外）**
+
+- **§15.6 C6 最小完整性隔离未落地** —— P0-a 的安全验收不通过。
+  在服务器拆 `soil` / `worker` UID 之前，任何一次 P0-a 运行的
+  `SECURITY_ASSURANCE` 都只能是 `BEST_EFFORT`，**不得标记 fully verified**（v5.8 第 ③ 项）。
+- `SECURITY_ASSURANCE=BEST_EFFORT` **尚未写入台账**（v5.8 要求写台账与 report-facts）——
+  缺一个 kind，而新造 kind 会撞 CA-6a，需要一条勘误定夺。
+- `supervisor.py` 里 v3.1 的 `JOURNAL` / `PROPOSALS` / `AGENDA` 三个常量仍在
+  （`state/journal.jsonl`、`control/agenda.md`）。v5 的路径是 `state/soil-*.jsonl` 与
+  `seed/agenda.md`。两套并存目前互不调用，但这是 §13.3 波次 2 明列的清理项。
+
 ---
 
 ## 常用命令

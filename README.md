@@ -14,15 +14,30 @@ a verified `git bundle` archive off-repo. What the run actually demonstrated is
 written up in the spec: the scale was binary, so `improved` was **structurally
 impossible to produce**, and the system reported progress anyway.
 
-**v5 is specified but not implemented.** The authority is:
+**v5 is specified, and P0-a is partly built.** The authority is:
 
-- **[`docs/MERISTEM-V5-SPEC.md`](docs/MERISTEM-V5-SPEC.md)** — frozen at
-  `v5.8-frozen`. Per-module responsibilities, invariants, data schemas,
-  function signatures, and acceptance criteria. Written to be built from.
+- **[`docs/MERISTEM-V5-SPEC.md`](docs/MERISTEM-V5-SPEC.md)** — `v5.10-frozen`.
+  Per-module responsibilities, invariants, data schemas, function signatures,
+  and acceptance criteria. Written to be built from.
 - [`docs/MERISTEM-CHECKLIST.md`](docs/MERISTEM-CHECKLIST.md) — task log.
 
-Nothing under `seed/`, `soil/` or `substrate/` beyond `supervisor.py` exists
-yet. **Do not read this README as a description of running code.**
+| P0-a component | State |
+|---|---|
+| seed spine (`meristem/`, 6 modules) | implemented |
+| `substrate/probe_runner.py`, `fitness.py` | implemented |
+| `substrate/pipeline.py`, `soil_state.py` | implemented |
+| `manual-cycle` / `ignition-status` | implemented |
+| ignition organ + internal probe | implemented |
+| **anchor probe (5 hidden cases)** | **not written — human-authored, by design** |
+| `budget.py`, `model_gateway.py`, `panel.py` | not implemented |
+| `soil/report_renderer.py`, `seed/feedback.json` | not implemented |
+| **organ filesystem/network isolation (§15.6 C6, P0-a tier)** | **not implemented** |
+| **full P0-a loop (three cycles, H1)** | **blocked** |
+
+**Nothing has run yet.** No `state/soil-ledger.jsonl` exists, so no
+`accepted_fitness` and no ignition event exist either — H1 has not begun to be
+tested. Eight CI assertions correspondingly skip on "no ledger yet".
+**Do not read this README as a description of running code.**
 
 ## The thesis
 

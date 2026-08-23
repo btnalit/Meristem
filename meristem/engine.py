@@ -89,13 +89,52 @@ def _validate_paths(paths: dict, label: str) -> None:
         _validate_one_path(rel, label)
 
 
-def _safe_write(target: pathlib.Path, content: str) -> None:
-    """realpath check + (POSIX) O_NOFOLLOW. On platforms without
-    O_NOFOLLOW (Windows), is_symlink() is the fallback -- see delivery
-    report for the TOCTOU caveat this leaves.
+def _join_no_follow(root: pathlib.Path, rel: str) -> pathlib.Path:
+    """Join `rel` onto `root` while refusing every link on the way down.
+
+    **Never `resolve()` here.** The previous version did
+    `target = (root / rel).resolve()` and only then asked
+    `target.is_symlink()` -- but `resolve()` has already followed the link,
+    so the check inspected the *destination* and could never fire. A seed
+    that pointed `seed/narrative.md` at `soil/report-facts.json` wrote
+    straight through the whitelist. SS10.1 named this exact attack
+    ("seed/narrative.md 可被链到 soil/report-facts.json, 白名单被穿透");
+    the guard was written, and it was inspecting the wrong path.
+
+    Every component is checked, not just the last one: a symlinked
+    *directory* carries the final write out of the whitelist just as well.
     """
-    if target.exists() and target.is_symlink():
+    current = root
+    segments = [seg for seg in rel.replace("\\", "/").split("/") if seg]
+    for index, segment in enumerate(segments):
+        current = current / segment
+        if current.is_symlink():
+            raise PathViolation(
+                f"refusing to write through symlink: {'/'.join(segments[:index + 1])!r}")
+        if index < len(segments) - 1 and current.exists() and not current.is_dir():
+            raise PathViolation(f"not a directory: {'/'.join(segments[:index + 1])!r}")
+    return current
+
+
+def _safe_write(target: pathlib.Path, content: str) -> None:
+    """Write with no-follow semantics and no hardlink aliasing.
+
+    `O_NOFOLLOW` closes the symlink race at open() time on POSIX. It does
+    **not** help against hardlinks -- a hardlink is not a link to a path,
+    it is a second name for the same inode, and no open flag distinguishes
+    it. So `st_nlink > 1` is refused outright. SS10.1 requires both
+    ("拒绝 symlink / hardlink 指向受保护文件"), and on Windows -- where
+    O_NOFOLLOW does not exist -- the link count is the only check that works.
+    """
+    if target.is_symlink():
         raise PathViolation(f"refusing to write through symlink: {target}")
+    if target.exists():
+        try:
+            if target.stat().st_nlink > 1:
+                raise PathViolation(
+                    f"refusing to write through hardlink (st_nlink>1): {target}")
+        except OSError as exc:
+            raise PathViolation(f"cannot stat write target: {target}: {exc}") from exc
     target.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     if hasattr(os, "O_NOFOLLOW"):
@@ -123,7 +162,11 @@ def apply(mutation: Mutation, workdir: pathlib.Path) -> list[str]:
     root = pathlib.Path(workdir).resolve()
     written: list[str] = []
     for rel, content in mutation.files.items():
-        target = (root / rel).resolve()
+        # 逐级 no-follow 拼接，**不 resolve**（理由见 _join_no_follow）。
+        target = _join_no_follow(root, rel)
+        # 兜底的越界检查。`_validate_one_path` 已挡掉绝对路径与 `..`，
+        # 而 `_join_no_follow` 挡掉了每一级链接 —— 三道各挡一种走法，
+        # 少任何一道都有一条走得通的路。
         if target != root and root not in target.parents:
             raise PathViolation(f"engine.apply: escapes workdir: {rel!r}")
         _safe_write(target, content)
