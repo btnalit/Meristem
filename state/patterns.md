@@ -388,3 +388,12 @@ an argued cap case. No subset of the deterministic gate can be safely
 externalized: every check it performs is security-critical, and a thin
 re-verification shim in the kernel would need to contain all checks, saving
 zero lines.
+
+## G-006 — Repeated rejection
+
+Task: EXTERNALIZE: Move the closure gate from meristem/gates/closure.py (181 LOC) into body/organs/closure-gate/, reducing core pressure by 181 lines and closure pressure by the gate's closure footprint. Th
+Rejected 3 times.
+Previous attempts at this exact task were rejected:
+- cycle 394: review:deepseek: The wrapper's `_from_json` silently defaults missing `fits` to `True`, missing `tokens` to `0`, missing `undeclared` to `[]`, and missing `files` to `[]`. Any incomplete or malformed organ response therefore becomes a passing closure; the old in-process code computed these values directly and had no such fail-open fallback.
+- cycle 394: review:deepseek: The kernel now trusts organ JSON output without validating that all mandatory fields are present, that returned paths are within the inspected tree, that `fits` is consistent with `tokens` and the budget, or that undeclared dependency edges are reported. An omission in the organ output becomes an omission in the review closure, directly violating the conservative over-inclusion requirement.
+- cycle 394: review:deepseek: The closure calculator is moved into a mutable organ and invoked via a fresh subprocess from `REPO`. A working-tree mutation to `body/orga
