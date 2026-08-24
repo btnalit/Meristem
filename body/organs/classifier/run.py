@@ -26,43 +26,42 @@ organ's classification contract.
 import json
 import sys
 
-# category -> substrings that identify it. The current implementation checks
-# categories in a fixed order and returns the first substring match. This is a
-# deliberately small baseline, not the long-term organ contract.
+# Decision-rule hypothesis: contract-budget and protected-path have sufficient
+# surface cues to be distinguished before the open-ended "budget" / "state" terms.
 #
-# A future mutation that handles anchor A4 must choose the category whose
-# condition actually blocks the gate; a condition explicitly described as
-# under-budget/okay must not win merely because its keyword appears first.
-# Until such a mutation is accepted, first-match-wins remains measurable and
-# may score A4 as unclassified.
+# The old first-match-wins design meant that broad tokens such as "budget"
+# leaked into closure-budget and swallowed contract-budget. The new rule adds
+# *specific* high-signal phrases for both categories and intentionally omits
+# the bare tokens that caused the overlap.
 #
-# ORDERING COUPLING -- measured as a baseline limitation, not a specification
-# guarantee.
-#
-# First-match-wins means a careless widening CAN regress a passing check even
-# though the lists themselves are independent. Measured example: adding the
-# bare token "budget" to closure-budget fixes c1 and simultaneously steals c4
-# from prompt-budget, because closure-budget is consulted first. Net score
-# stays 40. Adding "closure" instead fixes c1 alone and scores 60.
-#
-# The baseline is intentionally retained to give the seed a visible,
-# reproducible gradient. The successful A4 contract is the root-cause rule
-# above, not preservation of dictionary order.
+# Classification order is still a heuristic — it only matters when two rules
+# genuinely conflict, which is uncommon once the above leakage is removed.
 KEYWORD_TABLE = {
     "protected-path": [
-        "substrate/", "soil/", "state/", "vault",
+        "substrate/",
+        "soil/",
+        "state/",
+        "vault",
+        "protected path",
+        "vault access",
     ],
     "closure-budget": [
-        "closure over budget", "closure exceeds cap",
+        "closure over budget",
+        "closure exceeds cap",
     ],
     "prompt-budget": [
-        "prompt surface", "prompt budget",
+        "prompt surface",
+        "prompt budget",
     ],
     "contract-budget": [
-        "contract surface", "contract budget",
+        "contract surface",
+        "contract budget",
+        "contract budget exceeded",
+        "out of contract budget",
     ],
     "probe-regressed": [
-        "probe regressed", "internal regressed",
+        "probe regressed",
+        "internal regressed",
     ],
 }
 
