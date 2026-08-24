@@ -515,6 +515,9 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
                        "exit_code": None,
                        "path": "candidate" if candidate else "seed",
                        "calibration": calibration})
+    feedback_projection.write_projection(repo)
+    if not feedback_projection.projection_is_fresh(repo):
+        raise RuntimeError("feedback projection freshness gate failed before worker start")
 
     if calibration and candidate is None:
         print("--calibration 必须配 --candidate <sha>：校准是**人工给定的确定能提升的"

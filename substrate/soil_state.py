@@ -33,6 +33,8 @@ import os
 import re
 import threading
 import time
+import pwd
+import grp
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -478,6 +480,9 @@ class FrozenProbeRegistry:
             os.write(fd, text.encode("utf-8"))
         finally:
             os.close(fd)
+        os.chmod(tmp_path, 0o644)
+        os.chown(tmp_path, pwd.getpwnam("soil").pw_uid,
+                 grp.getgrnam("soil").gr_gid)
         os.replace(tmp_path, self.path)
 
 

@@ -37,6 +37,19 @@ def _observed_summary(event: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in result.items() if v is not None}
 
 
+def projection_is_fresh(repo: pathlib.Path) -> bool:
+    repo = pathlib.Path(repo)
+    ledger = repo / "state" / "soil-ledger.jsonl"
+    target = repo / "seed" / "feedback.json"
+    if not ledger.is_file() or not target.is_file():
+        return False
+    try:
+        doc = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return doc.get("source_ledger_tail_hash") == _tail_hash(ledger)
+
+
 def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathlib.Path:
     """Write a bounded feedback view after a soil cycle.
 
@@ -51,7 +64,8 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
     observed = [r for r in rows if r.get("kind") == "observed_fitness"
                 and (task_id is None or r.get("task_id") == task_id)]
     cycles = [r for r in rows if r.get("kind") == "cycle"
-              and r.get("task_id") and (task_id is None or r.get("task_id") == task_id)]
+              and r.get("task_id") and r.get("exit_code") is not None
+              and (task_id is None or r.get("task_id") == task_id)]
     outcomes = [r for r in rows if r.get("kind") == "promotion_outcome"]
     recent = []
     for event in cycles[-8:]:

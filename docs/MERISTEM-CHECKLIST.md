@@ -1138,6 +1138,8 @@ cycle=25：candidate a37cd0524125；完成 measurement；UNFULFILLED；delta=0.0
 - `accepted_fitness=0`、`promotion_committed=0`、soil/recovery error=0；
 - 当前证据支持“土壤闭环正常、Agnes 尚未形成有效反思策略”，不能宣称自优化已发生。
 
+本轮独立审计补充修复：manual-cycle 在 cycle-start ledger event 后刷新并校验 feedback projection freshness，校验失败即阻止 worker 启动；FrozenProbeRegistry 原子写入显式固定 `soil:soil 0644`，现有运行态 registry 仅修正 ownership，不改内容、不删除、不提交。cycle=22 的历史 failure_reason 已丢失，保留原 ledger 不回写伪造；后续失败由结构化 `failure_reason` 记录。
+
 本轮继续冻结 H1；后续实验重点应从“是否能重复生成 candidate”转向“是否能产生非重复、可解释、且使 delta 改善的策略”。
 
 按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
