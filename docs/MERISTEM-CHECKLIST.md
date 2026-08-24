@@ -1243,6 +1243,19 @@ invalid Python → candidate_preflight(failure_reason=syntax_failure)
 → reflection=compile-safe minimal mutation
 ```
 
+Cycle 35 修复后真实重测：
+
+```text
+syntax preflight=通过
+changed_paths=[body/organs/classifier/run.py]
+observed primary=40→40, anchor=20→20
+outcome=UNFULFILLED
+semantic_failures=1, mechanism_failures=0, task_state=unfulfilled
+promotion=0
+```
+
+这证明合法 candidate 已进入真实 measurement；当前仍无 probe improvement，不能进入 H1。
+
 `syntax_failure` 计入 semantic failure，连续达到 task threshold 才 parked；不计 mechanism failure。该 preflight 不写 `__pycache__`，不改变 candidate tree identity。
 
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem soil 自己控制。
