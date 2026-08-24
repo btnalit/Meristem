@@ -66,6 +66,8 @@ Layer 0 rollback contract 与演练要求：`docs/MERISTEM-LAYER0-ROLLBACK.md`�
 
 Layer 1 H1-preflight 实测 cycles 38–40：三轮均 `finish_reason=stop` / `parse_status=ok`，returned path 只有 classifier，syntax preflight 与 probe measurement 通过；primary `40→40`、anchor `20→20`，三种 strategy fingerprint 不同，均 `UNFULFILLED`，无 `accepted_fitness` / `promotion_committed` / ignition event。cycle 40 后新 task `8388cd245b011a91` 按 semantic quota 正确进入 `parked`；H1 仍 frozen。
 
+Fresh task `b69b6f74d77fa935` cycles 41–43：cycles 41–42 为 `delta=0`，cycle43 首次取得真实 primary `40→60`、anchor `20→40`，candidate `84546b577ded...` 仅修改 classifier 且 `parse_status=ok`。因 `--preflight` promotion gate，结果为 `REJECTED`，无 merge/promotion；feedback/reflection 已修复为 `candidate_meets_primary_and_holdout_but_promotion_is_gated`，停止继续盲目 mutation，转人工 promotion review。正式 H1 仍 frozen。
+
 ### 2026-08-23 · v5 规格 v5.7 → v5.8-frozen + 停 v3.1 进化
 
 **1. 规格迁入版本控制并两次升版**

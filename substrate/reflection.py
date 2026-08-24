@@ -7,10 +7,15 @@ def build_reflection(facts: dict) -> dict:
     zero_delta = [a for a in attempts
                   if a.get("reason") == "delta_below_threshold"
                   or (a.get("outcome") == "UNFULFILLED" and a.get("delta") == 0.0)]
+    gated_improvements = [a for a in attempts
+                          if a.get("reason") == "preflight_rejected_after_improvement"]
     syntax_failures = [a for a in attempts if a.get("reason") == "syntax_failure"]
     repeated = [a for a in attempts if a.get("diagnosis_class") == "repeated_strategy_no_effect"]
     cycles = [a.get("soil_cycle") for a in attempts if a.get("soil_cycle") is not None]
-    if syntax_failures:
+    if gated_improvements:
+        hypothesis = "candidate_meets_primary_and_holdout_but_promotion_is_gated"
+        next_strategy = "preserve the measured candidate and await manual promotion review; do not generate an unbounded replacement"
+    elif syntax_failures:
         hypothesis = "candidate_syntax_failure_prevented_measurement"
         next_strategy = "preserve valid Python syntax and run a compile-safe minimal mutation before changing strategy"
     elif zero_delta:

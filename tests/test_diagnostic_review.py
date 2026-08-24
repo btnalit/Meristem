@@ -34,7 +34,16 @@ class DiagnosticReviewTests(unittest.TestCase):
         self.assertEqual(result["mechanism_status"], "healthy")
         self.assertIn("classifier decision rule", result["next_experiment_constraint"])
 
-    def test_mechanism_failure_is_not_model_failure(self):
+    def test_preflight_rejection_after_improvement_is_not_zero_delta(self):
+        result = diagnose_failure(
+            failure_class="preflight_rejected_after_improvement",
+            changed_paths=["body/organs/classifier/run.py"],
+            delta=20.0,
+        )
+        self.assertEqual(result["diagnosis_class"], "candidate_meets_measurement_but_promotion_is_gated")
+        self.assertEqual(result["mechanism_status"], "healthy")
+        self.assertIn("manual promotion", result["next_experiment_constraint"])
+
         result = diagnose_failure(failure_class="provider_error", changed_paths=[])
         self.assertEqual(result["mechanism_status"], "unhealthy")
         self.assertEqual(result["diagnosis_class"], "mechanism_failure")

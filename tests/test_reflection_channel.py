@@ -28,7 +28,14 @@ class ReflectionTests(unittest.TestCase):
         self.assertTrue(result["source_cycles"])
         self.assertNotIn("prompt", result)
 
-    def test_empty_facts_are_explicit(self):
+    def test_preflight_improvement_takes_reflection_priority(self):
+        result = build_reflection({"recent_attempts": [
+            {"soil_cycle": 43, "reason": "preflight_rejected_after_improvement",
+             "delta": 20.0, "attempt_id": "att-43"}
+        ], "source_attempt_ids": ["att-43"]})
+        self.assertEqual(result["hypothesis"], "candidate_meets_primary_and_holdout_but_promotion_is_gated")
+        self.assertIn("manual promotion", result["next_strategy"])
+
         result = build_reflection({})
         self.assertEqual(result["hypothesis"], "insufficient_evidence")
 
