@@ -1209,8 +1209,8 @@ promotion：0
 
 | cycle | attempt | prompt feedback | reflection attempts | result | constraint evidence |
 |---:|---|---|---:|---|---|
-| 31 | `att-66be377b85434db0aa86c5f1a4c5e4e9` | true | 0 | UNMEASURED | `tests/` 22 files returned; soil rejected before measurement |
-| 32 | `att-cb2457c2531445a0a93925f1a50ae108` | true | 1 | UNMEASURED | `tests/` 22 files returned again; soil rejected before measurement |
+| 31 | `att-66be377b85434db0aa86c5f1a4c5e4e9` | true | 0 | UNMEASURED | `tests/` 22 paths recovered; soil rejected before measurement |
+| 32 | `att-cb2457c2531445a0a93925f1a50ae108` | true | 1 | UNMEASURED | `tests/` 22 paths recovered; soil rejected before measurement |
 
 Cycle 32 prompt hash 与 cycle 31 不同，response hash 也不同，reflection 已消费；returned path-set hash 相同，说明模型仍返回相同结构的 tests 污染。两轮均无 semantic failure、无 fitness 记录、无 promotion；task 保持 `open`，不因机制/contract rejection 消耗语义 quota。bridge 每轮清理成功。
 
