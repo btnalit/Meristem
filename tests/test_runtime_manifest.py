@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from substrate.runtime_manifest import RuntimeManifestError, verify
+from substrate.runtime_manifest import RuntimeManifestError, refresh, verify
 
 
 class RuntimeManifestTests(unittest.TestCase):
@@ -53,6 +53,11 @@ class RuntimeManifestTests(unittest.TestCase):
             os.chmod(manifest_path, 0o600)
             os.chmod(paths["seed/feedback.json"], 0o644)
             os.chmod(paths["soil/report-facts.json"], 0o600)
+            verify(repo, task_id="task")
+            paths["state/soil-ledger.jsonl"].write_text("{\"kind\":\"cycle\"}\n")
+            with self.assertRaises(RuntimeManifestError):
+                verify(repo, task_id="task")
+            refresh(repo, task_id="task")
             verify(repo, task_id="task")
             os.chmod(paths["soil/frozen-probe-registry.json"], 0o666)
             with self.assertRaises(RuntimeManifestError):

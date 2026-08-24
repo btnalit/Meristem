@@ -583,6 +583,13 @@ def _preflight_panel(commit: str, diff: str, task):
     return _pipeline.Verdict(False, "manual", "H1-preflight: promotion disabled")
 
 
+def _refresh_projection_and_manifest(repo: pathlib.Path, task_id: str) -> None:
+    feedback_projection.write_projection(repo, task_id=task_id)
+    if not feedback_projection.projection_is_fresh(repo):
+        raise RuntimeError("task-scoped feedback projection freshness gate failed")
+    runtime_manifest.refresh(repo, task_id=task_id)
+
+
 def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
                  preflight: bool = False) -> int:
     """§12.0.2：**走与未来 heartbeat 完全相同的代码路径。** 唯一的区别是判决位上坐着人。"""
@@ -606,6 +613,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
     # 崩溃恢复要到 P0-c 无人值守时才第一次被真正需要，绕过它就等于没测（§12.0.2）。
     for commit, outcome in _pipeline.reconcile_on_start(repo, ctx):
         print(f"reconcile: {commit[:12]} -> {outcome.name}")
+    _refresh_projection_and_manifest(repo, task.task_id)
 
     # **先记这一拍发生过，再做任何校验。**
     # 拍号由台账里的最大拍号推进（见 `_next_soil_cycle`）；若只在校验通过后才写
@@ -623,7 +631,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
               "变更**（§12.0.1），不经种子产出。", file=sys.stderr)
         return 2
 
-    feedback_projection.write_projection(repo, task_id=task.task_id)
+    _refresh_projection_and_manifest(repo, task.task_id)
     if not feedback_projection.projection_is_fresh(repo):
         raise RuntimeError("task-scoped feedback projection freshness gate failed before worker start")
     try:
@@ -637,14 +645,14 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
                            "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                            "exit_code": 2, "failure_reason": "task_guarded",
                            "task_state": task_state.get("state")})
-        feedback_projection.write_projection(repo, task_id=task.task_id)
+        _refresh_projection_and_manifest(repo, task.task_id)
         print(f"task guarded: {task.task_id} state={task_state.get('state')}", file=sys.stderr)
         return 2
     worktree = None
     if candidate is None:
         commit, worktree = _seed_candidate(repo, ctx, task)
         if commit is None:
-            feedback_projection.write_projection(repo, task_id=task.task_id)
+            _refresh_projection_and_manifest(repo, task.task_id)
             _drop_worktree(repo, worktree)
             return 1
     else:
@@ -660,12 +668,13 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
         # 预期结果（C1 的 eligible_after 就是靠它生效的），操作员该看到的是
         # 一句说明为什么，不是一段栈 —— 栈会让人以为土壤坏了。
         print(f"Task 声明被拒：{exc}", file=sys.stderr)
+        _refresh_projection_and_manifest(repo, task.task_id)
         return 2
     finally:
         if worktree is not None:
             _drop_worktree(repo, worktree)
 
-    feedback_projection.write_projection(repo, task_id=task.task_id)
+    _refresh_projection_and_manifest(repo, task.task_id)
     print(f"outcome: {outcome.name}")
     if calibration:
         print("校准：已测量、强制回滚、**永不 merge** —— 结构上产不出 accepted_fitness"

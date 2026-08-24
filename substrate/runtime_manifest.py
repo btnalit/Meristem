@@ -1,9 +1,12 @@
-"""Fail-closed validation of the soil runtime manifest."""
+"""Fail-closed validation and refresh of the soil runtime manifest."""
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import pwd
+import grp
+import tempfile
 from pathlib import Path
 
 
@@ -15,13 +18,54 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _paths(repo: Path) -> tuple[Path, Path, Path, Path, Path]:
+    return (repo / "soil" / "runtime-manifest.json",
+            repo / "state" / "soil-ledger.jsonl",
+            repo / "seed" / "feedback.json",
+            repo / "soil" / "report-facts.json",
+            repo / "soil" / "frozen-probe-registry.json")
+
+
+def refresh(repo: Path, *, task_id: str) -> dict:
+    repo = Path(repo)
+    manifest_path, ledger, feedback, report, registry = _paths(repo)
+    required = (manifest_path, ledger, feedback, report, registry)
+    if any(not path.is_file() for path in required):
+        raise RuntimeManifestError("runtime manifest or required projection is missing")
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeManifestError("runtime manifest is invalid JSON") from exc
+    if data.get("schema_version") != 1:
+        raise RuntimeManifestError("runtime manifest schema mismatch")
+    data["task_id"] = task_id
+    data["ledger_tail_hash"] = _sha(ledger)
+    data["projection_hashes"] = {
+        "seed_feedback": _sha(feedback),
+        "report_facts": _sha(report),
+        "frozen_probe_registry": _sha(registry),
+    }
+    payload = json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    fd, name = tempfile.mkstemp(prefix=".runtime-manifest.", dir=str(manifest_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chown(name, pwd.getpwnam("soil").pw_uid, grp.getgrnam("soil").gr_gid)
+        os.chmod(name, 0o600)
+        os.replace(name, manifest_path)
+    finally:
+        try:
+            os.unlink(name)
+        except FileNotFoundError:
+            pass
+    return data
+
+
 def verify(repo: Path, *, task_id: str) -> dict:
     repo = Path(repo)
-    manifest_path = repo / "soil" / "runtime-manifest.json"
-    ledger = repo / "state" / "soil-ledger.jsonl"
-    feedback = repo / "seed" / "feedback.json"
-    report = repo / "soil" / "report-facts.json"
-    registry = repo / "soil" / "frozen-probe-registry.json"
+    manifest_path, ledger, feedback, report, registry = _paths(repo)
     required = (manifest_path, ledger, feedback, report, registry)
     if any(not path.is_file() for path in required):
         raise RuntimeManifestError("runtime manifest or required projection is missing")
