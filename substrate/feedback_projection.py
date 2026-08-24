@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import pathlib
+import pwd
+import grp
 import tempfile
 from typing import Any
 
@@ -92,6 +94,8 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(tmp_name, 0o644)
+        os.chown(tmp_name, pwd.getpwnam("soil").pw_uid,
+                 grp.getgrnam("soil").gr_gid)
         os.replace(tmp_name, target)
     finally:
         try:

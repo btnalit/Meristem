@@ -1117,9 +1117,28 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 
 ---
 
-### 2026-08-24 · Agnes 多轮自优化实验准备
+### 2026-08-24 · Agnes 多轮自优化实验监测
 
-Agnes 已完成结构化 mutation 输出与单圈 measurement，但若连续运行前没有 soil-owned `seed/feedback.json` 投影，失败不会进入下一轮 prompt，实验会退化成无学习的重复调用。本轮先补齐最小反馈闭环：soil ledger → 受限 seed feedback projection → 下一轮 mutation context；投影不包含 prompt、provider 原文、credential、soil 私有路径或完整 mutation 内容。
+补齐 soil-owned feedback projection 后，在同一 task `0726d71e8f27c025` 上继续运行：
+
+```text
+cycle=21：candidate 390c0ec2878f；UNFULFILLED；primary 40.0→40.0，delta=0.0；changed paths=18
+cycle=22：无 candidate；worker 读取 feedback=True；模型返回顶层 `files` 包装，触发 PATH_VIOLATION
+cycle=23→24：candidate b83e4ec1d5ac；完成 measurement；UNFULFILLED；delta=0.0；changed paths=18
+cycle=25：candidate a37cd0524125；完成 measurement；UNFULFILLED；delta=0.0；changed paths=18
+```
+
+观察结论：
+
+- 失败已进入 `seed/feedback.json`，`source_ledger_tail_hash` 每轮验证匹配当前 ledger；
+- worker hook 实测下一轮确实读取 feedback projection；
+- 第 2 轮发生了输出策略变化，但变成非法 `files` 包装；
+- 第 3/4 轮重新生成 candidate，但与第 1 轮保持相同的 18-path mutation fingerprint，重复修改 classifier/tests；
+- primary probe 始终 `40.0→40.0`，没有突破；
+- `accepted_fitness=0`、`promotion_committed=0`、soil/recovery error=0；
+- 当前证据支持“土壤闭环正常、Agnes 尚未形成有效反思策略”，不能宣称自优化已发生。
+
+本轮继续冻结 H1；后续实验重点应从“是否能重复生成 candidate”转向“是否能产生非重复、可解释、且使 delta 改善的策略”。
 
 按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem
