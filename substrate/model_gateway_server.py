@@ -15,6 +15,23 @@ sys.path.insert(0, str(REPO))
 from substrate import model_gateway
 
 
+def _recv_json_line(conn: socket.socket, *, limit: int = 2 * 1024 * 1024) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while b"\n" not in b"".join(chunks):
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise ValueError("request_too_large")
+    raw = b"".join(chunks)
+    if b"\n" not in raw:
+        raise ValueError("request_incomplete")
+    return raw.split(b"\n", 1)[0]
+
+
 def _serve(socket_path: Path) -> int:
     if not socket_path.is_absolute() or socket_path.exists():
         return 2
@@ -44,7 +61,7 @@ def _serve(socket_path: Path) -> int:
         while True:
             conn, _ = server.accept()
             with conn:
-                raw = conn.recv(2 * 1024 * 1024)
+                raw = _recv_json_line(conn)
                 try:
                     request = json.loads(raw.decode("utf-8").strip())
                     cycle = model_gateway._resolve_cycle()
