@@ -874,7 +874,8 @@ def process_candidate(
         task: Task,
         *,
         repo: Path,
-        panel: Panel,                 # P0-a 传 manual_prompt
+        panel: Panel,                 # controlled tests may pass manual_prompt;
+                                      # formal H1 passes autonomous_panel
         ctx: SoilContext,             # ledger / vault / scoreboard / policy
                                       # + generation / soil_cycle / calibration（§8.2 强制字段之源）
 ) -> Outcome:
@@ -1032,7 +1033,7 @@ def finalize_nonpromotion(ctx, outcome, source, why, *, quota) -> Outcome:
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0-a 点火（检验 H1）** | 种子 6 模块 + 土壤 5 新模块 + 点火 organ + **两把探针**（internal 5 明检查 + anchor 5 暗检查）。**经 `manual-cycle` 跑，人坐在判决位** | **三圈内 `ignition-status` 计数 ≥ 1**（判据定义见 §1.2，此处只引用不复述） |
+| **P0-a 点火（检验 H1）** | 受控 preflight 先验证土壤闭环；正式运行使用 soil-owned `autonomous_panel`，不依赖人工输入。种子 6 模块 + 土壤 5 新模块 + 点火 organ + **两把探针**（internal 5 明检查 + anchor 5 暗检查） | **三圈内 `ignition-status` 计数 ≥ 1**（判据定义见 §1.2，此处只引用不复述） |
 | **P0-b 可信化** | **判决 adapter 可替换**：`process_candidate` 的测量与状态结构不变；但 panel 的土壤 prompt、清单、槽位、run identity、超时重试、投票持久化、不可用评审员语义**都是 P0-b 的主体工程**（约 100–150 行土壤代码） | 每替换一项后仍能产出 improved |
 | **P0-c 自持化（检验 H2）** | keeper / breaker / 预算窗口上线 | 无人值守一夜，早上 **`ignition-status` 计数 > 0 且在增长**（同一判据，§1.2） |
 | **P1 生长（检验 H3）** | 允许种子自撰新尺、长新 organ | **仅当 P0-c 持续产出 improved 后开放** |
@@ -1041,7 +1042,7 @@ def finalize_nonpromotion(ctx, outcome, source, why, *, quota) -> Outcome:
 
 | 阶段 | 谁在驾驶 | 检验 | 判据 |
 |---|---|---|---|
-| **P0-a 点火** | **人给任务，人做判决** | H1：给定分级尺，本档位模型能沿梯度爬 | 三圈内 `ignition-status` ≥ 1（§1.2） |
+| **P0-a 点火** | **土壤给任务，soil-autonomous panel 自动判决**（manual_prompt 仅受控测试） | H1：给定分级尺，本档位模型能沿梯度爬 | 三圈内 `ignition-status` ≥ 1（§1.2） |
 | **P0-b 自主** | **种子自己选题 + 真 panel 上岗**（两者必须同时） | H1'：自主选题下 H1 仍成立 | **种子自选**的任务上 `ignition-status` ≥ 1（§1.2） |
 | **P0-c 稳定** | 无人 | H2：全部闸门在位时 H1 仍成立 | 无人值守一夜，`ignition-status` > 0 且在增长（§1.2） |
 
@@ -1082,17 +1083,20 @@ def finalize_nonpromotion(ctx, outcome, source, why, *, quota) -> Outcome:
 > 校准是对**仪器**做的事，不是对**系统**做的事。
 > **实验者也不得叙述成绩，哪怕是为了校准**——这是 S8 的精神延伸到实验者自己身上。
 
-### 12.0.2 `manual-cycle`：脚手架与正式结构共用骨架
+### 12.0.2 `manual-cycle` / `--preflight` / `--autonomous`：受控脚手架与正式自主结构共用骨架
 
 ```
-python -m substrate.supervisor manual-cycle
-python -m substrate.supervisor manual-cycle --calibration   # §12.0.1 装置对照组
-python -m substrate.supervisor ignition-status              # §1.2 判据的唯一求值点
+python -m substrate.supervisor manual-cycle --preflight  # 测量、反馈、禁止晋升
+python -m substrate.supervisor manual-cycle --autonomous # 正式 H1 soil-owned autonomous panel
+python -m substrate.supervisor manual-cycle --calibration # §12.0.1 装置对照组
+python -m substrate.supervisor ignition-status             # §1.2 判据的唯一求值点
 ```
 
-它走**与未来 heartbeat 完全相同的代码路径**：调 seed `cycle` →
-`pipeline.process_candidate(panel=manual_prompt)` → `manual_prompt` 把 fitness 打给实验者 →
-实验者敲 y/n → **`manual_prompt` 返回一个 `Verdict`** → 流水线照常继续。
+三种模式共用同一条 `process_candidate` 测量、canary、ancestry、事务和恢复路径：
+
+- `--preflight` 使用固定拒绝 panel，只验证土壤能测量且不会晋升；`PREFLIGHT_GATED` 不计语义 quota。
+- `--autonomous` 使用 `soil-autonomous` deterministic panel，不调用 `input()`，正式 H1 才允许产生 autonomous promotion transaction。
+- `manual_prompt` 只用于受控测试适配器，不能作为正式 H1 authority。
 
 **y/n 落在 Verdict 位置，不落在 merge 位置（v5.8，外部审计第 4 项）：**
 
@@ -1105,12 +1109,8 @@ python -m substrate.supervisor ignition-status              # §1.2 判据的唯
 > 而**崩溃恢复要到 P0-c 无人值守时才第一次被真正需要**，那时它从未被跑过一次。
 > **P0-a 不只是在测种子，也是在测土壤自己的事务链；绕过它就等于没测。**
 
-`Verdict` 携带 `authority ∈ {manual, panel}`，**这是 manual 与 panel 之间唯一的差别**。
-断言见 **CA-11**（§17.8）：同一候选下，manual accept 与 panel accept 必须产生
-**逐字相同的事件序列**，仅 `verdict.authority` 取值不同。
-
-> **v5.7 的 `panel=None` 是笔误**，与 §10 签名注释「P0-a 传 `manual_prompt`」矛盾。
-> 照 `None` 实现，判决位上就没有 adapter，只剩一条特殊路径——正是本项要防的东西。
+`Verdict` 携带 `authority ∈ {manual, panel, soil-autonomous}`。`manual` 是受控测试适配器，
+`soil-autonomous` 是正式 H1 的土壤权限；所有 authority 都必须继续走完整晋升事务链。
 
 #### `ignition-status`：判据的唯一求值点（§1.2）
 

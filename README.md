@@ -32,16 +32,13 @@ impossible to produce**, and the system reported progress anyway.
 | v3.1 entry points (`heartbeat`/`run`/`promote`/…) | **deleted** — `supervisor.py` went 1588 → 331 lines; `run_meristem.sh` removed. Gating them behind a flag was the wrong fix: a locked second entry point is still a second entry point. P0-c redesigns keeper/breaker for v5 rather than thawing v3.1's |
 | panic latch (`root/panic.py`) | **now read by v5** — `manual-cycle` refuses while it is engaged; `ignition-status` stays readable (a stopped system is exactly when you need the criterion) |
 | **anchor probe (5 hidden cases)** | **not written — human-authored, by design** |
-| `budget.py`, `model_gateway.py`, `panel.py` | not implemented |
-| `soil/report_renderer.py`, `seed/feedback.json` | not implemented |
+| `budget.py`, `model_gateway_server.py`, `model_gateway_client.py`, `autonomous_panel` | implemented |
+| `soil/report_renderer.py` | not implemented |
 | **organ filesystem/network isolation (§15.6 C6, P0-a tier)** | **implemented and verified on the server** — `worker` UID, no supplementary groups, private netns, isolated organ copy; `SECURITY_ASSURANCE=FULL`. Falls back to a loudly-reported `best_effort` where the host cannot enforce it |
 | calibration control group (§12.0.1) | **run on the server: 40.0 → 60.0, `improved`** — the apparatus measures |
 | **full P0-a loop (three cycles, H1)** | **blocked** |
 
-**Nothing has run yet.** No `state/soil-ledger.jsonl` exists, so no
-`accepted_fitness` and no ignition event exist either — H1 has not begun to be
-tested. Eight CI assertions correspondingly skip on "no ledger yet".
-**Do not read this README as a description of running code.**
+**Current runtime snapshot (2026-08-24):** cycles 41–43 were completed on fresh task `b69b6f74d77fa935`; cycle43 measured primary `40→60` and anchor `20→40`, but preflight intentionally produced no promotion. `accepted_fitness=0`, ignition events `=0`, and H1 remains frozen. Runtime projections and manifest are deployment state and are intentionally ignored by Git.
 
 ## The thesis
 

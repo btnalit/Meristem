@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from substrate import pipeline  # noqa: E402
 from substrate import probe_runner  # noqa: E402
 from substrate import soil_state  # noqa: E402
+from substrate.supervisor import autonomous_panel  # noqa: E402
 
 #: 探针的 5 个 check：input -> 期望类别。
 CHECKS = [
@@ -245,6 +246,19 @@ class PromotionChainTests(PipelineTestCase):
         self.assertEqual(board[0]["parent_sha"], intent["parent"])
 
         # 主线真的前进了 —— 判决位上是谁不改变晋升事务链（§12.0.2）。
+        self.assertEqual(_git(repo, "rev-parse", "HEAD"), candidate)
+
+    def test_autonomous_panel_completes_promotion_transaction(self):
+        repo = _make_repo(self.root)
+        candidate = _make_candidate(repo, table=KNOWS_THREE)
+        ctx = self._ctx(repo)
+        outcome = pipeline.process_candidate(candidate, _task(), repo=repo,
+                                             panel=autonomous_panel, ctx=ctx)
+        self.assertIs(outcome, pipeline.Outcome.PROMOTED)
+        rows = self._ledger(ctx)
+        self.assertEqual(rows[-1]["kind"], "promotion_committed")
+        accepted = next(row for row in rows if row["kind"] == "accepted_fitness")
+        self.assertEqual(accepted["commit"], candidate)
         self.assertEqual(_git(repo, "rev-parse", "HEAD"), candidate)
 
     def test_promotion_is_an_ignition_event(self):

@@ -419,7 +419,8 @@ def evaluate_task(task: Task, observed: list) -> tuple:
 # ---------------------------------------------------------------------------
 # 流水线
 # ---------------------------------------------------------------------------
-def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota=None) -> Outcome:
+def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota=None,
+                          commit: str | None = None) -> Outcome:
     """**唯一的非晋升出口。** 任何没有 `accepted_fitness` 的候选，都不得被统计为 improved。
 
     额度归属**以 `COUNTS_AGAINST_QUOTA` 为准**，调用点传的 `quota` 只当交叉校验。
@@ -434,7 +435,7 @@ def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota=None
             f"调用点写 {quota}，表写 {expected}（§10 失败路径表）")
     ctx.ledger.append({"kind": "promotion_outcome", "outcome": outcome.name,
                        "attempt_id": ctx.attempt_id,
-                       "source": source, "why": why,
+                       "source": source, "commit": commit, "why": why,
                        "counts_as_progress": False,
                        "counts_against_task_quota": expected})
     return outcome
@@ -561,7 +562,8 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
                 gated = verdict.reason == "H1-preflight: promotion disabled"
                 outcome = Outcome.PREFLIGHT_GATED if gated else Outcome.REJECTED
                 return finalize_nonpromotion(ctx, outcome, oid,
-                                             verdict.reason, quota=False if gated else True)
+                                             verdict.reason, quota=False if gated else True,
+                                             commit=commit)
 
             canary_ok, canary_why = canary(repo, commit, candidate_tree)
             if not canary_ok:
@@ -645,7 +647,8 @@ def reconcile_on_start(repo, ctx) -> list:
     """
     repo = Path(repo)
     rows = ctx.ledger.read()
-    committed = {r.get("commit") for r in rows if r.get("kind") == "promotion_committed"}
+    committed = {(r.get("attempt_id"), r.get("commit")) for r in rows
+                 if r.get("kind") == "promotion_committed"}
     # **已存在的 accepted_fitness 必须单独记账。** 晋升是三步非原子操作，
     # 崩溃可能正好落在 accepted_fitness 与 promotion_committed 之间 —— 那是一行的
     # 窗口，而且**正是本函数存在的理由**。只看 promotion_committed 在不在，
@@ -653,44 +656,48 @@ def reconcile_on_start(repo, ctx) -> list:
     # 同一次晋升被 §1.2 的判据数成两次点火。CA-10 抓不到它（它只验每条 accepted
     # 都有配对的 intent/committed/scoreboard，**从不验基数**），
     # 而那个数字是整个 P0-a 的唯一出口。
-    accepted_sources = {r.get("source") for r in rows if r.get("kind") == "accepted_fitness"}
+    accepted_keys = {(r.get("source"), r.get("attempt_id"), r.get("commit"))
+                     for r in rows if r.get("kind") == "accepted_fitness"}
     by_id = {r.get("event_id"): r for r in rows}
     resolved = []
 
     for intent in [r for r in rows if r.get("kind") == "promotion_intent"]:
         commit = intent.get("commit")
         source = intent.get("source")
-        if commit in committed:
+        if (intent.get("attempt_id"), commit) in committed:
             continue
         with ctx.promotion_lock:
             merged = _main_contains(repo, commit)
             if merged is None:
                 resolved.append((commit, finalize_nonpromotion(
                     ctx, Outcome.SOIL_RECOVERY, source,
-                    f"cannot decide whether main contains {commit}", quota=False)))
+                    f"cannot decide whether main contains {commit}", quota=False,
+                    commit=commit)))
                 continue
             if not merged:
                 resolved.append((commit, finalize_nonpromotion(
                     ctx, Outcome.ABANDONED, source,
                     "promotion_intent written but main does not contain the commit",
-                    quota=False)))
+                    quota=False, commit=commit)))
                 continue
 
-            if source in accepted_sources:
+            if (source, intent.get("attempt_id"), commit) in accepted_keys:
                 # accepted_fitness 已经写过了，缺的只是收尾那一条。**只补收尾。**
                 ctx.ledger.append({"kind": "promotion_committed",
                                "attempt_id": intent.get("attempt_id"),
                                "commit": commit})
-                committed.add(commit)
+                committed.add((intent.get("attempt_id"), commit))
                 resolved.append((commit, Outcome.PROMOTED))
                 continue
 
             observed_event = by_id.get(source)
-            if observed_event is None:
+            if (observed_event is None
+                    or observed_event.get("commit") != commit
+                    or observed_event.get("attempt_id") != intent.get("attempt_id")):
                 resolved.append((commit, finalize_nonpromotion(
                     ctx, Outcome.SOIL_RECOVERY, source,
-                    "main contains the commit but its observed_fitness event is missing",
-                    quota=False)))
+                    "promotion_intent observed_fitness commit does not match",
+                    quota=False, commit=commit)))
                 continue
             if observed_event.get("calibration") is True:
                 # §12.0.1 的纵深第二层：校准结构上到不了 promotion_intent。
@@ -699,7 +706,7 @@ def reconcile_on_start(repo, ctx) -> list:
                 resolved.append((commit, finalize_nonpromotion(
                     ctx, Outcome.SOIL_RECOVERY, source,
                     "calibration run reached promotion_intent -- refusing to launder it",
-                    quota=False)))
+                    quota=False, commit=commit)))
                 continue
 
             records = observed_event.get("records", [])
@@ -721,8 +728,8 @@ def reconcile_on_start(repo, ctx) -> list:
                                "commit": commit})
             # 本次调用内新写的事实要立刻并进账本快照，否则同一批里的第二条
             # intent 会对着一份过期快照重跑同样的补写。
-            accepted_sources.add(source)
-            committed.add(commit)
+            accepted_keys.add((source, intent.get("attempt_id"), commit))
+            committed.add((observed_event.get("attempt_id"), commit))
             resolved.append((commit, Outcome.PROMOTED))
     return resolved
 

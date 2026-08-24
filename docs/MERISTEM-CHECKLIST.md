@@ -66,11 +66,11 @@ Layer 0 rollback contract 与演练要求：`docs/MERISTEM-LAYER0-ROLLBACK.md`�
 
 Layer 1 H1-preflight 实测 cycles 38–40：三轮均 `finish_reason=stop` / `parse_status=ok`，returned path 只有 classifier，syntax preflight 与 probe measurement 通过；primary `40→40`、anchor `20→20`，三种 strategy fingerprint 不同，均 `UNFULFILLED`，无 `accepted_fitness` / `promotion_committed` / ignition event。cycle 40 后新 task `8388cd245b011a91` 按 semantic quota 正确进入 `parked`；H1 仍 frozen。
 
-Fresh task `b69b6f74d77fa935` cycles 41–43：cycles 41–42 为 `delta=0`，cycle43 首次取得真实 primary `40→60`、anchor `20→40`，candidate `84546b577ded...` 仅修改 classifier 且 `parse_status=ok`。因 `--preflight` promotion gate，结果为 `REJECTED`，无 merge/promotion；feedback/reflection 已修复为 `candidate_meets_primary_and_holdout_but_autonomous_promotion_is_gated`，task state 为 `promotion_gated`，停止继续 mutation。正式 H1 仍 frozen；正式路径必须使用 soil-owned autonomous panel，不得依赖人工审批。
+Fresh task `b69b6f74d77fa935` cycles 41–43：cycles 41–42 为 `delta=0`，cycle43 首次取得真实 primary `40→60`、anchor `20→40`，candidate `84546b577ded...` 仅修改 classifier 且 `parse_status=ok`。因 `--preflight` promotion gate，结果为 `PREFLIGHT_GATED`，无 merge/promotion；feedback/reflection 已修复为 `candidate_meets_primary_and_holdout_but_autonomous_promotion_is_gated`，task state 为 `promotion_gated`，停止继续 mutation。正式 H1 仍 frozen；正式路径必须使用 soil-owned autonomous panel，不得依赖人工审批。
 
 Ontology review follow-up：将 `PREFLIGHT_GATED` 与普通 `REJECTED` 分离；preflight gate 不计 semantic quota，runtime manifest 在 ledger/projection 写出后刷新，避免正常 task guard 造成 stale snapshot。
 
-Autonomous H1 soil gate：新增 `soil-autonomous` authority 与 deterministic autonomous panel，禁止 `input()`/人工审批；受控 panel/path-policy tests 已通过。rollback 在临时隔离 Git 仓库完成真实演练：candidate merge 后 reset 到 restore commit，`verify_receipt_state` 成功绑定 HEAD、ledger tail、generation、task state。正式 H1 仍需独立接受 autonomous promotion transaction 的真实 rehearsal 后才能解冻。
+Autonomous H1 soil gate：新增 `soil-autonomous` authority 与 deterministic autonomous panel，禁止 `input()`/人工审批；受控 panel/path-policy tests 已通过。rollback 在临时隔离 Git 仓库完成真实演练：candidate merge 后 reset 到 restore commit，`verify_receipt_state` 成功绑定 HEAD、ledger tail、generation、task state。pending promotion recovery 现在要求 source+attempt_id+commit 三元严格匹配；manifest 仅在 projections 未篡改且 ledger 前进形成的 recovery window 内允许先 reconcile。正式 H1 仍需独立接受 autonomous promotion transaction 的真实 rehearsal 后才能解冻。
 
 ### 2026-08-23 · v5 规格 v5.7 → v5.8-frozen + 停 v3.1 进化
 

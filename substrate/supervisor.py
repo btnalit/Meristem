@@ -563,9 +563,10 @@ def _preflight_has_pending_promotion(repo: pathlib.Path) -> bool:
         commit = intent.get("commit")
         for row in rows:
             if row.get("kind") == "accepted_fitness":
-                if (source and attempt
+                if (source and attempt and commit
                         and row.get("source") == source
-                        and row.get("attempt_id") == attempt):
+                        and row.get("attempt_id") == attempt
+                        and row.get("commit") == commit):
                     return True
             if row.get("kind") == "promotion_committed":
                 if (attempt and commit
@@ -573,12 +574,33 @@ def _preflight_has_pending_promotion(repo: pathlib.Path) -> bool:
                         and row.get("commit") == commit):
                     return True
             if row.get("kind") == "promotion_outcome":
-                if (source and attempt
+                if (source and attempt and commit
                         and row.get("source") == source
-                        and row.get("attempt_id") == attempt):
+                        and row.get("attempt_id") == attempt
+                        and row.get("commit") == commit):
                     return True
         return False
     return any(not resolved(intent) for intent in intents)
+
+
+def _manifest_recovery_window(repo: pathlib.Path) -> bool:
+    """Allow only a ledger-advanced pending-promotion recovery before verify."""
+    path = repo / "soil" / "runtime-manifest.json"
+    ledger = repo / "state" / "soil-ledger.jsonl"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        current_ledger = hashlib.sha256(ledger.read_bytes()).hexdigest()
+        expected = data.get("projection_hashes", {})
+        actual = {
+            "seed_feedback": hashlib.sha256((repo / "seed" / "feedback.json").read_bytes()).hexdigest(),
+            "report_facts": hashlib.sha256((repo / "soil" / "report-facts.json").read_bytes()).hexdigest(),
+            "frozen_probe_registry": hashlib.sha256((repo / "soil" / "frozen-probe-registry.json").read_bytes()).hexdigest(),
+        }
+        return (data.get("ledger_tail_hash") != current_ledger
+                and expected == actual
+                and _preflight_has_pending_promotion(repo))
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _preflight_panel(commit: str, diff: str, task):
@@ -627,11 +649,14 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
         print("--preflight and --autonomous are mutually exclusive", file=sys.stderr)
         return 2
     task = _load_task(repo, task_path)
+    manifest_recovery = False
     try:
         runtime_manifest.verify(repo, task_id=task.task_id)
     except runtime_manifest.RuntimeManifestError as exc:
-        print(f"runtime manifest refused: {exc}", file=sys.stderr)
-        return 2
+        if not _manifest_recovery_window(repo):
+            print(f"runtime manifest refused: {exc}", file=sys.stderr)
+            return 2
+        manifest_recovery = True
     ctx = _soil_state.SoilContext.open(
         repo, generation=_generation(repo), soil_cycle=_next_soil_cycle(repo),
         calibration=calibration)
@@ -646,6 +671,9 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
     for commit, outcome in _pipeline.reconcile_on_start(repo, ctx):
         print(f"reconcile: {commit[:12]} -> {outcome.name}")
     _refresh_projection_and_manifest(repo, task.task_id)
+    runtime_manifest.verify(repo, task_id=task.task_id)
+    if manifest_recovery:
+        print("runtime manifest recovery window reconciled", file=sys.stderr)
 
     # **先记这一拍发生过，再做任何校验。**
     # 拍号由台账里的最大拍号推进（见 `_next_soil_cycle`）；若只在校验通过后才写

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -5,7 +6,8 @@ from pathlib import Path
 
 from substrate import pipeline
 from substrate.supervisor import (
-    _preflight_has_pending_promotion, _preflight_panel, autonomous_panel,
+    _preflight_has_pending_promotion, _preflight_panel, _manifest_recovery_window,
+    autonomous_panel,
 )
 
 
@@ -45,6 +47,41 @@ class PreflightPanelTests(unittest.TestCase):
                 "".join(json.dumps(row) + "\n" for row in rows))
             self.assertTrue(_preflight_has_pending_promotion(repo))
 
+    def test_preflight_does_not_resolve_same_source_wrong_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "state").mkdir()
+            rows = [
+                {"kind": "promotion_intent", "source": "obs-1",
+                 "attempt_id": "att-1", "commit": "candidate-1"},
+                {"kind": "accepted_fitness", "source": "obs-1",
+                 "attempt_id": "att-1", "commit": "candidate-2"},
+            ]
+            (repo / "state" / "soil-ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows))
+            self.assertTrue(_preflight_has_pending_promotion(repo))
+
+    def test_manifest_recovery_window_requires_only_ledger_advance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for rel in ("soil/runtime-manifest.json", "state/soil-ledger.jsonl",
+                        "seed/feedback.json", "soil/report-facts.json",
+                        "soil/frozen-probe-registry.json"):
+                (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+                (repo / rel).write_text("{}\n")
+            ledger = repo / "state/soil-ledger.jsonl"
+            ledger.write_text(json.dumps({"kind": "promotion_intent", "source": "obs",
+                                          "attempt_id": "att", "commit": "c"}) + "\n")
+            sha = lambda p: hashlib.sha256((repo / p).read_bytes()).hexdigest()
+            manifest = {"ledger_tail_hash": "0" * 64, "projection_hashes": {
+                "seed_feedback": sha("seed/feedback.json"),
+                "report_facts": sha("soil/report-facts.json"),
+                "frozen_probe_registry": sha("soil/frozen-probe-registry.json")}}
+            (repo / "soil/runtime-manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(_manifest_recovery_window(repo))
+            (repo / "soil/report-facts.json").write_text("tampered\n")
+            self.assertFalse(_manifest_recovery_window(repo))
+
     def test_preflight_refuses_pending_promotion_intent(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -60,7 +97,8 @@ class PreflightPanelTests(unittest.TestCase):
             self.assertTrue(_preflight_has_pending_promotion(repo))
             with (repo / "state" / "soil-ledger.jsonl").open("a") as handle:
                 handle.write(json.dumps({"kind": "promotion_outcome", "source": "obs-1",
-                                         "attempt_id": "att-1", "outcome": "ABANDONED"}) + "\n")
+                                         "attempt_id": "att-1", "commit": "candidate",
+                                         "outcome": "ABANDONED"}) + "\n")
             self.assertFalse(_preflight_has_pending_promotion(repo))
 
 

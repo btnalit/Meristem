@@ -126,11 +126,11 @@ Acceptance:
 
 Add a read-only status command that reports strategy diversity, repeated strategy rate, feedback read rate, fault attribution completeness, task transitions, best delta, and promotion count without declaring H1.
 
-### Task 5.2 — Add server-side soil preflight and H1 gate
+### Task 5.2 — Add server-side soil preflight and autonomous H1 gate
 
-**Files:** `substrate/supervisor.py`, `docs/MERISTEM-CHECKLIST.md`, `docs/MERISTEM-V5-SPEC.md`
+**Files:** `substrate/supervisor.py`, `substrate/pipeline.py`, `docs/MERISTEM-CHECKLIST.md`, `docs/MERISTEM-V5-SPEC.md`, `docs/MERISTEM-SOIL-ONTOLOGY.md`
 
-Require full test suite, calibration proof, fresh projection, clean ownership, no leaked secrets, complete attempt linkage, and a successful bounded Learning Runway before Stage 5/H1 can be started. **Layer 0/H1-preflight requires both soil-owned projections (`seed/feedback.json` and `soil/report-facts.json`) to carry the same ledger tail hash; a missing projection is fail-closed, not a silent skip.** H1 remains frozen until an explicit later owner decision.
+Require full test suite, calibration proof, fresh projection, clean ownership, no leaked secrets, complete attempt linkage, and a successful bounded Learning Runway before Stage 5/H1 can be started. **Layer 0/H1-preflight requires both soil-owned projections (`seed/feedback.json` and `soil/report-facts.json`) to carry the same ledger tail hash; a missing projection is fail-closed, not a silent skip.** Formal H1 must use the soil-owned `soil-autonomous` panel; `manual_prompt` is a controlled-test adapter only. H1 remains frozen until the autonomous promotion and rollback rehearsals pass and an explicit later owner decision opens it.
 
 ## Phase 6: Verification and release
 
@@ -139,6 +139,7 @@ Require full test suite, calibration proof, fresh projection, clean ownership, n
 3. Run static checks and `git diff --check`.
 4. Run real server preflight with Agnes credentials only through the existing soil-owned bridge.
 5. Run bounded Learning Runway on the same controlled task; do not promote.
-6. Independent read-only audit of code, runtime ownership, ledger linkage, projection privacy, and H1 gate.
-7. Commit and push only after all evidence passes.
-8. Report residual risks; do not announce Stage 5/H1 readiness if any gate is incomplete.
+6. Run controlled autonomous-panel, promotion-transaction, crash-recovery, and rollback rehearsals in isolated repositories.
+7. Independent read-only audit of code, runtime ownership, ledger linkage, projection privacy, autonomous authority, and H1 gate.
+8. Commit and push only after all evidence passes.
+9. Report residual risks; do not announce Stage 5/H1 readiness if any gate is incomplete.
