@@ -42,7 +42,7 @@ class DiagnosticReviewTests(unittest.TestCase):
         )
         self.assertEqual(result["diagnosis_class"], "candidate_meets_measurement_but_promotion_is_gated")
         self.assertEqual(result["mechanism_status"], "healthy")
-        self.assertIn("manual promotion", result["next_experiment_constraint"])
+        self.assertIn("autonomous H1", result["next_experiment_constraint"])
 
         result = diagnose_failure(failure_class="provider_error", changed_paths=[])
         self.assertEqual(result["mechanism_status"], "unhealthy")

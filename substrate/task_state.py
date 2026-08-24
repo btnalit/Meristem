@@ -10,7 +10,7 @@ _MECHANISM_FAILURES = {"provider_error", "rate_limited", "gateway_error",
 def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dict]:
     data = defaultdict(lambda: {
         "state": "open", "attempts": 0, "semantic_failures": 0,
-        "mechanism_failures": 0, "fulfilled": False,
+        "mechanism_failures": 0, "promotion_gated_attempts": 0, "fulfilled": False,
     })
     for row in rows:
         task_id = row.get("task_id")
@@ -32,7 +32,14 @@ def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dic
                     item["state"] = "unfulfilled"
         elif row.get("kind") == "promotion_outcome":
             outcome = row.get("outcome")
-            if outcome == "UNFULFILLED" and row.get("counts_against_task_quota"):
+            preflight_gated = outcome == "PREFLIGHT_GATED" or (
+                outcome == "REJECTED" and str(row.get("why", "")) ==
+                "H1-preflight: promotion disabled")
+            if preflight_gated:
+                item["promotion_gated_attempts"] += 1
+                if item["state"] not in {"blocked", "fulfilled", "parked"}:
+                    item["state"] = "promotion_gated"
+            elif row.get("counts_against_task_quota"):
                 item["semantic_failures"] += 1
                 if item["semantic_failures"] >= threshold:
                     item["state"] = "parked"

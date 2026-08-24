@@ -631,7 +631,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
         task_state = feedback_doc.get("facts", {}).get("task_states", {}).get(task.task_id, {})
     except (OSError, ValueError, TypeError):
         task_state = {}
-    if task_state.get("state") in {"parked", "fulfilled", "blocked"}:
+    if task_state.get("state") in {"parked", "fulfilled", "blocked", "promotion_gated"}:
         ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": task.task_id,
                            "attempt_id": getattr(ctx, "attempt_id", learning_state.new_attempt_id()),
                            "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,

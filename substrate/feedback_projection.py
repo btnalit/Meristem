@@ -51,7 +51,8 @@ def _safe_reason(*, outcome: str | None = None, failure_reason: str | None = Non
     }
     if failure_reason in allowed:
         return failure_reason
-    if outcome == "REJECTED" and isinstance(delta, (int, float)) and delta > 0:
+    if outcome == "PREFLIGHT_GATED" or (
+            outcome == "REJECTED" and isinstance(delta, (int, float)) and delta > 0):
         return "preflight_rejected_after_improvement"
     if outcome == "UNFULFILLED":
         return "delta_below_threshold" if isinstance(delta, (int, float)) else "unfulfilled"

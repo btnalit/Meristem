@@ -164,6 +164,11 @@ def _reject(commit, diff, task):
     return pipeline.Verdict(passed=False, authority="panel", reason="not convincing")
 
 
+def _preflight_reject(commit, diff, task):
+    return pipeline.Verdict(passed=False, authority="manual",
+                            reason="H1-preflight: promotion disabled")
+
+
 class PipelineTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -298,6 +303,10 @@ class NonPromotionOutcomeTests(PipelineTestCase):
         ctx, outcome = self._run(table=KNOWS_THREE, panel=_reject)
         self._assert_nonpromotion(ctx, outcome, pipeline.Outcome.REJECTED, quota=True)
 
+    def test_preflight_gate_is_not_rejection_quota(self):
+        ctx, outcome = self._run(table=KNOWS_THREE, panel=_preflight_reject)
+        self._assert_nonpromotion(ctx, outcome, pipeline.Outcome.PREFLIGHT_GATED, quota=False)
+
     def test_canary_reject(self):
         ctx, outcome = self._run(table=KNOWS_THREE, selftest=SELFTEST_FAIL)
         self._assert_nonpromotion(ctx, outcome, pipeline.Outcome.CANARY_REJECT, quota=True)
@@ -315,6 +324,7 @@ class NonPromotionOutcomeTests(PipelineTestCase):
         就把任务判成「种子做坏了三次」并 parked。"""
         self.assertFalse(pipeline.COUNTS_AGAINST_QUOTA[pipeline.Outcome.UNMEASURED])
         self.assertFalse(pipeline.COUNTS_AGAINST_QUOTA[pipeline.Outcome.STALE])
+        self.assertFalse(pipeline.COUNTS_AGAINST_QUOTA[pipeline.Outcome.PREFLIGHT_GATED])
         for outcome in (pipeline.Outcome.REGRESSED, pipeline.Outcome.UNFULFILLED,
                         pipeline.Outcome.REJECTED, pipeline.Outcome.CANARY_REJECT):
             self.assertTrue(pipeline.COUNTS_AGAINST_QUOTA[outcome])

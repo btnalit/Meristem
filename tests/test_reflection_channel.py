@@ -33,8 +33,8 @@ class ReflectionTests(unittest.TestCase):
             {"soil_cycle": 43, "reason": "preflight_rejected_after_improvement",
              "delta": 20.0, "attempt_id": "att-43"}
         ], "source_attempt_ids": ["att-43"]})
-        self.assertEqual(result["hypothesis"], "candidate_meets_primary_and_holdout_but_promotion_is_gated")
-        self.assertIn("manual promotion", result["next_strategy"])
+        self.assertEqual(result["hypothesis"], "candidate_meets_primary_and_holdout_but_autonomous_promotion_is_gated")
+        self.assertIn("autonomous H1", result["next_strategy"])
 
         result = build_reflection({})
         self.assertEqual(result["hypothesis"], "insufficient_evidence")

@@ -19,7 +19,23 @@ class TaskStateTests(unittest.TestCase):
         self.assertEqual(states["t1"]["state"], "parked")
         self.assertEqual(states["t1"]["semantic_failures"], 2)
 
-    def test_syntax_failure_counts_as_semantic_not_mechanism(self):
+    def test_panel_rejection_counts_as_semantic_failure(self):
+        rows = [{"kind": "cycle", "task_id": "t1", "attempt_id": "a1"},
+                {"kind": "promotion_outcome", "task_id": "t1", "outcome": "REJECTED",
+                 "attempt_id": "a1", "counts_against_task_quota": True}]
+        states = derive_task_states(rows, threshold=2)
+        self.assertEqual(states["t1"]["semantic_failures"], 1)
+        self.assertEqual(states["t1"]["state"], "unfulfilled")
+
+    def test_preflight_gate_is_not_semantic_failure(self):
+        rows = [{"kind": "cycle", "task_id": "t1", "attempt_id": "a1"},
+                {"kind": "promotion_outcome", "task_id": "t1", "outcome": "PREFLIGHT_GATED",
+                 "attempt_id": "a1", "counts_against_task_quota": False}]
+        states = derive_task_states(rows, threshold=1)
+        self.assertEqual(states["t1"]["semantic_failures"], 0)
+        self.assertEqual(states["t1"]["promotion_gated_attempts"], 1)
+        self.assertEqual(states["t1"]["state"], "promotion_gated")
+
         rows = [{"kind": "candidate_preflight", "task_id": "t1",
                  "attempt_id": "a1", "failure_reason": "syntax_failure"}]
         states = derive_task_states(rows, threshold=2)

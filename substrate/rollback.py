@@ -62,5 +62,5 @@ def validate_receipt(plan: RollbackPlan, receipt: dict) -> None:
         raise ValueError("soil_cycle must be an integer")
     if not str(receipt["ledger_tail_hash"]).strip():
         raise ValueError("ledger_tail_hash is required")
-    if receipt["task_state"] not in {"open", "unfulfilled", "parked", "blocked", "fulfilled"}:
+    if receipt["task_state"] not in {"open", "unfulfilled", "parked", "blocked", "fulfilled", "promotion_gated"}:
         raise ValueError("invalid task_state in rollback receipt")

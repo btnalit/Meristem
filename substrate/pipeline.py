@@ -84,6 +84,7 @@ class Outcome(enum.Enum):
     REGRESSED = enum.auto()
     UNFULFILLED = enum.auto()
     REJECTED = enum.auto()
+    PREFLIGHT_GATED = enum.auto()
     CANARY_REJECT = enum.auto()
     UNMEASURED = enum.auto()
     STALE = enum.auto()
@@ -100,6 +101,7 @@ COUNTS_AGAINST_QUOTA = {
     Outcome.REGRESSED: True,
     Outcome.UNFULFILLED: True,
     Outcome.REJECTED: True,
+    Outcome.PREFLIGHT_GATED: False,
     Outcome.CANARY_REJECT: True,
     Outcome.UNMEASURED: False,
     Outcome.STALE: False,
@@ -556,8 +558,10 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
             # 锚定向批准，判决就被测量污染了。
             verdict = panel(commit, git_diff(repo, parent, commit), task)    # S4
             if not verdict.passed:
-                return finalize_nonpromotion(ctx, Outcome.REJECTED, oid,
-                                             verdict.reason, quota=True)
+                gated = verdict.reason == "H1-preflight: promotion disabled"
+                outcome = Outcome.PREFLIGHT_GATED if gated else Outcome.REJECTED
+                return finalize_nonpromotion(ctx, outcome, oid,
+                                             verdict.reason, quota=False if gated else True)
 
             canary_ok, canary_why = canary(repo, commit, candidate_tree)
             if not canary_ok:

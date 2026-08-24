@@ -25,7 +25,7 @@ def diagnose_failure(*, failure_class: str, changed_paths: list[str],
     elif failure_class == "preflight_rejected_after_improvement":
         diagnosis = "candidate_meets_measurement_but_promotion_is_gated"
         mechanism = "healthy"
-        constraint = "preserve candidate evidence and await manual promotion review; do not mutate blindly"
+        constraint = "preserve candidate evidence and wait for the autonomous H1 promotion gate; do not mutate blindly"
     elif failure_class == "delta_below_threshold":
         diagnosis = "model_or_strategy_failure"
         mechanism = "healthy"
