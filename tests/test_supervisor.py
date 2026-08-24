@@ -31,6 +31,13 @@ GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
+class DefaultTaskDeclarationTests(unittest.TestCase):
+    def test_default_task_follows_current_agenda_identity(self):
+        self.assertEqual(supervisor.DEFAULT_TASK_DECLARATION, "soil/p0a-task-h1.json")
+        task = supervisor._load_task(REPO)
+        self.assertEqual(task.task_id, "948d2c0b3aec5b81")
+
+
 class AllowlistWouldSilentlyDropItTests(unittest.TestCase):
     """Demonstrates *why* the fix is necessary: the allowlist alone is not
     sufficient, so the variable must be added explicitly."""

@@ -52,8 +52,9 @@ from substrate import budget as _budget  # noqa: E402
 from substrate import provider_client as _provider_client  # noqa: E402
 
 POLICY_DIR = REPO / "soil" / "model-policies"
-DEFAULT_EXECUTION_MODE = "openrouter-free"
-EXECUTION_MODES = frozenset({"openrouter-free", "sensenova", "agnes-temporary"})
+DEFAULT_EXECUTION_MODE = "agnes-temporary"
+BACKUP_EXECUTION_MODES = ("openrouter-free", "sensenova")
+EXECUTION_MODES = frozenset({"agnes-temporary", "openrouter-free", "sensenova"})
 
 
 def execution_mode(mode: str | None = None) -> str:
@@ -338,8 +339,8 @@ def main(argv=None) -> int:
         return 0
 
     try:
-        policy = _budget.load_policy()
-    except (OSError, tomllib.TOMLDecodeError):
+        policy = load_execution_policy(execution_mode())
+    except (OSError, ValueError, tomllib.TOMLDecodeError):
         print(json.dumps({"status": "refused", "reason": "policy_unavailable"}))
         return 0
 

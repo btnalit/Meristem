@@ -188,7 +188,7 @@ def _start_model_gateway(*, socket_path: pathlib.Path, soil_cycle: int):
         # Soil operator selects one immutable mode for the whole gateway
         # process; the worker never receives this variable.
         "MERISTEM_MODEL_MODE": os.environ.get(
-            "MERISTEM_MODEL_MODE", "openrouter-free"),
+            "MERISTEM_MODEL_MODE", "agnes-temporary"),
         "MERISTEM_CREDENTIALS_FILE": credentials_file,
         "MERISTEM_SOIL_CYCLE": str(soil_cycle),
     }
@@ -257,7 +257,7 @@ def _refuse_if_latched() -> bool:
     return True
 
 
-DEFAULT_TASK_DECLARATION = "soil/p0a-task.json"
+DEFAULT_TASK_DECLARATION = "soil/p0a-task-h1.json"
 
 
 def _generation(repo=None) -> str:

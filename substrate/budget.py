@@ -50,8 +50,10 @@ from substrate.soil_state import _AppendOnlyJsonl
 #: 本仓库，只有从 `__file__` 现算的绝对路径才靠得住。
 REPO = Path(__file__).resolve().parent.parent
 
-#: 土壤私有策略文件，§8.1.3：种子不可读、不可写。
-DEFAULT_POLICY_PATH = REPO / "soil" / "model-policy.toml"
+#: Soil-owned primary policy used by standalone gateway/budget callers when no
+#: explicit execution mode is supplied. Production socket mode resolves an
+#: allowlisted policy through `model_gateway.execution_mode()`.
+DEFAULT_POLICY_PATH = REPO / "soil" / "model-policies" / "agnes-temporary.toml"
 
 #: `state/soil-model-calls.jsonl` —— 调用记录台账（§8.1.5 前缀族）。
 #: 与 `state/soil-ledger.jsonl` 分开：那本台账记的是候选晋升事件（C4 独占写入

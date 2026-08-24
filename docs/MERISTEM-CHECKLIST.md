@@ -1326,8 +1326,7 @@ compileall：通过
 git diff --check：通过
 ```
 
-Agnes mode 仅作为额外实验/备用 mode，不改变正式 OpenRouter 或 SenseNova 选择；Agnes 与同血统审查模型
-的独立性限制仍需在 H1 之前单独记录为实验边界。阶段 3/4 的正式继续运行等待本波次独立审计后执行。
+Agnes mode 在当时仅作为额外实验/备用 mode，不改变当时正式 OpenRouter 或 SenseNova 选择；该历史决策已被 2026-08-25 owner 决策 supersede。当前正式路由见下方最新条目：Agnes 为 primary，OpenRouter/SenseNova 为显式 backup。Agnes 与同血统审查模型的独立性限制仍作为 H1 实验边界记录。
 
 本轮 owner 已确认正式纳入 Agnes experimental/backup mode，并执行：
 
@@ -1336,6 +1335,42 @@ Agnes mode 仅作为额外实验/备用 mode，不改变正式 OpenRouter 或 Se
 阶段 4：Agnes 三次独立 stability observation
 阶段 5：继续冻结，不启动 H1
 ```
+
+### 2026-08-25 · Agnes 主模型组路由与正式 P0-a 尝试
+
+owner 决策更新为：
+
+```text
+primary：agnes-temporary
+backup：openrouter-free / sensenova
+```
+
+路由仍保持 soil-owned、显式模式选择：
+
+```text
+默认 mode=agnes-temporary
+MERISTEM_MODEL_MODE=openrouter-free  # 显式备用
+MERISTEM_MODEL_MODE=sensenova        # 显式备用
+```
+
+不做同一 cycle 内隐式 fallback；provider `deferred` 必须由 soil 记录，并由操作员选择备用 mode 后以新 cycle 重跑。
+worker 不接收 mode、credential pointer 或 provider key。
+
+之前的隔离 autonomous rehearsal 已通过完整事务与 recovery/rollback 验证，但不等同生产 H1 acceptance。
+本轮 owner 决策后的正式路由目标为 Agnes primary；此前实际执行的正式 `--autonomous` P0-a 三圈使用显式 `MERISTEM_MODEL_MODE=openrouter-free`，因此按真实 telemetry 记录如下：
+
+```text
+cycle 47：openrouter-free / z-ai/glm-5.2:free / provider deferred / 无 candidate
+cycle 48：openrouter-free / z-ai/glm-5.2:free / provider deferred / 无 candidate
+cycle 49：openrouter-free / z-ai/glm-5.2:free / provider deferred / 无 candidate
+accepted_fitness=0
+promotion_committed=0
+ignition events=0
+```
+
+Agnes 的真实 allowed、candidate 与 stability observation 证据见前述波次记录；正式 Agnes-primary P0-a 需在 mode-specific policy loading 修复并重新审查后单独运行。
+
+结论：Agnes 主模式配置已进入待审查工作树，但正式 P0-a 尚未因 provider deferred 产生 candidate；H1 继续 frozen。
 
 ---
 

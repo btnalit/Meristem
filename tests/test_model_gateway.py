@@ -16,11 +16,13 @@ The two contract properties this module exists to hold (§8.1.3):
      reason, never a fabricated response.
 """
 import json
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -107,10 +109,19 @@ class ModelGatewayTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model_gateway.policy_path_for_mode("../leak")
 
-    def test_missing_execution_mode_uses_openrouter_default(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(
-                model_gateway.execution_mode(), "openrouter-free")
+    def test_main_loads_policy_for_selected_mode(self):
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, {
+                "MERISTEM_MODEL_MODE": "sensenova",
+                "MERISTEM_SOIL_CYCLE": "7"}, clear=False), \
+             mock.patch.object(model_gateway, "load_execution_policy", return_value={}) as load, \
+             mock.patch.object(model_gateway, "handle",
+                               return_value={"status": "refused", "reason": "probe"}), \
+             mock.patch("sys.stdin", io.StringIO('{"role":"mutate","prompt":"x"}')), \
+             redirect_stdout(output):
+            self.assertEqual(model_gateway.main(), 0)
+        load.assert_called_once_with("sensenova")
+        self.assertIn('"status": "refused"', output.getvalue())
 
     """§8.1.3 / §16: `review` is soil-only. The gateway must enforce this
     independently of meristem/llm.py's own client-side check (defense in

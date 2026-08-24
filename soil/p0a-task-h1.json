@@ -1,0 +1,16 @@
+{
+  "_comment": "Fresh P0-a autonomous task; old promotion_gated task remains historical.",
+  "task_id": "948d2c0b3aec5b81",
+  "kind": "repair",
+  "target": "classifier",
+  "primary_probe": "probe-classify-basic",
+  "expected": "score_increase",
+  "minimum_delta": 20.0,
+  "regression_policy": "all-active-probes",
+  "forbidden_paths": [
+    "tests/"
+  ],
+  "required_target_paths": [
+    "body/organs/classifier/"
+  ]
+}
