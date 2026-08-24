@@ -645,7 +645,18 @@ class TaskDeclarationTests(PipelineTestCase):
         self.assertIs(outcome, pipeline.Outcome.REGRESSED)
         self.assertNotIn("accepted_fitness", [r["kind"] for r in ctx.ledger.read()])
 
-    def test_anchor_cannot_be_declared_primary_probe(self):
+    def test_task_path_contract_rejects_forbidden_and_requires_target(self):
+        task = pipeline.Task(task_id="t", kind="repair", target="classifier",
+                             primary_probe=PROBE_ID,
+                             forbidden_paths=("tests/",),
+                             required_target_paths=("body/organs/classifier/",))
+        self.assertTrue("forbidden_paths" in (pipeline._task_path_violation(
+            ["tests/test_x.py", "body/organs/classifier/run.py"], task) or ""))
+        self.assertTrue("missing_required_target_paths" in (pipeline._task_path_violation(
+            ["body/organs/other/run.py"], task) or ""))
+        self.assertIsNone(pipeline._task_path_violation(
+            ["body/organs/classifier/run.py"], task))
+
         task = pipeline.Task(task_id="t", kind="repair", target="classifier",
                              primary_probe="probe-anchor-hidden")
         with self.assertRaises(pipeline.TaskDeclarationError):

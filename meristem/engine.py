@@ -8,6 +8,7 @@ lesson), and any symlink aimed at a protected file.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import pathlib
@@ -394,10 +395,22 @@ def propose(task: str, *, config, extra: str = "") -> Mutation:
     if not budgets["prompt_budget"]["fits"]:
         raise PromptOverBudget(
             f"prompt tokens={budgets['prompt_budget']['tokens']} > budget={PROMPT_BUDGET}")
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    print(f"SOIL_PROMPT_HASH={prompt_hash}", file=sys.stderr)
+    print(f"SOIL_PROMPT_TOKENS={budgets['prompt_budget']['tokens']}", file=sys.stderr)
+    print(f"SOIL_PROMPT_FEEDBACK_PRESENT={str('Previous soil learning facts' in prompt).lower()}", file=sys.stderr)
     result = llm.call_model("mutate", prompt)
     if result.status != "allowed":
         raise RuntimeError(f"model call {result.status}: {result.reason}")
-    files = llm.parse_file_map(result.content or "")
+    content = result.content or ""
+    response_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    files = llm.parse_file_map(content)
+    returned_paths_hash = hashlib.sha256(
+        json.dumps(sorted(files), separators=(",", ":")).encode("utf-8")).hexdigest()
+    print(f"SOIL_RESPONSE_HASH={response_hash}", file=sys.stderr)
+    print(f"SOIL_RESPONSE_LENGTH={len(content)}", file=sys.stderr)
+    print("SOIL_PARSE_STATUS=ok" if files else "SOIL_PARSE_STATUS=empty", file=sys.stderr)
+    print(f"SOIL_RETURNED_PATHS_HASH={returned_paths_hash}", file=sys.stderr)
     contract_budget = {
         "changed_contracts": len(files), "review_surface": len(files),
         "fits": len(files) <= CONTRACT_BUDGET,

@@ -7,5 +7,7 @@
   "primary_probe": "probe-classify-basic",
   "expected": "score_increase",
   "minimum_delta": 20.0,
-  "regression_policy": "all-active-probes"
+  "regression_policy": "all-active-probes",
+  "forbidden_paths": ["tests/"],
+  "required_target_paths": ["body/organs/classifier/"]
 }

@@ -120,6 +120,8 @@ class Task:
     expected: str = "score_increase"
     minimum_delta: float = 0.0
     regression_policy: str = REQUIRED_REGRESSION_POLICY
+    forbidden_paths: tuple[str, ...] = ()
+    required_target_paths: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> "Task":
@@ -132,6 +134,8 @@ class Task:
             expected=data.get("expected", "score_increase"),
             minimum_delta=float(data.get("minimum_delta", 0.0)),
             regression_policy=data.get("regression_policy", REQUIRED_REGRESSION_POLICY),
+            forbidden_paths=tuple(data.get("forbidden_paths", ()) or ()),
+            required_target_paths=tuple(data.get("required_target_paths", ()) or ()),
         )
 
 
@@ -434,6 +438,24 @@ def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota=None
     return outcome
 
 
+def _candidate_paths(repo: Path, parent: str, commit: str) -> list[str]:
+    return [p for p in git(repo, "diff", "--name-only", parent, commit).splitlines() if p]
+
+
+def _task_path_violation(paths: list[str], task: Task) -> str | None:
+    def matches(path: str, rule: str) -> bool:
+        rule = rule.rstrip("/")
+        return path == rule or path.startswith(rule + "/")
+    forbidden = [p for p in paths if any(matches(p, rule) for rule in task.forbidden_paths)]
+    missing = [rule for rule in task.required_target_paths
+               if not any(matches(p, rule) for p in paths)]
+    if forbidden:
+        return "forbidden_paths=" + ",".join(sorted(forbidden))
+    if missing:
+        return "missing_required_target_paths=" + ",".join(sorted(missing))
+    return None
+
+
 def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
     """候选处理流水线。无隐式全局；每个非晋升出口都写 `promotion_outcome`。
 
@@ -453,6 +475,11 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
                                          "candidate.parent != HEAD", quota=False)
 
         parent = git(repo, "rev-parse", commit + "^")
+        path_violation = _task_path_violation(_candidate_paths(repo, parent, commit), task)
+        if path_violation:
+            return finalize_nonpromotion(ctx, Outcome.UNMEASURED, None,
+                                         "task constraint violation: " + path_violation,
+                                         quota=False)
         with tempfile.TemporaryDirectory(prefix="meristem-measure-") as tmp:
             try:
                 parent_tree = materialize_readonly_tree(repo, parent, Path(tmp) / "parent")

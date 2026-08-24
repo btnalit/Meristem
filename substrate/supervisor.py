@@ -473,6 +473,21 @@ def _seed_candidate(repo, ctx, task):
                                        for line in stderr.splitlines()
                                        if line.startswith("SOIL_REFLECTION_SOURCE_ATTEMPTS=")
                                        and line.split("=", 1)[1].strip().isdigit()), None)
+    def marker(name, default=None):
+        value = next((line.split("=", 1)[1].strip() for line in stderr.splitlines()
+                      if line.startswith(name + "=") and "=" in line), None)
+        return default if value is None else value
+    prompt_hash = marker("SOIL_PROMPT_HASH")
+    response_hash = marker("SOIL_RESPONSE_HASH")
+    returned_paths_hash = marker("SOIL_RETURNED_PATHS_HASH")
+    parse_status = marker("SOIL_PARSE_STATUS")
+    prompt_feedback_present = marker("SOIL_PROMPT_FEEDBACK_PRESENT")
+    prompt_tokens = marker("SOIL_PROMPT_TOKENS")
+    response_length = marker("SOIL_RESPONSE_LENGTH")
+    if prompt_tokens is not None and prompt_tokens.isdigit():
+        prompt_tokens = int(prompt_tokens)
+    if response_length is not None and response_length.isdigit():
+        response_length = int(response_length)
     strategy_shape = strategy_memory.diff_shape(repo, commit) if commit else None
     strategy_id = (strategy_memory.strategy_fingerprint(recovered, strategy_shape)
                    if recovered else None)
@@ -483,6 +498,13 @@ def _seed_candidate(repo, ctx, task):
                        "changed_paths": recovered,
                        "strategy_fingerprint": strategy_id,
                        "strategy_shape": strategy_shape,
+                       **({"prompt_hash": prompt_hash} if prompt_hash else {}),
+                       **({"prompt_tokens": prompt_tokens} if prompt_tokens is not None else {}),
+                       **({"prompt_feedback_present": prompt_feedback_present} if prompt_feedback_present else {}),
+                       **({"response_hash": response_hash} if response_hash else {}),
+                       **({"response_length": response_length} if response_length is not None else {}),
+                       **({"parse_status": parse_status} if parse_status else {}),
+                       **({"returned_paths_hash": returned_paths_hash} if returned_paths_hash else {}),
                        **({"feedback_source_hash": feedback_source_hash} if feedback_source_hash else {}),
                        **({"reflection_source_attempts": reflection_source_attempts} if reflection_source_attempts is not None else {}),
                        **({"failure_reason": failure_reason} if failure_reason else {})})
@@ -533,16 +555,15 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
                        "exit_code": None,
                        "path": "candidate" if candidate else "seed",
                        "calibration": calibration})
-    feedback_projection.write_projection(repo)
-    if not feedback_projection.projection_is_fresh(repo):
-        raise RuntimeError("feedback projection freshness gate failed before worker start")
-
     if calibration and candidate is None:
         print("--calibration 必须配 --candidate <sha>：校准是**人工给定的确定能提升的"
               "变更**（§12.0.1），不经种子产出。", file=sys.stderr)
         return 2
 
     task = _load_task(repo, task_path)
+    feedback_projection.write_projection(repo, task_id=task.task_id)
+    if not feedback_projection.projection_is_fresh(repo):
+        raise RuntimeError("task-scoped feedback projection freshness gate failed before worker start")
     try:
         feedback_doc = json.loads((repo / "seed" / "feedback.json").read_text(encoding="utf-8"))
         task_state = feedback_doc.get("facts", {}).get("task_states", {}).get(task.task_id, {})
