@@ -11,6 +11,7 @@ import dataclasses
 import json
 import os
 import pathlib
+import sys
 
 from meristem import BODY_DIR, REPO, SEED_DIR, SEED_READONLY, SEED_WRITABLE
 from meristem import llm
@@ -224,6 +225,10 @@ def _read_feedback() -> str:
                "reflection": reflection, "task_states": state}
     if not safe and not strategy and not reflection and not state:
         return ""
+    source_hash = doc.get("source_ledger_tail_hash")
+    if isinstance(source_hash, str) and source_hash:
+        print(f"SOIL_FEEDBACK_SOURCE_HASH={source_hash}", file=sys.stderr)
+        print(f"SOIL_REFLECTION_SOURCE_ATTEMPTS={len(reflection.get('source_attempt_ids', []))}", file=sys.stderr)
     return "Previous soil learning facts (facts are authoritative; hypotheses are not):\n" + json.dumps(
         payload, ensure_ascii=False, sort_keys=True)
 
