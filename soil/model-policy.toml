@@ -64,22 +64,22 @@ max_attempts    = 4
 # ---------------------------------------------------------------------------
 
 # 能力关键角色：读整个种子树，返回完整替换文件。
-# 选 GLM-5.2 是为输出长度（128K 最大输出、1M 上下文）——整文件替换的瓶颈在模型能
+# 选 OpenRouter 的 GLM-5.2 免费变体是为输出长度与 JSON/结构化输出能力——整文件替换的瓶颈在模型能
 # **写**多少，不在能读多少。
-# 槽位按顺序尝试：配额是某一个模型的属性，不是这个能力的属性；GLM 的窗口耗尽时
-# 该角色仍可经 DeepSeek 提供服务，于是限流的代价是一拍变慢，而不是一拍丢失。
+# 槽位按顺序尝试：配额是某一个模型的属性，不是这项能力的属性；免费模型限流时，
+# 真实观测必须记录为 deferred，而不能伪装成成功或把 provider 细节透给种子。
 [[roles.mutate.slots]]
-id = "mutate:glm"
+id = "mutate:glm-free-openrouter"
 lineage = "zhipu"
-base_url = "https://token.sensenova.cn/v1"
-model = "glm-5.2"
+base_url = "https://openrouter.ai/api/v1"
+model = "z-ai/glm-5.2:free"
 credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
 temperature = 0.2
 max_tokens = 120000
 timeout = 900
 
-# 已移除：mutate 的 deepseek 回退。DeepSeek 在评审面板上——在此回退会让同一个模型
-# 既是作者又是裁判，把面板的独立性坍缩进单一血统（P-029）。
+# 当前不配置 mutate 回退。评审模型不参与 mutation，避免同一模型既是作者又是裁判，
+# 把面板独立性坍缩进单一血统（P-029）。
 
 # 评审员优化的是**失败的独立性**，不是模型数量。
 # 这里有三个家族，变异用掉其中一个。把变异者自己的家族路由成评审员，是可选项里
@@ -88,20 +88,20 @@ timeout = 900
 #
 # **评审槽位刻意不做回退**：替换一个评审员，就把独立性坍缩成「谁答得上来算谁的」。
 [[roles.review.slots]]
-id = "review:deepseek"
-lineage = "deepseek"
-base_url = "https://token.sensenova.cn/v1"
-model = "deepseek-v4-flash"
+id = "review:gemma-free-openrouter"
+lineage = "google"
+base_url = "https://openrouter.ai/api/v1"
+model = "google/gemma-4-31b-it:free"
 credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
 temperature = 0.0
 max_tokens = 16000
 timeout = 600
 
 [[roles.review.slots]]
-id = "review:sensenova"
-lineage = "sensenova"
-base_url = "https://token.sensenova.cn/v1"
-model = "sensenova-6.8-flash-lite"
+id = "review:nemotron-free-openrouter"
+lineage = "nvidia"
+base_url = "https://openrouter.ai/api/v1"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
 temperature = 0.0
 max_tokens = 16000

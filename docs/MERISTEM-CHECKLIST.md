@@ -985,6 +985,35 @@ MERISTEM_VAULT=/RSI/meristem-vault python -m substrate.supervisor manual-cycle -
 python -m pytest tests/ -q
 ```
 
+### 2026-08-24 · P0-a 波次 10：OpenRouter 免费模型角色分配
+
+经 owner 提供 OpenRouter 文档并在当前 `/api/v1/models` 目录做只读核对，soil policy 暂切换为
+OpenRouter 免费模型角色：
+
+```text
+mutate：  z-ai/glm-5.2:free
+review：  google/gemma-4-31b-it:free
+review：  nvidia/nemotron-3-super-120b-a12b:free
+endpoint：https://openrouter.ai/api/v1
+```
+
+选择原则：mutation 优先完整文件替换所需的上下文/输出能力；两个 review 使用 Google/NVIDIA
+异构血统，不使用 `openrouter/free` 随机路由，保持实验可重复性。OpenRouter 免费模型存在
+独立限流、可用性波动和高峰延迟风险，429/deferred 必须作为 provider 状态记录，不能判作模型
+能力失败。
+
+**配置验证**：TOML 解析通过；gateway/supervisor/spec/CA 测试 **52 passed, 2 skipped**。
+修改 `soil/model-policy.toml` 后重新执行权限部署脚本，CA-2 ownership 恢复为 FULL。
+
+**credential 边界**：`OPENROUTER_API_KEY` 仅存在外部 `/RSI/meristem-env`；当前 policy 仍只
+接受 soil-owned `MERISTEM_CREDENTIALS_FILE`。在 owner 明确永久凭据桥接方案前，不把 API key
+注入 worker，也不启动 manual-cycle/H1。
+
+**来源**：OpenRouter Quickstart、Free Variant、Free Models Router 文档；当前 models API
+目录只读结果。模型可用性与免费配额是动态状态，后续真实 smoke 仍需重新验证。
+
+---
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
