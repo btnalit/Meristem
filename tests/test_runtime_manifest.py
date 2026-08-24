@@ -41,7 +41,11 @@ class RuntimeManifestTests(unittest.TestCase):
                     "report_facts": sha(paths["soil/report-facts.json"]),
                     "frozen_probe_registry": sha(paths["soil/frozen-probe-registry.json"]),
                 },
-                "ownership": {"owner": "soil", "group": "soil", "modes": {}},
+                "ownership": {"owner": "soil", "group": "soil", "modes": {
+                    "seed/feedback.json": "0644",
+                    "soil/report-facts.json": "0600",
+                    "soil/frozen-probe-registry.json": "0644",
+                }},
                 "fail_closed": {"missing_projection": True, "manifest_mismatch": True},
             }
             manifest_path = repo / "soil/runtime-manifest.json"
@@ -50,6 +54,9 @@ class RuntimeManifestTests(unittest.TestCase):
             os.chmod(paths["seed/feedback.json"], 0o644)
             os.chmod(paths["soil/report-facts.json"], 0o600)
             verify(repo, task_id="task")
+            os.chmod(paths["soil/frozen-probe-registry.json"], 0o666)
+            with self.assertRaises(RuntimeManifestError):
+                verify(repo, task_id="task")
 
 
 if __name__ == "__main__":

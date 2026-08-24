@@ -8,8 +8,8 @@
     "task_id": {"type": "string", "minLength": 1},
     "generation": {"type": "string", "minLength": 1},
     "ledger_tail_hash": {"type": "string", "minLength": 1},
-    "projection_hashes": {"type": "object", "required": ["seed_feedback"], "additionalProperties": {"type": "string", "minLength": 1}},
-    "ownership": {"type": "object", "required": ["owner", "group", "modes"], "properties": {"owner": {"const": "soil"}, "group": {"const": "soil"}, "modes": {"type": "object"}}},
+    "projection_hashes": {"type": "object", "required": ["seed_feedback", "report_facts", "frozen_probe_registry"], "additionalProperties": {"type": "string", "minLength": 1}},
+    "ownership": {"type": "object", "required": ["owner", "group", "modes"], "properties": {"owner": {"const": "soil"}, "group": {"const": "soil"}, "modes": {"type": "object", "required": ["seed/feedback.json", "soil/report-facts.json", "soil/frozen-probe-registry.json"], "additionalProperties": {"type": "string", "pattern": "^[0-7]{4}$"}}}},
     "fail_closed": {"type": "object", "required": ["missing_projection", "manifest_mismatch"], "properties": {"missing_projection": {"const": true}, "manifest_mismatch": {"const": true}}}
   },
   "additionalProperties": false

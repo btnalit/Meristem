@@ -42,7 +42,15 @@ def verify(repo: Path, *, task_id: str) -> dict:
               "frozen_probe_registry": _sha(registry)}
     if expected != actual:
         raise RuntimeManifestError("runtime manifest projection hashes are stale")
-    for path, mode in ((feedback, 0o644), (report, 0o600), (manifest_path, 0o600)):
+    for path, mode in ((feedback, 0o644), (report, 0o600),
+                       (registry, 0o644), (manifest_path, 0o600)):
         if (os.stat(path).st_mode & 0o777) != mode:
             raise RuntimeManifestError(f"unexpected permissions: {path}")
+    expected_modes = {
+        "seed/feedback.json": "0644",
+        "soil/report-facts.json": "0600",
+        "soil/frozen-probe-registry.json": "0644",
+    }
+    if data.get("ownership", {}).get("modes") != expected_modes:
+        raise RuntimeManifestError("runtime manifest ownership modes mismatch")
     return data
