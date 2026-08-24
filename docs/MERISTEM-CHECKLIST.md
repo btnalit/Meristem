@@ -1096,6 +1096,7 @@ telemetry 定向测试：5 passed
 
 ```text
 openrouter-free / cycle 940001：1 attempt，result=refused，reason=provider_error；随后 soil-side 同模型诊断请求实测 HTTP 429，Retry-After=5
+openrouter-free / cycle 950001：3 attempts，最终 result=refused，reason=provider_error；随后再次诊断 HTTP 429，Retry-After=5
 sensenova      / cycle 940002：4 attempts，result=deferred，reason=rate_limited
 ```
 
