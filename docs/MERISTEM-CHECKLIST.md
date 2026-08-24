@@ -70,6 +70,8 @@ Fresh task `b69b6f74d77fa935` cycles 41–43：cycles 41–42 为 `delta=0`，cy
 
 Ontology review follow-up：将 `PREFLIGHT_GATED` 与普通 `REJECTED` 分离；preflight gate 不计 semantic quota，runtime manifest 在 ledger/projection 写出后刷新，避免正常 task guard 造成 stale snapshot。
 
+Autonomous H1 soil gate：新增 `soil-autonomous` authority 与 deterministic autonomous panel，禁止 `input()`/人工审批；受控 panel/path-policy tests 已通过。rollback 在临时隔离 Git 仓库完成真实演练：candidate merge 后 reset 到 restore commit，`verify_receipt_state` 成功绑定 HEAD、ledger tail、generation、task state。正式 H1 仍需独立接受 autonomous promotion transaction 的真实 rehearsal 后才能解冻。
+
 ### 2026-08-23 · v5 规格 v5.7 → v5.8-frozen + 停 v3.1 进化
 
 **1. 规格迁入版本控制并两次升版**
