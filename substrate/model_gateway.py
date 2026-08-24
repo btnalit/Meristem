@@ -162,7 +162,7 @@ def _credential_value(slot: dict) -> str | None:
 
 
 def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
-                   before_attempt=None, on_attempt=None) -> tuple[str, str | None, str | None]:
+                   before_attempt=None, on_attempt=None, on_result=None) -> tuple[str, str | None, str | None]:
     """Call one OpenAI-compatible provider through the soil-owned SDK seam.
 
     The SDK performs exactly one request (`max_retries=0`); this function owns
@@ -198,6 +198,8 @@ def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
                 if slot.get("response_format") == "json_object" else None
             ),
         )
+        if on_result is not None:
+            on_result(result)
         if result.ok:
             return "allowed", result.content, None
         if result.error_kind == "rate_limited":
@@ -292,9 +294,18 @@ def handle(request, *, policy: dict, calls_ledger: Path, cycle: int) -> dict:
                          slot_id=str(slot.get("id")), model=str(slot.get("model")),
                          event="attempt", attempt=attempt)
 
+    def on_result(result) -> None:
+        telemetry.record(cycle=cycle, mode=mode, role=role,
+                         slot_id=str(slot.get("id")), model=str(slot.get("model")),
+                         event="result_meta",
+                         finish_reason=getattr(result, "finish_reason", None),
+                         prompt_tokens=getattr(result, "prompt_tokens", None),
+                         completion_tokens=getattr(result, "completion_tokens", None))
+
     status, content, reason = _call_provider(slot, prompt, retry=retry,
                                               before_attempt=before_attempt,
-                                              on_attempt=on_attempt)
+                                              on_attempt=on_attempt,
+                                              on_result=on_result)
     telemetry.record(cycle=cycle, mode=mode, role=role,
                      slot_id=str(slot.get("id")), model=str(slot.get("model")),
                      event="result", status=status, reason=reason,

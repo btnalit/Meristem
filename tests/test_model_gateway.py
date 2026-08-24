@@ -86,7 +86,7 @@ class ModelGatewayTests(unittest.TestCase):
             self.assertEqual(resp["status"], "allowed")
             events = Path(tmp) / "soil-provider-events.jsonl"
             rows = [json.loads(line) for line in events.read_text().splitlines()]
-            self.assertEqual([row["event"] for row in rows], ["attempt", "result"])
+            self.assertEqual([row["event"] for row in rows], ["attempt", "result_meta", "result"])
             self.assertEqual(rows[-1]["status"], "allowed")
             self.assertEqual(rows[-1]["attempt"], 1)
             self.assertEqual(len(calls.read_text().splitlines()), 1)

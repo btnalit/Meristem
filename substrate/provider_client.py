@@ -16,6 +16,9 @@ class ProviderResult:
     content: str | None = None
     error_kind: str | None = None
     http_status: int | None = None
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -38,10 +41,19 @@ def chat_once(*, base_url: str, api_key: str, model: str, prompt: str,
         if response_format is not None:
             request["response_format"] = response_format
         response = client.chat.completions.create(**request)
-        content = response.choices[0].message.content if response.choices else None
+        choice = response.choices[0] if response.choices else None
+        content = choice.message.content if choice else None
+        usage = getattr(response, "usage", None)
+        finish_reason = getattr(choice, "finish_reason", None) if choice else None
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+        completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
         if not isinstance(content, str) or not content.strip():
-            return ProviderResult(error_kind="bad_response")
-        return ProviderResult(content=content)
+            return ProviderResult(error_kind="bad_response", finish_reason=finish_reason,
+                                  prompt_tokens=prompt_tokens,
+                                  completion_tokens=completion_tokens)
+        return ProviderResult(content=content, finish_reason=finish_reason,
+                              prompt_tokens=prompt_tokens,
+                              completion_tokens=completion_tokens)
     except RateLimitError as exc:
         return ProviderResult(error_kind="rate_limited",
                               http_status=getattr(exc, "status_code", 429))

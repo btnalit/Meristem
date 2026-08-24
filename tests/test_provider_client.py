@@ -9,7 +9,9 @@ class ProviderClientTests(unittest.TestCase):
     def test_chat_once_uses_sdk_without_sdk_retries(self):
         response = types.SimpleNamespace(
             choices=[types.SimpleNamespace(
-                message=types.SimpleNamespace(content="OK"))])
+                message=types.SimpleNamespace(content="OK"),
+                finish_reason="stop")],
+            usage=types.SimpleNamespace(prompt_tokens=3, completion_tokens=4))
         fake = mock.Mock()
         fake.chat.completions.create.return_value = response
         with mock.patch.object(provider_client, "OpenAI", return_value=fake) as factory:
@@ -18,6 +20,9 @@ class ProviderClientTests(unittest.TestCase):
                 model="test-model", prompt="hi", max_tokens=32,
                 temperature=0.0, timeout=5)
         self.assertTrue(result.ok)
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.prompt_tokens, 3)
+        self.assertEqual(result.completion_tokens, 4)
         self.assertEqual(result.content, "OK")
         factory.assert_called_once_with(
             api_key="test-key", base_url="https://example.invalid/v1",

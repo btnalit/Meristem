@@ -93,7 +93,9 @@ class ProviderEventLedger(_AppendOnlyJsonl):
 
     def record(self, *, cycle: int, mode: str, role: str, slot_id: str,
                model: str, event: str, status: str | None = None,
-               reason: str | None = None, attempt: int | None = None) -> None:
+               reason: str | None = None, attempt: int | None = None,
+               finish_reason: str | None = None, prompt_tokens: int | None = None,
+               completion_tokens: int | None = None) -> None:
         row = {"ts": _utcnow(), "cycle": cycle, "mode": mode, "role": role,
                "slot_id": slot_id, "model": model, "event": event}
         if status is not None:
@@ -102,6 +104,12 @@ class ProviderEventLedger(_AppendOnlyJsonl):
             row["reason"] = reason
         if attempt is not None:
             row["attempt"] = attempt
+        if finish_reason is not None:
+            row["finish_reason"] = finish_reason
+        if prompt_tokens is not None:
+            row["prompt_tokens"] = prompt_tokens
+        if completion_tokens is not None:
+            row["completion_tokens"] = completion_tokens
         self._append_raw(row)
 
 
