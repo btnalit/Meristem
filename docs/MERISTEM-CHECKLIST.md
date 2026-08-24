@@ -1155,6 +1155,7 @@ cycle=25：candidate a37cd0524125；完成 measurement；UNFULFILLED；delta=0.0
 - 增加只读 `learning-status`，只报告学习跑道状态，不求值 H1、不启动模型；
 - parked/fulfilled/blocked task 在 soil supervisor 启动 gateway 前被 task gate 拒绝，写入 `task_guarded`，不消耗 provider 调用；
 - `seed/feedback.json` 仍只由 soil 写入，保持 freshness gate、soil ownership、无 prompt/response/credential/mutation body。
+- 本轮审计修复：projection 对 promotion `why` 采用 closed vocabulary，不把自由文本送入 worker；新事件按 `attempt_id` 关联，旧 ledger 仅允许明确的无 attempt backward-compatible read；reconcile 恢复沿 observed/intents 继承原 attempt；未知 worker 非零退出归类 `worker_error`；reflection 必须带 source attempt IDs 与 ledger hash，否则 engine 拒绝为 stale reflection。
 
 阶段 5/H1 的前置 gate：全量测试、attempt linkage 完整、task state 可迁移、strategy fingerprint 可去重、diagnostic/reflection 可读、真实 Learning Runway 通过，且 calibration 能证明 soil measurement 正常。任何一项未通过均继续冻结 H1。
 

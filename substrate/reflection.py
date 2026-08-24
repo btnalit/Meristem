@@ -22,5 +22,7 @@ def build_reflection(facts: dict) -> dict:
         "next_strategy": next_strategy,
         "confidence": "low",
         "source_cycles": cycles[-8:],
+        "source_attempt_ids": [x for x in facts.get("source_attempt_ids", []) if x][-8:],
+        "source_ledger_tail_hash": facts.get("source_ledger_tail_hash"),
         "authoritative": False,
     }

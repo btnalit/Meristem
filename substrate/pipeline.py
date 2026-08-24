@@ -627,7 +627,8 @@ def reconcile_on_start(repo, ctx) -> list:
 
             if source in accepted_sources:
                 # accepted_fitness 已经写过了，缺的只是收尾那一条。**只补收尾。**
-                ctx.ledger.append({"kind": "promotion_committed", "attempt_id": ctx.attempt_id,
+                ctx.ledger.append({"kind": "promotion_committed",
+                               "attempt_id": intent.get("attempt_id"),
                                "commit": commit})
                 committed.add(commit)
                 resolved.append((commit, Outcome.PROMOTED))
@@ -653,7 +654,8 @@ def reconcile_on_start(repo, ctx) -> list:
             records = observed_event.get("records", [])
             ctx.scoreboard.write(_runs_from_records(records), commit, intent.get("parent"))
             ctx.ledger.append({
-                "kind": "accepted_fitness", "source": source,
+                "kind": "accepted_fitness", "attempt_id": observed_event.get("attempt_id"),
+                "source": source,
                 "commit": commit, "records": records,
                 # 身份字段从当时那条 observed 事件抄回，**不从当前 ctx 取** ——
                 # 崩溃后重启的 ctx 拿的是新的拍号，用它会把旧事实记成新拍的事。
@@ -663,7 +665,8 @@ def reconcile_on_start(repo, ctx) -> list:
                 "soil_cycle": observed_event["soil_cycle"],
                 "calibration": False,
                 "counts_as_progress": True})
-            ctx.ledger.append({"kind": "promotion_committed", "attempt_id": ctx.attempt_id,
+            ctx.ledger.append({"kind": "promotion_committed",
+                               "attempt_id": observed_event.get("attempt_id"),
                                "commit": commit})
             # 本次调用内新写的事实要立刻并进账本快照，否则同一批里的第二条
             # intent 会对着一份过期快照重跑同样的补写。

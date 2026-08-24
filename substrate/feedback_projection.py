@@ -28,6 +28,7 @@ def _observed_summary(event: dict[str, Any]) -> dict[str, Any]:
     primary = next((r for r in records if r.get("probe_id") == event.get("primary_probe")), None)
     result = {
         "task_id": event.get("task_id"),
+        "attempt_id": event.get("attempt_id"),
         "soil_cycle": event.get("soil_cycle"),
         "candidate": str(event.get("commit", ""))[:12] or None,
         "primary_probe": event.get("primary_probe"),
@@ -37,6 +38,23 @@ def _observed_summary(event: dict[str, Any]) -> dict[str, Any]:
             if key in primary:
                 result[key] = primary[key]
     return {k: v for k, v in result.items() if v is not None}
+
+
+def _safe_reason(*, outcome: str | None = None, failure_reason: str | None = None,
+                 delta: float | None = None) -> str:
+    """Return a closed vocabulary; never project free-form ledger text."""
+    allowed = {
+        "path_violation", "propose_failed", "prompt_over_budget", "provider_error",
+        "rate_limited", "gateway_error", "worker_error", "measurement_error",
+        "no_candidate", "empty_mutation", "unfulfilled", "fulfilled",
+    }
+    if failure_reason in allowed:
+        return failure_reason
+    if outcome == "UNFULFILLED":
+        return "delta_below_threshold" if isinstance(delta, (int, float)) else "unfulfilled"
+    if outcome:
+        return outcome.lower()
+    return "no_candidate"
 
 
 def projection_is_fresh(repo: pathlib.Path) -> bool:
@@ -72,7 +90,11 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
     recent = []
     for event in cycles[-8:]:
         if event.get("commit"):
-            match = next((o for o in observed if o.get("commit") == event.get("commit")), None)
+            match = next((o for o in observed
+                          if o.get("commit") == event.get("commit")
+                          and o.get("attempt_id") == event.get("attempt_id")), None)
+            if match is None and not event.get("attempt_id"):
+                match = next((o for o in observed if o.get("commit") == event.get("commit")), None)
             if match:
                 item = _observed_summary(match)
                 item["strategy_fingerprint"] = event.get("strategy_fingerprint")
@@ -81,15 +103,17 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
                 matching = [o for o in outcomes if o.get("source") == match.get("event_id")]
                 if matching:
                     item["outcome"] = matching[-1].get("outcome")
-                    item["reason"] = matching[-1].get("why")
+                    item["reason"] = _safe_reason(
+                        outcome=item.get("outcome"), delta=item.get("delta"))
                 recent.append(item)
                 continue
         recent.append({k: v for k, v in {
             "task_id": event.get("task_id"),
+            "attempt_id": event.get("attempt_id"),
             "soil_cycle": event.get("soil_cycle"),
             "candidate": None,
             "outcome": "NO_CANDIDATE",
-            "reason": event.get("failure_reason", "no_candidate"),
+            "reason": _safe_reason(failure_reason=event.get("failure_reason")),
         }.items() if v is not None})
     last = recent[-1] if recent else {}
     observed_by_event = {r.get("event_id"): r for r in observed if r.get("event_id")}
@@ -117,7 +141,11 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
         item["diagnosis_class"] = diagnosis["diagnosis_class"]
         item["mechanism_status"] = diagnosis["mechanism_status"]
         item["next_experiment_constraint"] = diagnosis["next_experiment_constraint"]
-    reflection = reflection_module.build_reflection({"recent_attempts": recent})
+    reflection = reflection_module.build_reflection({
+        "recent_attempts": recent,
+        "source_attempt_ids": [r.get("attempt_id") for r in recent if r.get("attempt_id")],
+        "source_ledger_tail_hash": _tail_hash(ledger_path),
+    })
     facts = {
         **state_fields,
         "core_pressure": 0.0,

@@ -18,7 +18,7 @@ def diagnose_failure(*, failure_class: str, changed_paths: list[str],
         diagnosis = "repeated_strategy_no_effect"
         mechanism = "healthy"
         constraint = "choose a materially different strategy and target scope"
-    elif failure_class in {"unfulfilled", "no_candidate", "empty_mutation"}:
+    elif failure_class in {"unfulfilled", "delta_below_threshold", "no_candidate", "empty_mutation"}:
         diagnosis = "model_or_strategy_failure"
         mechanism = "healthy"
         constraint = "form a falsifiable alternative hypothesis before retry"

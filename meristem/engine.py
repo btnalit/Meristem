@@ -211,10 +211,15 @@ def _read_feedback() -> str:
     for item in recent[-8:]:
         if isinstance(item, dict):
             safe.append({k: item[k] for k in (
-                "soil_cycle", "outcome", "reason", "primary_probe",
+                "soil_cycle", "attempt_id", "outcome", "reason", "primary_probe",
                 "before", "after", "delta", "status",
                 "strategy_fingerprint", "changed_paths", "diagnosis_class",
                 "mechanism_status", "next_experiment_constraint") if k in item})
+    if reflection and (reflection.get("authoritative") is not False
+                       or not reflection.get("source_ledger_tail_hash")
+                       or not reflection.get("source_attempt_ids")):
+        reflection = {"schema_version": 1, "hypothesis": "stale_reflection_rejected",
+                      "authoritative": False}
     payload = {"attempts": safe, "strategy_memory": strategy,
                "reflection": reflection, "task_states": state}
     if not safe and not strategy and not reflection and not state:

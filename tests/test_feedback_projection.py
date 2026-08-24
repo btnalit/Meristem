@@ -21,7 +21,7 @@ class FeedbackProjectionTests(unittest.TestCase):
                  "records": [{"probe_id": "probe", "before": 40.0,
                               "after": 40.0, "delta": 0.0, "status": "no_regression"}]},
                 {"kind": "promotion_outcome", "source": "obs-1",
-                 "outcome": "UNFULFILLED", "why": "delta 0 < minimum_delta 20"},
+                 "outcome": "UNFULFILLED", "why": "SECRET_PROMPT_RESPONSE_MUTATION_BODY"},
                 {"kind": "cycle", "task_id": "task-1", "soil_cycle": 2,
                  "commit": None, "exit_code": 1, "failure_reason": "path_violation"},
             ]
@@ -34,7 +34,7 @@ class FeedbackProjectionTests(unittest.TestCase):
             self.assertEqual(doc["facts"]["last_attempt"]["outcome"], "NO_CANDIDATE")
             self.assertEqual(doc["facts"]["last_attempt"]["reason"], "path_violation")
             self.assertNotIn("records", json.dumps(doc))
-            self.assertNotIn("prompt", json.dumps(doc))
+            self.assertNotIn("SECRET_PROMPT_RESPONSE_MUTATION_BODY", json.dumps(doc))
     def test_projection_derives_task_state_and_strategy_memory(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

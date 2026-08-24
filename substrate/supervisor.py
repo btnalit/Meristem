@@ -51,7 +51,7 @@ from substrate import feedback_projection  # noqa: E402
 from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
-from substrate import strategy_memory
+from substrate import learning_state, strategy_memory
 
 #: §13.3 表 C（v5.9 补）：种子经 `meristem/llm.py` 的每次模型调用都靠这个变量
 #: 转发到 soil-owned `model_gateway_client.py`。client 只读
@@ -465,9 +465,9 @@ def _seed_candidate(repo, ctx, task):
     elif "PROMPT_OVER_BUDGET" in stderr:
         failure_reason = "prompt_over_budget"
     elif result.returncode != 0:
-        failure_reason = "no_candidate"
+        failure_reason = "worker_error"
     ctx.ledger.append({"kind": "cycle", "commit": commit, "task_id": task.task_id,
-                       "attempt_id": getattr(ctx, "attempt_id", "att-legacy-test"),
+                       "attempt_id": getattr(ctx, "attempt_id", learning_state.new_attempt_id()),
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                        "exit_code": result.returncode,
                        "changed_paths": recovered,
@@ -515,7 +515,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
     # 恰恰要求拍号先前进。那会死锁，实测过。
     # **推进拍号的动作，不得挂在拍号所守的那道闸后面。**
     ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": None,
-                       "attempt_id": getattr(ctx, "attempt_id", "att-legacy-test"),
+                       "attempt_id": getattr(ctx, "attempt_id", learning_state.new_attempt_id()),
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                        "exit_code": None,
                        "path": "candidate" if candidate else "seed",
@@ -537,7 +537,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
         task_state = {}
     if task_state.get("state") in {"parked", "fulfilled", "blocked"}:
         ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": task.task_id,
-                           "attempt_id": getattr(ctx, "attempt_id", "att-legacy-test"),
+                           "attempt_id": getattr(ctx, "attempt_id", learning_state.new_attempt_id()),
                            "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                            "exit_code": 2, "failure_reason": "task_guarded",
                            "task_state": task_state.get("state")})
@@ -620,6 +620,15 @@ def learning_status(repo=None) -> int:
     repeated = sum(1 for item in strategies.values()
                    if item.get("repeated_failure"))
     diagnostics = [item.get("diagnosis_class") for item in attempts]
+    try:
+        rows = [json.loads(line) for line in (repo / "state" / "soil-ledger.jsonl").read_text().splitlines()
+                if line.strip()]
+    except (OSError, ValueError):
+        rows = []
+    promotions = sum(1 for row in rows if row.get("kind") == "accepted_fitness")
+    linked = [row for row in rows if row.get("kind") in {"cycle", "observed_fitness", "promotion_outcome", "accepted_fitness"}]
+    linked_count = sum(1 for row in linked if row.get("attempt_id"))
+    fault_complete = (linked_count / len(linked)) if linked else 1.0
     print(json.dumps({
         "h1": "frozen",
         "feedback_readable": True,
@@ -629,10 +638,11 @@ def learning_status(repo=None) -> int:
         "task_states": states,
         "diagnosis_classes": diagnostics,
         "reflection_present": bool(facts.get("reflection")),
+        "fault_attribution_completeness": fault_complete,
         "best_delta": max((item.get("delta") for item in attempts
                             if isinstance(item.get("delta"), (int, float))),
                            default=None),
-        "promotion_count": 0,
+        "promotion_count": promotions,
     }, sort_keys=True))
     return 0
 
