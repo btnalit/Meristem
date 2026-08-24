@@ -1097,16 +1097,17 @@ telemetry 定向测试：5 passed
 ```text
 openrouter-free / cycle 940001：1 attempt，result=refused，reason=provider_error；随后 soil-side 同模型诊断请求实测 HTTP 429，Retry-After=5
 openrouter-free / cycle 950001：3 attempts，最终 result=refused，reason=provider_error；随后再次诊断 HTTP 429，Retry-After=5
-sensenova      / cycle 940002：4 attempts，result=deferred，reason=rate_limited
+openrouter-free 临时 laguna probe / cycle 960001：`poolside/laguna-s-2.1:free`、`max_tokens=32000`，gateway started，1 attempt，最终 `allowed`，content 非空（长度 2）
+sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rate_limited
 ```
 
-两条记录均包含 mode、model、attempt/result、最终 status/reason，且未包含 prompt/content/credential。
-本波次尚未获得任何 `allowed + non-empty content`，因此：
+上述真实记录均包含 mode、model、attempt/result、最终 status/reason，且未包含 prompt/content/credential。
+本波次已获得一次 OpenRouter `allowed + non-empty content`，但 SenseNova 尚未获得 `allowed/content`，且 laguna probe 只验证 provider smoke，不等于 mutation 成功，因此：
 
 ```text
-阶段 2：blocked（OpenRouter 当前 provider_error，SenseNova 当前 rate_limited）
-阶段 3：未启动，避免在无真实 mutation content 时伪造 manual-cycle 证据
-阶段 4：未形成稳定性样本，当前只能判定 provider 可达但暂不可用于 mutation
+阶段 2：OpenRouter 临时 laguna smoke 通过；SenseNova 仍 blocked（rate_limited）
+阶段 3：未启动，等待备用模式与 mutation-style allowed/content 完成
+阶段 4：尚未形成两模式稳定性样本
 阶段 5：保持冻结
 ```
 
