@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from substrate.feedback_projection import write_projection
+from substrate.feedback_projection import projection_is_fresh, write_projection
 
 
 class FeedbackProjectionTests(unittest.TestCase):
@@ -35,6 +35,19 @@ class FeedbackProjectionTests(unittest.TestCase):
             self.assertEqual(doc["facts"]["last_attempt"]["reason"], "path_violation")
             self.assertNotIn("records", json.dumps(doc))
             self.assertNotIn("SECRET_PROMPT_RESPONSE_MUTATION_BODY", json.dumps(doc))
+    def test_stale_projection_is_rejected_after_ledger_append(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "state").mkdir()
+            (repo / "seed").mkdir()
+            ledger = repo / "state" / "soil-ledger.jsonl"
+            ledger.write_text(json.dumps({"kind": "cycle", "soil_cycle": 1}) + "\n")
+            write_projection(repo, task_id="task-1")
+            self.assertTrue(projection_is_fresh(repo))
+            with ledger.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"kind": "cycle", "soil_cycle": 2}) + "\n")
+            self.assertFalse(projection_is_fresh(repo))
+
     def test_projection_derives_task_state_and_strategy_memory(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
