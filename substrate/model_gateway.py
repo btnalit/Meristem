@@ -133,7 +133,8 @@ def _credential_value(slot: dict) -> str | None:
     return os.environ.get(api_key_env) if isinstance(api_key_env, str) else None
 
 
-def _call_provider(slot: dict, prompt: str) -> tuple[str, str | None, str | None]:
+def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
+                   before_attempt=None) -> tuple[str, str | None, str | None]:
     """provider 调用的唯一入口。返回 `(status, content, reason)`。
 
     **本环境没有凭据，也不能编一个。** 这不是「没写完的占位符」——是这道缝
@@ -145,45 +146,73 @@ def _call_provider(slot: dict, prompt: str) -> tuple[str, str | None, str | None
     if not api_key:
         return "refused", None, "no_credentials"
 
-    # 真正的 provider 调用：OpenAI 兼容的 chat/completions（三个槽位的
-    # base_url 都是这个形状）。**只用 stdlib**——仓库里没有任何第三方依赖声明
-    # （无 requirements.txt / pyproject.toml），不该由这一个模块悄悄引入一个。
-    url = str(slot.get("base_url", "")).rstrip("/") + "/chat/completions"
-    body = json.dumps({
-        "model": slot.get("model"),
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": slot.get("max_tokens", 4096),
-        "temperature": slot.get("temperature", 0.0),
-    }).encode("utf-8")
-    request = urllib.request.Request(url, data=body, method="POST", headers={
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    })
-    try:
-        with urllib.request.urlopen(request, timeout=slot.get("timeout", 60)) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        # 429：`soil/model-policy.toml` 头部实测记录的是「请求速率爬升过快，
-        # 约 15s 自行清除」，不是配额用尽——这正是 deferred 存在的理由
-        # （§8.1.3：「土壤要求稍后重试；重试节奏由土壤决定」）。种子只看得到
-        # deferred 这个状态本身，看不到 `[retry] backoff_seconds` 这几个数字。
-        if exc.code == 429:
-            return "deferred", None, "rate_limited"
-        return "refused", None, "provider_error"
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return "refused", None, "provider_error"
+    if retry is None:
+        max_attempts, backoff = 1, []
+    else:
+        max_attempts = retry["max_attempts"]
+        backoff = retry["backoff_seconds"]
 
-    try:
-        content = payload["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        return "refused", None, "provider_bad_response"
-    if not isinstance(content, str) or not content.strip():
-        # `soil/model-policy.toml` 头部实测记录：max_tokens 收紧时这里会是
-        # HTTP 200 + 空 content（思维链吃光了预算）。空字符串不算一次可用的
-        # allowed——种子会拿它去 `parse_file_map`，一份空回复只会在更远的地方
-        # 变成一个更难查的失败（"no_files_written"），不如在这里就说清楚。
-        return "refused", None, "provider_bad_response"
-    return "allowed", content, None
+    for attempt in range(max_attempts):
+        if before_attempt is not None and not before_attempt():
+            return "refused", None, "budget"
+
+        # 真正的 provider 调用：OpenAI 兼容的 chat/completions（三个槽位的
+        # base_url 都是这个形状）。**只用 stdlib**——仓库里没有任何第三方依赖声明
+        # （无 requirements.txt / pyproject.toml），不该由这一个模块悄悄引入一个。
+        url = str(slot.get("base_url", "")).rstrip("/") + "/chat/completions"
+        body = json.dumps({
+            "model": slot.get("model"),
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": slot.get("max_tokens", 4096),
+            "temperature": slot.get("temperature", 0.0),
+        }).encode("utf-8")
+        request = urllib.request.Request(url, data=body, method="POST", headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        })
+        try:
+            with urllib.request.urlopen(request, timeout=slot.get("timeout", 60)) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # 429：土壤按 policy 退避；种子只看到最终 deferred，不看到等待节奏。
+            if exc.code == 429:
+                if attempt + 1 >= max_attempts:
+                    return "deferred", None, "rate_limited"
+                import time
+                time.sleep(backoff[min(attempt, len(backoff) - 1)])
+                continue
+            return "refused", None, "provider_error"
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return "refused", None, "provider_error"
+
+        try:
+            content = payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            return "refused", None, "provider_bad_response"
+        if not isinstance(content, str) or not content.strip():
+            # 空 content 不算一次可用的 allowed。
+            return "refused", None, "provider_bad_response"
+        return "allowed", content, None
+
+    return "deferred", None, "rate_limited"
+
+
+def _retry_config(policy: dict) -> dict | None:
+    """Validate the soil retry declaration, or return None for test policies."""
+    if "retry" not in policy:
+        return None
+    cfg = policy.get("retry")
+    if not isinstance(cfg, dict):
+        return None
+    delays = cfg.get("backoff_seconds")
+    attempts = cfg.get("max_attempts")
+    if (not isinstance(delays, list) or not delays
+            or any(isinstance(x, bool) or not isinstance(x, (int, float)) or x < 0
+                   for x in delays)
+            or isinstance(attempts, bool) or not isinstance(attempts, int)
+            or attempts < 1 or attempts > len(delays) + 1):
+        return None
+    return {"backoff_seconds": delays, "max_attempts": attempts}
 
 
 def handle(request, *, policy: dict, calls_ledger: Path, cycle: int) -> dict:
@@ -214,13 +243,23 @@ def handle(request, *, policy: dict, calls_ledger: Path, cycle: int) -> dict:
               f"cycle={cycle}: {violation}", file=sys.stderr)
         return {"status": "refused", "reason": "budget"}
 
-    status, content, reason = _call_provider(slot, prompt)
-    if reason != "no_credentials":
-        # 只有真的尝试过 provider（凭据到位、请求已经发出）才占用一次额度；
-        # `no_credentials` 从没打过网络，不消耗配额——理由与
-        # `budget.ModelCallLedger.record()` 的 docstring 是同一条。
+    retry = _retry_config(policy)
+    if "retry" in policy and retry is None:
+        return {"status": "refused", "reason": "policy"}
+
+    def before_attempt() -> bool:
+        attempt_violation = _budget.check(calls_ledger, cycle, policy=policy)
+        if attempt_violation is not None:
+            print(f"model_gateway: retry budget refused role={role!r} "
+                  f"cycle={cycle}: {attempt_violation}", file=sys.stderr)
+            return False
+        # Each actual provider attempt consumes one call, including a 429.
         _budget.ModelCallLedger(calls_ledger).record(
             cycle=cycle, role=role, slot_id=str(slot.get("id")))
+        return True
+
+    status, content, reason = _call_provider(slot, prompt, retry=retry,
+                                              before_attempt=before_attempt)
 
     response: dict = {"status": status}
     if content is not None:

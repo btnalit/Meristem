@@ -24,7 +24,7 @@ from meristem import SEED_DIR, read_json_readonly
 
 #: Spine-side wall-clock bound on the gateway round trip. Not the soil's
 #: retry/backoff policy, which stays invisible to the seed (SS8.1.3).
-_GATEWAY_TIMEOUT_SECONDS = 30
+_GATEWAY_TIMEOUT_SECONDS = 1200  # 1800s seed timeout > 1200s gateway > 900s provider
 
 
 @dataclasses.dataclass(frozen=True)

@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO))
 
 from substrate import budget  # noqa: E402
 from substrate import model_gateway  # noqa: E402
+from meristem import llm  # noqa: E402
 
 
 def _policy(*, calls_per_cycle=100, window_cycles=2, calls_per_window=100,
@@ -278,6 +279,31 @@ class CallProviderSeamWithMockedTransportTests(unittest.TestCase):
             status, content, reason = model_gateway._call_provider(self.SLOT, "hi")
         self.assertEqual((status, reason), ("deferred", "rate_limited"))
 
+    def test_http_429_retries_using_soil_policy_then_allows(self):
+        import urllib.error
+        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
+                                     "Too Many Requests", hdrs=None, fp=None)
+        body = json.dumps({"choices": [{"message": {"content": "allowed"}}]}).encode()
+        with mock.patch("urllib.request.urlopen", side_effect=[err, err, _FakeHTTPResponse(body)]) as urlopen, \
+             mock.patch("time.sleep") as sleep:
+            status, content, reason = model_gateway._call_provider(
+                self.SLOT, "hi", retry={"backoff_seconds": [15, 30, 60], "max_attempts": 4})
+        self.assertEqual((status, content, reason), ("allowed", "allowed", None))
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [15, 30])
+
+    def test_http_429_stops_after_declared_max_attempts(self):
+        import urllib.error
+        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
+                                     "Too Many Requests", hdrs=None, fp=None)
+        with mock.patch("urllib.request.urlopen", side_effect=err) as urlopen, \
+             mock.patch("time.sleep") as sleep:
+            status, content, reason = model_gateway._call_provider(
+                self.SLOT, "hi", retry={"backoff_seconds": [15, 30, 60], "max_attempts": 4})
+        self.assertEqual((status, content, reason), ("deferred", None, "rate_limited"))
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [15, 30, 60])
+
     def test_network_error_is_refused_not_crashes(self):
         import urllib.error
         with mock.patch("urllib.request.urlopen",
@@ -311,6 +337,10 @@ class EndToEndThroughLlmPyTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "refused no_credentials")
+
+    def test_gateway_timeout_allows_provider_timeout_to_finish(self):
+        self.assertEqual(llm._GATEWAY_TIMEOUT_SECONDS, 1200)
+        self.assertGreater(llm._GATEWAY_TIMEOUT_SECONDS, 900)
 
     def test_seed_side_round_trip_never_sees_a_role_it_should_not(self):
         from substrate.supervisor import MODEL_GATEWAY_ENTRYPOINT
