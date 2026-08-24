@@ -51,6 +51,7 @@ from substrate import feedback_projection  # noqa: E402
 from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
+from substrate import strategy_memory
 
 #: §13.3 表 C（v5.9 补）：种子经 `meristem/llm.py` 的每次模型调用都靠这个变量
 #: 转发到 soil-owned `model_gateway_client.py`。client 只读
@@ -466,8 +467,11 @@ def _seed_candidate(repo, ctx, task):
     elif result.returncode != 0:
         failure_reason = "no_candidate"
     ctx.ledger.append({"kind": "cycle", "commit": commit, "task_id": task.task_id,
+                       "attempt_id": getattr(ctx, "attempt_id", "att-legacy-test"),
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                        "exit_code": result.returncode,
+                       "changed_paths": recovered,
+                       "strategy_fingerprint": strategy_memory.strategy_fingerprint(recovered) if recovered else None,
                        **({"failure_reason": failure_reason} if failure_reason else {})})
     if commit is None:
         print(f"种子未产出候选（exit {result.returncode}）："
@@ -511,6 +515,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
     # 恰恰要求拍号先前进。那会死锁，实测过。
     # **推进拍号的动作，不得挂在拍号所守的那道闸后面。**
     ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": None,
+                       "attempt_id": getattr(ctx, "attempt_id", "att-legacy-test"),
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                        "exit_code": None,
                        "path": "candidate" if candidate else "seed",
@@ -585,6 +590,39 @@ def freeze_probe(proposal: str, repo=None) -> int:
     return 0
 
 
+def learning_status(repo=None) -> int:
+    """Read-only Learning Runway status; never declares ignition/H1."""
+    repo = pathlib.Path(repo) if repo is not None else REPO
+    path = repo / "seed" / "feedback.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        facts = doc["facts"]
+    except (OSError, ValueError, KeyError, TypeError):
+        print("learning_status: projection unavailable", file=sys.stderr)
+        return 1
+    attempts = facts.get("recent_attempts", [])
+    strategies = facts.get("strategy_memory", {})
+    states = facts.get("task_states", {})
+    repeated = sum(1 for item in strategies.values()
+                   if item.get("repeated_failure"))
+    diagnostics = [item.get("diagnosis_class") for item in attempts]
+    print(json.dumps({
+        "h1": "frozen",
+        "feedback_readable": True,
+        "attempts_observed": len(attempts),
+        "strategy_count": len(strategies),
+        "repeated_strategy_count": repeated,
+        "task_states": states,
+        "diagnosis_classes": diagnostics,
+        "reflection_present": bool(facts.get("reflection")),
+        "best_delta": max((item.get("delta") for item in attempts
+                            if isinstance(item.get("delta"), (int, float))),
+                           default=None),
+        "promotion_count": 0,
+    }, sort_keys=True))
+    return 0
+
+
 def ignition_status(repo=None) -> int:
     """§1.2 判据的**唯一求值点**（§12.0.2）。只读台账，不查 task registry。
 
@@ -644,7 +682,7 @@ def ignition_status(repo=None) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="supervisor")
     parser.add_argument("command",
-                        choices=["manual-cycle", "ignition-status", "freeze-probe"])
+                        choices=["manual-cycle", "ignition-status", "learning-status", "freeze-probe"])
     parser.add_argument("--proposal", default=None,
                         help="freeze-probe：要冻结的提案文件（seed/probe-proposals/<id>.json）")
     parser.add_argument("--calibration", action="store_true",
@@ -658,6 +696,9 @@ def main(argv=None) -> int:
     if args.command == "ignition-status":
         # 判据求值是**只读**的，闩不该挡住读数 —— 停机时最需要看的就是它。
         return ignition_status()
+
+    if args.command == "learning-status":
+        return learning_status()
 
     if _refuse_if_latched():
         return 3

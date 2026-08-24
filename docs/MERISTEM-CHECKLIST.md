@@ -1142,6 +1142,22 @@ cycle=25：candidate a37cd0524125；完成 measurement；UNFULFILLED；delta=0.0
 
 本轮继续冻结 H1；后续实验重点应从“是否能重复生成 candidate”转向“是否能产生非重复、可解释、且使 delta 改善的策略”。
 
+### 2026-08-24 · 土壤学习闭环设计与实现（阶段 5/H1 继续冻结）
+
+综合 MoA 架构、记忆、对抗审查结果，确定并开始落地 soil-owned learning loop：
+
+- 每次 cycle 生成 `attempt_id`，并向 cycle/observed/promotion 事件贯穿关联；
+- `failure_class` 分离 provider/gateway/worker/measurement 机制故障与模型 task 失败；
+- 从 ledger 派生 task state（open/unfulfilled/fulfilled/blocked/parked），避免同一 task 无限重试；
+- 记录 changed-path family 与 strategy fingerprint，形成有界 strategy memory；
+- 增加不具备 promotion 权限的 diagnostic review 分类；
+- 增加显式标注 hypothesis/next_strategy/source_cycles 的 reflection projection；
+- 新增只读 `learning-status`，只报告学习跑道状态，不求值 H1、不启动模型；
+- `seed/feedback.json` 仍只由 soil 写入，保持 freshness gate、soil ownership、无 prompt/response/credential/mutation body。
+
+阶段 5/H1 的前置 gate：全量测试、attempt linkage 完整、task state 可迁移、strategy fingerprint 可去重、diagnostic/reflection 可读、真实 Learning Runway 通过，且 calibration 能证明 soil measurement 正常。任何一项未通过均继续冻结 H1。
+
+
 按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem
 soil 自己控制。

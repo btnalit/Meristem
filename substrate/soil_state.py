@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from substrate import fitness
+from substrate.learning_state import new_attempt_id
+
 
 #: §8.1.5：`state/` 下的文件名必须**两端锚定**地匹配这个正则。
 #: glob 式的 `soil-*` 会把 `soil-ledger.jsonl.bak` / `soil-ledger.jsonl.tmp`
@@ -503,11 +505,13 @@ class SoilContext:
     promotion_lock: PromotionLock
     generation: str
     soil_cycle: int
+    attempt_id: str = dataclasses.field(default_factory=new_attempt_id)
     calibration: bool = False
     policy: dict = dataclasses.field(default_factory=dict)
 
     @classmethod
     def open(cls, repo, *, generation: str, soil_cycle: int,
+             attempt_id: str | None = None,
              calibration: bool = False, vault=None, state_dir=None,
              soil_dir=None) -> "SoilContext":
         repo = Path(repo)
@@ -526,5 +530,6 @@ class SoilContext:
             promotion_lock=PromotionLock(soil / ".promotion.lock"),
             generation=generation,
             soil_cycle=soil_cycle,
+            attempt_id=attempt_id or new_attempt_id(),
             calibration=calibration,
         )

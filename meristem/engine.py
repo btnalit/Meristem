@@ -204,16 +204,23 @@ def _read_feedback() -> str:
     recent = facts.get("recent_attempts", [])
     if not isinstance(recent, list):
         return ""
+    strategy = facts.get("strategy_memory", {})
+    reflection = facts.get("reflection", {})
+    state = facts.get("task_states", {})
     safe = []
     for item in recent[-8:]:
         if isinstance(item, dict):
             safe.append({k: item[k] for k in (
                 "soil_cycle", "outcome", "reason", "primary_probe",
-                "before", "after", "delta", "status") if k in item})
-    if not safe:
+                "before", "after", "delta", "status",
+                "strategy_fingerprint", "changed_paths", "diagnosis_class",
+                "mechanism_status", "next_experiment_constraint") if k in item})
+    payload = {"attempts": safe, "strategy_memory": strategy,
+               "reflection": reflection, "task_states": state}
+    if not safe and not strategy and not reflection and not state:
         return ""
-    return "Previous soil-measured attempts (do not repeat an unchanged strategy):\n" + json.dumps(
-        safe, ensure_ascii=False, sort_keys=True)
+    return "Previous soil learning facts (facts are authoritative; hypotheses are not):\n" + json.dumps(
+        payload, ensure_ascii=False, sort_keys=True)
 
 
 def _is_writable_path(rel: str) -> bool:

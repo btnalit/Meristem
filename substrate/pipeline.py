@@ -427,6 +427,7 @@ def finalize_nonpromotion(ctx, outcome: Outcome, source, why: str, *, quota=None
             f"{outcome.name} 的额度归属与 COUNTS_AGAINST_QUOTA 不一致："
             f"调用点写 {quota}，表写 {expected}（§10 失败路径表）")
     ctx.ledger.append({"kind": "promotion_outcome", "outcome": outcome.name,
+                       "attempt_id": ctx.attempt_id,
                        "source": source, "why": why,
                        "counts_as_progress": False,
                        "counts_against_task_quota": expected})
@@ -474,7 +475,8 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
 
             observed = fitness.pair(before, after, commit)             # S5
             oid = ctx.ledger.append({
-                "kind": "observed_fitness", "records": observed,
+                "kind": "observed_fitness", "attempt_id": ctx.attempt_id,
+                "records": observed,
                 "commit": commit, "source": None,
                 # ── §8.2 的六个强制字段，全部由土壤在此处写入 ──
                 "task_id": task.task_id,
@@ -522,13 +524,15 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
 
             # 晋升是三步非原子操作：merge / scoreboard / accepted_fitness。
             # 任一步之间崩溃 → 主线已含候选而事实不完整，靠 reconcile_on_start 收尾。
-            ctx.ledger.append({"kind": "promotion_intent", "commit": commit,
+            ctx.ledger.append({"kind": "promotion_intent", "attempt_id": ctx.attempt_id,
+                               "commit": commit,
                                "parent": parent, "source": oid, "state": "pending",
                                "verdict_authority": verdict.authority})
             merge_ff(repo, commit)
             ctx.scoreboard.write(after, commit, parent)                # S2
             ctx.ledger.append({
-                "kind": "accepted_fitness", "source": oid,
+                "kind": "accepted_fitness", "attempt_id": ctx.attempt_id,
+                "source": oid,
                 "commit": commit, "records": observed,
                 "task_id": task.task_id,
                 "primary_probe": task.primary_probe,
@@ -536,7 +540,8 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
                 "soil_cycle": ctx.soil_cycle,
                 "calibration": False,      # 校准强制回滚，永不到达此处（§12.0.1）
                 "counts_as_progress": True})
-            ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
+            ctx.ledger.append({"kind": "promotion_committed", "attempt_id": ctx.attempt_id,
+                               "commit": commit})
             return Outcome.PROMOTED
 
 
@@ -622,7 +627,8 @@ def reconcile_on_start(repo, ctx) -> list:
 
             if source in accepted_sources:
                 # accepted_fitness 已经写过了，缺的只是收尾那一条。**只补收尾。**
-                ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
+                ctx.ledger.append({"kind": "promotion_committed", "attempt_id": ctx.attempt_id,
+                               "commit": commit})
                 committed.add(commit)
                 resolved.append((commit, Outcome.PROMOTED))
                 continue
@@ -657,7 +663,8 @@ def reconcile_on_start(repo, ctx) -> list:
                 "soil_cycle": observed_event["soil_cycle"],
                 "calibration": False,
                 "counts_as_progress": True})
-            ctx.ledger.append({"kind": "promotion_committed", "commit": commit})
+            ctx.ledger.append({"kind": "promotion_committed", "attempt_id": ctx.attempt_id,
+                               "commit": commit})
             # 本次调用内新写的事实要立刻并进账本快照，否则同一批里的第二条
             # intent 会对着一份过期快照重跑同样的补写。
             accepted_sources.add(source)

@@ -10,6 +10,8 @@ import grp
 import tempfile
 from typing import Any
 
+from substrate import diagnostic_review, reflection as reflection_module, strategy_memory, task_state
+
 
 _PUBLIC_KEYS = (
     "task_id", "soil_cycle", "candidate", "outcome", "reason",
@@ -73,6 +75,9 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
             match = next((o for o in observed if o.get("commit") == event.get("commit")), None)
             if match:
                 item = _observed_summary(match)
+                item["strategy_fingerprint"] = event.get("strategy_fingerprint")
+                item["changed_paths"] = [strategy_memory.path_family(p)
+                                         for p in event.get("changed_paths", [])]
                 matching = [o for o in outcomes if o.get("source") == match.get("event_id")]
                 if matching:
                     item["outcome"] = matching[-1].get("outcome")
@@ -87,12 +92,39 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
             "reason": event.get("failure_reason", "no_candidate"),
         }.items() if v is not None})
     last = recent[-1] if recent else {}
+    observed_by_event = {r.get("event_id"): r for r in observed if r.get("event_id")}
+    normalized_rows = []
+    for row in rows:
+        if row.get("kind") == "promotion_outcome" and not row.get("task_id"):
+            source = row.get("source")
+            source_event = observed_by_event.get(source)
+            if source_event and source_event.get("task_id"):
+                row = {**row, "task_id": source_event["task_id"],
+                       "attempt_id": row.get("attempt_id") or source_event.get("attempt_id")}
+        normalized_rows.append(row)
+    state_fields = task_state.projection_fields(normalized_rows)
+    strategy_rows = [item for item in recent if item.get("strategy_fingerprint")]
+    strategy_summary = strategy_memory.summarize_strategies(strategy_rows, task_id=task_id)
+    for item in recent:
+        fingerprint = item.get("strategy_fingerprint")
+        repeated = bool(fingerprint and strategy_summary.get(fingerprint, {}).get("repeated_failure"))
+        diagnosis = diagnostic_review.diagnose_failure(
+            failure_class=item.get("reason", "").split(":", 1)[0].lower(),
+            changed_paths=item.get("changed_paths", []),
+            repeated_strategy=repeated,
+            delta=item.get("delta"),
+        )
+        item["diagnosis_class"] = diagnosis["diagnosis_class"]
+        item["mechanism_status"] = diagnosis["mechanism_status"]
+        item["next_experiment_constraint"] = diagnosis["next_experiment_constraint"]
+    reflection = reflection_module.build_reflection({"recent_attempts": recent})
     facts = {
-        "done_task_ids": [],
-        "parked_task_ids": [],
+        **state_fields,
         "core_pressure": 0.0,
         "last_attempt": last,
         "recent_attempts": recent,
+        "strategy_memory": strategy_summary,
+        "reflection": reflection,
     }
     payload = {
         "schema_version": 1,

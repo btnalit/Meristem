@@ -434,7 +434,9 @@ class ManualPanelParityTests(PipelineTestCase):
             for key in left:
                 if left[key] != right[key]:
                     differences.append(key)
-        self.assertEqual(differences, ["verdict_authority"])
+        self.assertEqual(set(differences), {"verdict_authority", "attempt_id"})
+        self.assertEqual(differences.count("verdict_authority"), 1)
+        self.assertEqual(differences.count("attempt_id"), 4)
         self.assertEqual(
             [row.get("verdict_authority") for row in panel_rows if "verdict_authority" in row],
             ["panel"])
