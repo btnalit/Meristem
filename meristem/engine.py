@@ -11,7 +11,7 @@ import dataclasses
 import os
 import pathlib
 
-from meristem import SEED_DIR, SEED_READONLY, SEED_WRITABLE
+from meristem import BODY_DIR, REPO, SEED_DIR, SEED_READONLY, SEED_WRITABLE
 from meristem import llm
 
 #: I10 prompt-face budget: build_context's token count must stay <=
@@ -28,6 +28,10 @@ class PathViolation(Exception):
     """_validate_paths rejected a path outside the seed's writable whitelist."""
 
 
+class ClosureViolation(Exception):
+    """The mutation closure contains an unsafe filesystem entry."""
+
+
 @dataclasses.dataclass(frozen=True)
 class Mutation:
     task: str
@@ -39,6 +43,48 @@ def _estimate_tokens(text: str) -> int:
     Overestimating is the safe direction for a budget gate.
     """
     return int(len(text.split()) * 1.3) + 1
+
+
+def _mutation_closure() -> tuple[list[tuple[str, str]], int]:
+    """Read the current organ sources that a mutation may replace.
+
+    The model is asked for whole-file replacements.  Showing only the writable
+    path names gives it permission without the information needed to preserve
+    or improve the current implementation.  The closure is deliberately
+    discovered from the ``body/organs/`` writable prefix rather than from a
+    classifier-specific name; a later organ must receive the same treatment.
+
+    ``tests/`` is intentionally not part of the closure.  Tests are writable
+    for the seed's repository mechanics, but they are not the capability body
+    being measured and including them would let unrelated test text consume
+    the model's comprehension surface.
+
+    Symlinks are refused rather than followed.  A seed-controlled link under
+    the writable body must never turn prompt construction into a read of a
+    soil-private path.
+    """
+    organs_root = BODY_DIR / "organs"
+    if not organs_root.exists():
+        return [], 0
+    if organs_root.is_symlink():
+        raise ClosureViolation(f"mutation closure root is a symlink: {organs_root}")
+
+    entries: list[tuple[str, str]] = []
+    for path in sorted(organs_root.rglob("*")):
+        if path.is_symlink():
+            raise ClosureViolation(f"mutation closure contains a symlink: {path}")
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ClosureViolation(f"cannot read mutation closure file {path}: {exc}") from exc
+        rel = path.relative_to(REPO).as_posix()
+        entries.append((rel, content))
+
+    closure_text = "\n\n".join(
+        f"--- {rel} ---\n{content}" for rel, content in entries)
+    return entries, _estimate_tokens(closure_text) if closure_text else 0
 
 
 def build_context(task: str, *, config, extra: str = "") -> str:
@@ -57,6 +103,7 @@ def build_context(task: str, *, config, extra: str = "") -> str:
     都在种子的可见面内。隐藏用例库、台账、配额数字一律不在此列（§8.1.2 / §8.1.3）——
     CA-3 断言种子代码里连这些名字都不该出现，本 docstring 因此也避开它们。
     """
+    closure, closure_tokens = _mutation_closure()
     parts = [
         "You are the seed's mutation engine. Reply with ONLY a JSON object "
         "mapping relative file path to the FULL new file content "
@@ -65,7 +112,18 @@ def build_context(task: str, *, config, extra: str = "") -> str:
         "whole mutation is discarded): " + ", ".join(SEED_WRITABLE),
         "Read-only (never write these): " + ", ".join(SEED_READONLY),
         f"Task: {task}",
+        # Keep the machine-readable budget visible to the model and to
+        # operators reviewing a prompt.  ``fits`` is against the complete
+        # prompt budget below; no second truncation or hidden closure cap is
+        # introduced here.
+        f'closure_budget: {{"files": {len(closure)}, '
+        f'"tokens": {closure_tokens}, "fits": '
+        f'{str(closure_tokens <= PROMPT_BUDGET).lower()}}}',
     ]
+    if closure:
+        parts.append("Current mutation closure (whole-file sources):\n" +
+                     "\n\n".join(
+                         f"--- {rel} ---\n{content}" for rel, content in closure))
     constitution = _read_constitution()
     if constitution:
         parts.append(constitution)

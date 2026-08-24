@@ -97,6 +97,33 @@ class BuildContextTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assertIn(entry, prompt)
 
+    def test_prompt_carries_current_mutation_closure(self):
+        prompt = engine.build_context("任务", config={})
+        organ = REPO / "body" / "organs" / "classifier" / "run.py"
+        self.assertIn("Current mutation closure", prompt)
+        self.assertIn("body/organs/classifier/run.py", prompt)
+        self.assertIn(organ.read_text(encoding="utf-8"), prompt)
+        self.assertRegex(prompt, r'closure_budget: \{"files": [1-9][0-9]*,')
+
+    def test_mutation_closure_excludes_tests(self):
+        closure, _tokens = engine._mutation_closure()
+        paths = {path for path, _content in closure}
+        self.assertTrue(paths)
+        self.assertTrue(all(not path.startswith("tests/") for path in paths))
+
+    def test_mutation_closure_refuses_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "body" / "organs"
+            root.mkdir(parents=True)
+            link = root / "leak"
+            try:
+                link.symlink_to(REPO / "soil", target_is_directory=True)
+            except OSError:
+                self.skipTest("platform does not permit symlink creation")
+            with mock.patch.object(engine, "BODY_DIR", Path(tmp) / "body"):
+                with self.assertRaises(engine.ClosureViolation):
+                    engine._mutation_closure()
+
     def test_prompt_never_carries_soil_private_material(self):
         """**正向断言不够，还要有反向的。** 把可写面放进 prompt 之后，
         更要守住没有把土壤私有的东西一起带进去。"""
