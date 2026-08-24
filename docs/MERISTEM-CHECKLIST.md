@@ -1159,6 +1159,49 @@ cycle=25：candidate a37cd0524125；完成 measurement；UNFULFILLED；delta=0.0
 
 阶段 5/H1 的前置 gate：全量测试、attempt linkage 完整、task state 可迁移、strategy fingerprint 可去重、diagnostic/reflection 可读、真实 Learning Runway 通过，且 calibration 能证明 soil measurement 正常。任何一项未通过均继续冻结 H1。
 
+### 2026-08-24 · Learning Runway 实测（新 task，未污染）
+
+新建受控 task：
+
+```text
+task_id=0695fc39e6fd1af7
+primary_probe=probe-classify-basic
+baseline=40.0
+anchor baseline=20.0
+```
+
+使用 `agnes-temporary` + 一次性 `soil:soil 0600` credential bridge；bridge 在每轮结束后删除，未进入 worker/ledger/summary。真实 cycles：
+
+| soil cycle | attempt_id | candidate | strategy | probe | outcome | state |
+|---|---|---|---|---|---|---|
+| 28 | `att-0e9ef94eac1a4b2f88120e02cbbbc4a6` | `a6ab40155e8b...` | `strat-69ef9612bb6cc5c8edc9c415` | `40→40`, Δ0 | UNFULFILLED | unfulfilled |
+| 29 | `att-4f882580ab904020a3e3502340f0ece3` | `e9903d96356b...` | same fingerprint | `40→40`, Δ0 | UNFULFILLED | unfulfilled |
+| 30 | `att-fdaf1c6bcf5240f5a21d11d01364fbff` | `fee82c329741...` | same fingerprint | `40→40`, Δ0 | UNFULFILLED | parked |
+
+Cycle 30 的 worker stderr marker 记录：
+
+```text
+feedback_source_hash=d3bb4e8e8d7be16cf7d1a5a85b1b7eef51209b53fc95b01ea38d4cd6fc1d3830
+reflection_source_attempts=3
+```
+
+该 hash 与 cycle 30 启动时（写入 cycle-start event 后、worker 启动前）projection 的 ledger-prefix hash 一致，直接证明 feedback surface 被 worker 读取并组装；reflection 也带有前 3 次 attempt lineage。最终 projection hash 不同是因为 cycle 30 自己的事件随后追加，属于正常时序差异。
+
+Runway gate 结果：
+
+```text
+attempt_id linkage：通过（新事件）
+feedback/reflection prompt surface：通过
+provider/gateway/measurement fault attribution：通过，三轮 mechanism healthy
+UNFULFILLED→parked：通过
+strategy fingerprint 变化：失败，三轮均为同一 fingerprint
+重复策略率下降：失败，重复率上升
+primary/anchor probe 改善：失败，40→40、20→20
+promotion：0
+```
+
+结论：土壤观测、反馈投影、反思 lineage 和 task state 真实闭环成立；Agnes 未利用该反馈形成策略变化，不能据此宣称自我优化。该 task 已 soil-gated parked，不再继续消耗 provider。阶段 5/H1 继续冻结。
+
 
 按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem
