@@ -26,6 +26,20 @@ Acceptance:
 - Diagnostic review cannot produce promotion events.
 - H1 gate lists executable evidence commands.
 
+### Task 0.2 — Formalize credential adapter / operator wrapper
+
+**Files:** `docs/MERISTEM-V5-SPEC.md`, `docs/MERISTEM-SOIL-ONTOLOGY.md`, `substrate/run-soil.sh`, `tests/test_credential_adapter.py`, `docs/MERISTEM-CHECKLIST.md`
+
+Replace ad-hoc smoke-shell bridge construction with the contract in S7-Credential Adapter. The wrapper must parse only the checked external assignment-only credential file (never execute/source it), select an allowlisted mode, create an ephemeral soil-owned `0600` pointer target, launch the existing supervisor/gateway path with an allowlisted environment, and clean the file on success, failure, signal, and startup abort. The wrapper must not change gateway/worker ABI or perform provider fallback/promotion decisions.
+
+Acceptance:
+- `mode -> source environment variable` mapping is fixed and tested for primary and both explicit backups.
+- Inherited provider variables cannot satisfy a missing source credential.
+- Source file validation rejects missing, symlinked, non-root-owned, or group/other-readable files.
+- Child environment contains the pointer and selected mode, but no provider key or source-only secret.
+- Temporary credential file is `soil:soil 0600` while running and absent after normal/non-zero/signal exit.
+- Existing gateway, supervisor, security-boundary, and full test suites remain green.
+
 ## Phase 1: Attempt identity and fault attribution
 
 ### Task 1.1 — Add failing tests for attempt identity and event linkage
@@ -137,7 +151,7 @@ Require full test suite, calibration proof, fresh projection, clean ownership, n
 1. Run targeted RED/GREEN tests per phase.
 2. Run full suite from a clean checkout.
 3. Run static checks and `git diff --check`.
-4. Run real server preflight with Agnes credentials only through the existing soil-owned bridge.
+4. Run real server preflight with Agnes credentials only through `substrate/run-soil.sh --mode agnes-temporary`; backup modes require explicit `--mode openrouter-free` or `--mode sensenova`.
 5. Run bounded Learning Runway on the same controlled task; do not promote.
 6. Run controlled autonomous-panel, promotion-transaction, crash-recovery, and rollback rehearsals in isolated repositories; the rollback executor must use `soil-autonomous`, not a human candidate reviewer.
 7. Independent read-only audit of code, runtime ownership, ledger linkage, projection privacy, autonomous authority, and H1 gate.

@@ -171,6 +171,53 @@ v3.1 的土壤定义是**否定式**的——「种子不许碰的一切」。�
 **实证**：v3.1 的 ledger 在**内核**里，`campaign_calls` 全时段累计撞上 1000 → `check()` 在每次变异和每次反思抛错 → **循环死锁，而唯一能修这道门的人被锁在门外**。
 **v5 变更**：**预算执行移入土壤**，在种子进程之外判定；种子只读余量。
 
+#### S7-Credential Adapter / Operator Wrapper（soil-owned boundary）
+
+正式 provider 运行不得依赖操作者手工拼接 `MERISTEM_CREDENTIALS_FILE`。仓库提供唯一
+operator wrapper：`substrate/run-soil.sh`。它是**启动适配器**，不是 gateway，也不是 worker
+能力；高层架构仍为：
+
+```text
+/RSI/meristem-env
+  → run-soil.sh（root/operator，临时文件生命周期）
+  → MERISTEM_CREDENTIALS_FILE（soil:soil 0600）
+  → soil gateway（setpriv → soil）
+  → Unix socket ABI
+  → worker（无 key、无 pointer）
+```
+
+**Contract：**
+
+1. wrapper 必须以 root/operator 身份启动；不得由 worker 或 seed 调用。
+2. credential source 默认固定为 `/RSI/meristem-env`，可通过显式 `MERISTEM_ENV_FILE`
+   覆盖；source 文件必须是 root:root、0600、regular、非 symlink，否则 fail closed。
+   它是 **assignment-only data file**：只允许固定变量名的 `KEY=value` / `export KEY=value`
+   与注释/空行；wrapper 不执行 source 文件，命令、函数、命令替换、管道、重定向、分号等
+   executable syntax 一律拒绝。
+3. mode 只能是 allowlist：`agnes-temporary`、`openrouter-free`、`sensenova`。
+   缺省为当前 primary `agnes-temporary`；备用 mode 必须通过 `--mode` 显式选择，不能由
+   worker 或 provider failure 隐式切换。
+4. wrapper 按 mode 使用固定 source-env 映射：
+   `agnes-temporary → AGNES_API_KEY`、`openrouter-free → OPENROUTER_API_KEY`、
+   `sensenova → SENSENOVA_API_KEY`。禁止接受任意 env-name 作为参数。
+5. wrapper 每次运行生成临时 credential file，写入后设置 soil:soil、0600，并只向
+   soil gateway 注入 `MERISTEM_CREDENTIALS_FILE`；不得持久化 key、打印 key、写入
+   ledger/prompt/summary 或传给 worker。
+6. 子进程使用 allowlisted environment；三类 provider key 与 source 文件中的其他
+   secret 不得继承到 supervisor、worker 或自定义子命令。
+7. 正常退出、失败、可捕获信号和启动异常都必须删除临时 credential file；清理失败必须
+   明确报错并使 wrapper 返回非零。`SIGKILL` 无法由任何 shell trap 捕获，属于明确残余风险；
+   runtime directory 必须 root:root 0700，后续启动/运维检查必须发现并清理 stale credential files。
+8. wrapper 只能把 `--` 后参数传给正式 `substrate.supervisor` CLI（由 supervisor 自己执行
+   command allowlist）；wrapper 不接受任意 binary，不解析或修改 ledger，不启动 provider fallback，
+   也不自行决定 promotion/H1。supervisor/pipeline 仍是唯一 authority；通过 wrapper 调用
+   `manual-cycle --autonomous` 仍必须满足 supervisor 自身的正式 H1 gate。
+9. wrapper 的验收必须包含：mode 映射、父环境 secret 拒绝、文件 owner/mode、worker
+   surface 无 pointer/key、异常清理、SIGTERM/非零退出清理和真实 supervisor dry-run。
+
+该 contract 把此前真实 smoke 使用的“一次性 soil:soil 0600 bridge”正式化为可审计的
+operator 入口，但仍保持**每次运行临时、退出即删除**；不建立永久 credential 文件。
+
 #### S8. 自省渲染（Self-report Rendering）——「成绩由谁叙述」
 
 **若种子自撰成绩**：它可以在渲染层把「8 把尺读零」写成「一切正常」，下一拍它就不会去修尺。
@@ -672,6 +719,7 @@ v5 的探针运行器**在土壤**：`substrate/probe_runner.py`，直接读 vau
 │   ├── budget.py            【新】预算执行（S7）              ~60 行
 │   ├── pipeline.py          【新】候选处理流水线（S2+S4+S5） 150–250 行
 │   ├── model_gateway.py     【新】模型网关（S7 的执行端）      ~80 行
+│   ├── run-soil.sh          【新】credential adapter/operator wrapper（S7）
 │   └── panel.py             【新】面板（P0-b 主体工程）       100–150 行
 ├── meristem/                全新种子（P0-a ~415 行）
 │   ├── __init__.py          路径常量 + 只读助手              ~35

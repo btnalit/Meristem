@@ -1415,7 +1415,31 @@ H1=frozen
 
 真实 accepted 后 CA-2 首次回读发现新建 `state/soil-scoreboard.jsonl` 曾为 `root:root`；按既有部署契约执行 `substrate/deploy-permissions.sh` 后恢复为 `soil:soil 0600`。部署自检 `isolation=enforced`，全量回归重新通过：`293 passed, 2 skipped, 71 subtests passed`。
 
----
+### 2026-08-25 · Credential adapter / operator wrapper contract
+
+此前真实 provider smoke 和 Agnes P0-a 使用的是外层手工 bridge：由 operator 从 `/RSI/meristem-env` 取对应 key，写入一次性 `soil:soil 0600` 文件后设置 `MERISTEM_CREDENTIALS_FILE`。该安全形态符合 soil-owned gateway 边界，但手工启动方式不是正式可审计入口，也曾因遗漏 pointer 导致 `soil credential process unavailable`。
+
+本轮先在设计中新增 S7-Credential Adapter contract，并同步 ontology/learning-loop plan。正式入口定义为：
+
+```text
+substrate/run-soil.sh
+```
+
+contract 要求：
+
+```text
+root/operator only
+固定 source=/RSI/meristem-env（默认路径；覆盖必须显式且仍需安全属性校验；assignment-only data，禁止 source 执行）
+mode allowlist：agnes-temporary / openrouter-free / sensenova
+backup 必须显式选择，无隐式 fallback
+每次运行临时 soil:soil 0600 credential file
+allowlisted child environment
+worker 无 key、无 pointer
+正常/失败/信号路径均清理 credential file；`SIGKILL` 不可捕获，runtime directory 需保留 root:root 0700 并在下次启动/运维检查清理 stale file
+```
+
+本条已完成 contract、实现和回归验证：`substrate/run-soil.sh` 只启动正式 supervisor；adapter 定向测试 `8 passed`，全量 pytest `301 passed, 2 skipped, 71 subtests passed`，compileall 与 `git diff --check` 通过。provider 未由本轮测试调用；正式 provider 运行仍需使用该 wrapper。
+
 
 ## 常用命令（v3.1 诊断，进程已停）
 

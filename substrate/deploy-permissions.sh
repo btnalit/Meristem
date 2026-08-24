@@ -99,6 +99,12 @@ if [ -d "$REPO/soil/model-policies" ]; then
     find "$REPO/soil/model-policies" -type d -exec chmod u=rwx,go=rx {} +
 fi
 
+if [ -f "$REPO/substrate/run-soil.sh" ]; then
+    echo "==> operator wrapper：root 属主，0755"
+    chown root:root "$REPO/substrate/run-soil.sh"
+    chmod 0755 "$REPO/substrate/run-soil.sh"
+fi
+
 echo
 echo "==> 自检"
 python3 -c "

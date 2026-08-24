@@ -15,13 +15,18 @@ This document defines the entities and state boundaries used by the soil-learnin
 - **Projection**: replaceable, bounded views derived from the append-only ledger. It cannot create facts and must carry the current ledger fingerprint.
 - **Runtime manifest**: a soil-owned snapshot binding task identity, ledger hash, projection hashes, ownership, modes, and fail-closed policy. It must be refreshed after ledger/projection writes and verified before mutation.
 - **Authority**: `soil` owns measurement, task state, and promotion transaction. A manual panel is a test adapter only; formal H1 requires a soil-owned autonomous panel.
+- **Credential source**: the external operator-owned assignment-only environment file, default `/RSI/meristem-env`. It is parsed as data, not sourced/executed; it is an input source, not a soil asset and never enters Git.
+- **Credential adapter**: the root/operator-only `substrate/run-soil.sh` boundary. It selects one allowlisted mode, materializes one ephemeral soil-owned credential file, and injects only its pointer into the soil gateway process.
+- **Credential file**: an ephemeral `soil:soil` `0600` regular non-symlink file consumed only by the soil gateway. It is deleted on every adapter exit path and is never a permanent store.
+- **Gateway**: the soil-owned provider execution process. It reads the credential file, applies policy/budget/retry, and exposes only the bounded Unix-socket ABI.
+- **Worker**: the untrusted `worker` UID process. It may receive the socket path and bounded cycle metadata, but never a provider key, credential pointer, source environment, or Git credential.
 
 ## State transitions
 
 ```text
 open -> unfulfilled        semantic failure
 open -> parked             semantic failure threshold reached
-open -> blocked            mechanism failure
+open -> blocked             mechanism failure
 open -> promotion_gated   valid measured candidate blocked by preflight policy
 open -> fulfilled          accepted_fitness after merge
 ```
@@ -41,6 +46,19 @@ open -> fulfilled          accepted_fitness after merge
 9. Formal H1 bad-candidate rollback is executed by the soil-owned `soil-autonomous` authority. `root_manual` is infrastructure emergency recovery only, not a candidate decision authority.
 10. Rollback receipts describe and bind the autonomous rollback execution; receipt validation is not rollback execution.
 11. Provider success, parser success, strategy variation, or candidate creation alone never establishes H1.
+
+## Credential adapter state boundary
+
+```text
+external /RSI/meristem-env (assignment-only data, never executed)
+  → root/operator wrapper
+  → ephemeral soil:soil 0600 credential file
+  → MERISTEM_CREDENTIALS_FILE in soil gateway only
+  → Unix socket status/content ABI
+  → worker
+```
+
+The adapter is not a provider fallback mechanism, does not write the soil ledger, and does not make promotion or H1 decisions. Provider mode is fixed for the gateway lifetime; switching from a deferred provider requires a new explicitly selected mode and a new soil cycle. A missing, unsafe, inherited, or ambiguous credential fails closed before any provider request.
 
 ## H1 readiness boundary
 
