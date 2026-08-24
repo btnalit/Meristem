@@ -64,6 +64,8 @@ Layer 0 rollback contract 与演练要求：`docs/MERISTEM-LAYER0-ROLLBACK.md`�
 
 新受控 task 已切换到 soil declaration 与 agenda 首条；旧 parked task 只保留历史。
 
+Layer 1 H1-preflight 实测 cycles 38–40：三轮均 `finish_reason=stop` / `parse_status=ok`，returned path 只有 classifier，syntax preflight 与 probe measurement 通过；primary `40→40`、anchor `20→20`，三种 strategy fingerprint 不同，均 `UNFULFILLED`，无 `accepted_fitness` / `promotion_committed` / ignition event。cycle 40 后新 task `8388cd245b011a91` 按 semantic quota 正确进入 `parked`；H1 仍 frozen。
+
 ### 2026-08-23 · v5 规格 v5.7 → v5.8-frozen + 停 v3.1 进化
 
 **1. 规格迁入版本控制并两次升版**
