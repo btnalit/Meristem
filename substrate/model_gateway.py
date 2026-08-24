@@ -193,6 +193,10 @@ def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
             max_tokens=int(slot.get("max_tokens", 4096)),
             temperature=float(slot.get("temperature", 0.0)),
             timeout=float(slot.get("timeout", 60)),
+            response_format=(
+                {"type": "json_object"}
+                if slot.get("response_format") == "json_object" else None
+            ),
         )
         if result.ok:
             return "allowed", result.content, None

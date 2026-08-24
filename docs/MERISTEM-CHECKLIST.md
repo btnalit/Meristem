@@ -1110,7 +1110,9 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 阶段 4：Agnes stability observation 已完成 3 次：cycle=991001/991002/991003 均 gateway started、allowed、content 非空（各 length=4）；provider transport 稳定性通过，但不等于 mutation 能力通过
 阶段 5：继续冻结，不启动 H1
 
-本轮交叉诊断确认：三家 mutation response 均可能返回完整 JSON code fence。旧版 seed `parse_file_map()` 仅执行裸 `json.loads()`，导致 fenced JSON 被静默解析为空 map，`run_cycle()` 返回 `empty_mutation`（无 stderr），supervisor 最终只显示 `logout`。修复仅接受完整 JSON code fence，不接受任意解释文本或 brace 截取。修复必须提交后才会进入 supervisor 创建的 HEAD-based worker worktree。
+修复仅接受完整 JSON code fence，不接受任意解释文本或 brace 截取。修复必须提交后才会进入 supervisor 创建的 HEAD-based worker worktree。
+
+进一步实测发现 Agnes 在未指定结构化输出时会把 reasoning/标签或额外尾部混入 `message.content`。因此 Agnes mutation slot 显式启用 `response_format=json_object`，不放宽为任意文本提取。启用后真实 HEAD-based worker sandbox 已产出 candidate：`fbb3f47a04d5`（仅诊断，未进入 recovery/promotion）。
 ```
 
 ---

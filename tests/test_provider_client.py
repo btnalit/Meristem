@@ -40,6 +40,22 @@ class ProviderClientTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.error_kind, "bad_response")
 
+    def test_json_response_format_is_forwarded_explicitly(self):
+        response = types.SimpleNamespace(
+            choices=[types.SimpleNamespace(
+                message=types.SimpleNamespace(content='{"seed/x.py":"print(1)"}'))])
+        fake = mock.Mock()
+        fake.chat.completions.create.return_value = response
+        with mock.patch.object(provider_client, "OpenAI", return_value=fake):
+            result = provider_client.chat_once(
+                base_url="https://example.invalid/v1", api_key="test-key",
+                model="test-model", prompt="hi", max_tokens=32,
+                temperature=0.0, timeout=5,
+                response_format={"type": "json_object"})
+        self.assertTrue(result.ok)
+        self.assertEqual(fake.chat.completions.create.call_args.kwargs["response_format"],
+                         {"type": "json_object"})
+
 
 if __name__ == "__main__":
     unittest.main()

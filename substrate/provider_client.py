@@ -23,17 +23,21 @@ class ProviderResult:
 
 
 def chat_once(*, base_url: str, api_key: str, model: str, prompt: str,
-              max_tokens: int, temperature: float, timeout: float) -> ProviderResult:
+              max_tokens: int, temperature: float, timeout: float,
+              response_format: dict | None = None) -> ProviderResult:
     """Perform one request; never retry inside the SDK."""
     try:
         client = OpenAI(api_key=api_key, base_url=base_url,
                         max_retries=0, timeout=timeout)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        request = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if response_format is not None:
+            request["response_format"] = response_format
+        response = client.chat.completions.create(**request)
         content = response.choices[0].message.content if response.choices else None
         if not isinstance(content, str) or not content.strip():
             return ProviderResult(error_kind="bad_response")

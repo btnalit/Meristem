@@ -77,6 +77,7 @@ model = "agnes-2.5-flash"
 credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
 temperature = 0.2
 max_tokens = 32000
+response_format = "json_object"
 timeout = 900
 
 # 当前不配置 mutate 回退。评审模型不参与 mutation，避免同一模型既是作者又是裁判，
