@@ -30,6 +30,7 @@ sys.path.insert(0, str(REPO))
 from substrate import budget  # noqa: E402
 from substrate import model_gateway  # noqa: E402
 from meristem import llm  # noqa: E402
+from substrate import model_gateway_client  # noqa: E402
 
 
 def _policy(*, calls_per_cycle=100, window_cycles=2, calls_per_window=100,
@@ -132,6 +133,8 @@ class NoCredentialsFailsClosedTests(unittest.TestCase):
             credential_file = Path(tmp) / "provider.key"
             credential_file.write_text("unit-test-secret\n", encoding="utf-8")
             credential_file.chmod(0o600)
+            import pwd
+            os.chown(credential_file, pwd.getpwnam("soil").pw_uid, pwd.getpwnam("soil").pw_gid)
             slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE"}
             with mock.patch.dict(os.environ, {"MERISTEM_TEST_CREDENTIALS_FILE": str(credential_file)},
                                  clear=False):
@@ -215,6 +218,24 @@ class BudgetGatingUsesTheDedicatedModuleTests(unittest.TestCase):
                 resp = model_gateway.handle({"role": "mutate", "prompt": "x"}, policy=_policy(),
                                             calls_ledger=ledger, cycle=1)
             self.assertEqual(resp, {"status": "refused", "reason": "budget"})
+
+    def test_retry_attempts_are_each_recorded_and_budget_can_stop_them(self):
+        import urllib.error
+        os.environ["MERISTEM_TEST_UNSET_KEY"] = "fake-key-for-test"
+        self.addCleanup(os.environ.pop, "MERISTEM_TEST_UNSET_KEY", None)
+        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
+                                     "Too Many Requests", hdrs=None, fp=None)
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch("urllib.request.urlopen", side_effect=err) as urlopen, \
+             mock.patch("time.sleep"):
+            ledger = Path(tmp) / "soil-model-calls.jsonl"
+            policy = _policy(calls_per_cycle=2, calls_per_window=2)
+            policy["retry"] = {"backoff_seconds": [15, 30, 60], "max_attempts": 4}
+            resp = model_gateway.handle({"role": "mutate", "prompt": "x"},
+                                        policy=policy, calls_ledger=ledger, cycle=1)
+            self.assertEqual(resp, {"status": "refused", "reason": "budget"})
+            self.assertEqual(urlopen.call_count, 2)
+            self.assertEqual(len(budget.ModelCallLedger(ledger).read()), 2)
 
 
 class _FakeHTTPResponse:
@@ -336,11 +357,37 @@ class EndToEndThroughLlmPyTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], env=env,
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "refused no_credentials")
+        self.assertEqual(result.stdout.strip(), "refused gateway_not_injected")
 
     def test_gateway_timeout_allows_provider_timeout_to_finish(self):
-        self.assertEqual(llm._GATEWAY_TIMEOUT_SECONDS, 1200)
-        self.assertGreater(llm._GATEWAY_TIMEOUT_SECONDS, 900)
+        self.assertEqual(llm._GATEWAY_TIMEOUT_SECONDS, 4000)
+        self.assertGreater(llm._GATEWAY_TIMEOUT_SECONDS, 4 * 900 + 15 + 30 + 60)
+
+    def test_gateway_client_uses_socket_and_returns_contract(self):
+        import socket
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            socket_path = Path(tmp) / "gateway.sock"
+            ready = threading.Event()
+
+            def serve_once():
+                server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                server.bind(str(socket_path))
+                server.listen(1)
+                ready.set()
+                conn, _ = server.accept()
+                with conn:
+                    conn.recv(65536)
+                    conn.sendall(b'{"status":"deferred","reason":"rate_limited"}\n')
+                server.close()
+
+            thread = threading.Thread(target=serve_once)
+            thread.start()
+            ready.wait(2)
+            with mock.patch.dict(os.environ, {"MERISTEM_MODEL_SOCKET": str(socket_path)}, clear=False):
+                result = model_gateway_client.request({"role": "mutate", "prompt": "x"})
+            thread.join(2)
+        self.assertEqual(result, {"status": "deferred"})
 
     def test_seed_side_round_trip_never_sees_a_role_it_should_not(self):
         from substrate.supervisor import MODEL_GATEWAY_ENTRYPOINT

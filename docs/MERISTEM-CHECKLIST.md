@@ -31,11 +31,12 @@
 | 项 | 状态 | 位置 |
 |---|---|---|
 | v3.1 自主进化 | **已全停**（2026-08-23 16:55 服务器时间） | panic 闩 `/RSI/meristem-control/PANIC` |
-| v5 规格 | **v5.10-frozen**（v5.9、v5.10 两轮均为实现暴露的勘误，见 §18） | `docs/MERISTEM-V5-SPEC.md` |
+| v5 规格 | **spec-v5.15-amended；§18 变更记录已到 v5.15**，当前实现与历史记录及实验网络策略差异均已明示 | `docs/MERISTEM-V5-SPEC.md` |
 | v3.1 代码清盘 | **已完成**，仓库 129 → 13 个文件；已在 main | — |
 | v5 实现 · P0-a 波次 1 | **已落地**：种子脊柱 6 模块 · `probe_runner` · `fitness` · 点火 organ · 权威矩阵 · SA/CA 断言集 | `meristem/` `substrate/` `body/organs/classifier/` `tests/ci/` |
-| v5 实现 · P0-a 波次 2 | **已落地**：`pipeline.py` · `soil_state.py` · `manual-cycle` / `ignition-status` | 分支 `worktree-p0a-pipeline` |
-| **P0-a 是否可跑通一圈** | **还不能**：缺 anchor 探针（人写）、`model_gateway.py`、`budget.py` | 见下方「离跑通还差什么」 |
+| v5 实现 · P0-a 波次 2 | **已落地并在服务器验证**：`pipeline.py` · `soil_state.py` · `manual-cycle` / `ignition-status` · C6 worker 隔离 · anchor 接线 · freeze-probe | `main` `b537c93` |
+| v5 实现 · P0-a 波次 3 | **已落地并推送**：mutation closure · credential file pointer · gateway timeout 1200s · 429 retry | `main` `972afb6` |
+| **P0-a 是否可跑通一圈** | **尚未宣称可跑**：代码/测试闭环已具备，但真实 provider allowed、模型产出候选、anchor 非 calibration 晋升尚未实测 | 见本文件最新任务记录 |
 
 > **这张表 2026-08-23 之前有三行是陈旧的**（规格写 v5.8、清盘写「待合并」、实现写「未开工」），
 > 而那时 P0-a 波次 1 的 5 个 commit 早已在 main 上。
@@ -749,6 +750,202 @@ C1 交付了机制但刻意把 CLI 留在范围外 —— **而一个零调用�
 
 **服务器：216 passed / 3 skipped**（skip 从 8 → 4 → 3）。剩下三条都诚实：
 CA-11 等一次真晋升、CA-12 等 T5/S8 投影、junction 是 NTFS 平台差异。
+
+### 2026-08-24 · P0-a 波次 3：闭包、凭据指针、超时与 retry
+
+**实现提交（均已推送 `main`）**：
+
+| commit | 阶段 |
+|---|---|
+| `6e8492c` | mutation closure：`build_context()` 自动扫描 `body/organs/**`，不写死 classifier；`tests/` 明确排除；symlink fail closed；显式 `closure_budget` |
+| `9a995ac` | S7 凭据指针：seed 只接收 `MERISTEM_CREDENTIALS_FILE`，gateway soil-side 读取私有文件；API key 不进入 seed env；缺失/不安全文件统一 `no_credentials` |
+| `972afb6` | gateway round-trip timeout 改为 1200s；provider policy timeout 为 900s；429 按 `[15,30,60]`、最多 4 次重试；每次实际 provider attempt 重新经过 budget gate 并写调用记录 |
+
+**实测证据**：
+
+- closure 定向测试通过；真实 prompt 含 `body/organs/classifier/run.py` 与当前源码，不含 `tests/test_seed_spine.py`；`947/8000` token。
+- credential pointer 定向测试通过；真实 policy 在只设置 `SENSENOVA_API_KEY`、不设置 pointer 时返回 `{"status":"refused","reason":"no_credentials"}`，未联网。
+- retry 测试：`429,429,allowed` 按 15s/30s 后成功；`429×4` 返回 `deferred/rate_limited`。
+- 部署后权限脚本通过：`isolation=enforced`，`worker` 无附加组；CA-2 `FULL`。
+- 全套 pytest：**227 passed, 3 skipped, 71 subtests passed**。
+- 全套 unittest：**230 tests OK, 3 skipped**。
+
+**本阶段未宣称的事实**：
+
+- `/RSI/meristem-env` 是外部凭据来源，任何 key 均未进入仓库、日志、commit 或 prompt。
+- 尚未做真实 provider `allowed` smoke；尚未启动三拍 H1；`ignition-status` 仍为 0。
+- 未跟踪的运行态 `soil/frozen-probe-registry.json` 保留在服务器，未提交。
+
+**规格核对与待讨论项**：
+
+1. §17.4 已规定 `closure_budget` 的形状，但正文没有明确 `build_context()` 的闭包发现算法；本阶段按 `body/organs/**`、排除 `tests/` 实现，需独立审计确认。
+2. §18/v5.14 仍描述旧的 30s gateway timeout 与“当前 IPC 下密钥边界不成立”；本阶段改为 pointer 方案，需独立审计确认这是否仍符合 S7 的权威边界。规格版本号/页眉也存在 v5.10 与 v5.14 记录不一致，**未擅自修改规格**。
+3. CA-12 projection 仍未接 pipeline hook；CA-11 仍等待真实 manual/panel 晋升；真实 provider 与 H1 仍未开始。
+
+### 2026-08-24 · P0-a 波次 4：soil-owned gateway 与 I10 budget closure
+
+**上轮独立审计裁定**：`REJECT`。其中 credential pointer 注入 seed 环境被确认为
+**BLOCKER**；`closure_budget` 未落到候选结构、retry 最坏时序超过 1200s 为 **HIGH**。
+本轮按用户选择修复，未修改规格正文。
+
+**实现**：
+
+- 新增 `substrate/model_gateway_server.py`：soil-side 长驻 Unix socket server，读取外部
+  `MERISTEM_CREDENTIALS_FILE`，调用既有 `model_gateway.handle()`，只回三态协议。
+- 新增 `substrate/model_gateway_client.py`：seed-side 只连接
+  `MERISTEM_MODEL_SOCKET`，不接收 credential pointer，不读取凭据文件。
+- `supervisor._seed_candidate()`：使用 `setpriv --reuid=soil --regid=soil --clear-groups`
+  启动 gateway；seed 环境不再包含 `MERISTEM_CREDENTIALS_FILE`；socket 临时目录为
+  `/tmp/meristem-gateway-*`，目录 `0711`，socket `0600`，退出后清理。
+- timeout 重新按 retry 最坏时序设置：provider 单次 `900s`，4 次加 `15+30+60s`
+  退避为 `3705s`，gateway client `4000s`，seed candidate `4200s`。
+- `Mutation.budgets` 现在携带 §17.4 的 `closure_budget`、`prompt_budget`、
+  `contract_budget`；closure 超过预算在模型调用前 fail closed。
+- retry 集成测试现在经过 `handle()`，验证每次实际 HTTP attempt 都写调用台账，预算达到上限时停止后续 retry。
+
+**验证**：
+
+- TDD RED：旧实现在 socket client import 与 seed pointer 反向断言处失败。
+- 定向测试：**53 passed, 17 subtests passed**。
+- 全套 pytest：**231 passed, 3 skipped, 71 subtests passed**。
+- 全套 unittest：**234 tests OK, 3 skipped**。
+- 真实 `setpriv` smoke（root supervisor 创建 soil:worker socket 目录）：gateway 成功启动并创建 socket；停止后 socket 删除；无凭据请求仍返回
+  `{"status":"refused","reason":"no_credentials"}`；未发起 provider 网络请求。
+- `compileall` 与 `git diff --check`：通过。
+
+**边界与未宣称**：
+
+- `/RSI/meristem-env` 仍是外部凭据来源，未读取、打印、提交或复制 key。
+- 尚未做真实 provider `allowed`，尚未启动三拍 H1；`ignition-status` 仍不能作为点火证据。
+- `soil/frozen-probe-registry.json` 仍是未跟踪运行态文件，未提交。
+
+**规格待裁定**：§18 v5.14 历史勘误仍保留旧 IPC/30s 描述，而本轮实现已按用户决定改为
+soil-owned Unix socket 与 retry-aware 4000/4200s；需要独立审计确认后，再决定是否只在 §18
+追加勘误行。§15.6 的 P0-a/P0-b 禁网历史矛盾继续保持登记，不擅自改正文。
+
+### 2026-08-24 · P0-a 波次 5：过滤 worker surface 与真实 UID/filesystem 验证
+
+本轮针对第二轮独立审计的 BLOCKER 继续修复，**不改变 soil-owned gateway + Unix socket 高层架构**。
+
+- 完整候选 worktree 只由 soil supervisor 持有；worker 不再在完整 worktree 中执行。
+- 新增过滤 worker surface，仅复制 `meristem/`、`body/`、`seed/` 与
+  `substrate/model_gateway_client.py`；不复制 `soil/`、`state/`、`vault/`、`.git/`。
+- worker 以 `worker` UID 执行；退出后 soil 侧只回收 `seed/`、`body/organs/` 等声明白名单文件，再完成 Git commit。
+- 增加 recovery 白名单与 symlink 拒绝；worker 不能通过回收路径修改 soil 文件。
+
+**真实 UID/filesystem 探针**：
+
+```text
+worker UID = 996
+soil/model-policy.toml：不存在
+state/soil-ledger.jsonl：不存在
+vault：不存在
+.git：不存在
+body/organs 写入：成功
+soil 写入：FileNotFoundError
+```
+
+**验证**：
+
+- worker surface 单元测试：**6 passed**（含白名单回收与隔离面）。
+- 全套 pytest：**233 passed, 3 skipped, 71 subtests passed**。
+- 全套 unittest：**236 tests OK, 3 skipped**。
+- `compileall` 与 `git diff --check`：通过。
+- 真实 `setpriv` soil gateway smoke：`started=True`、socket 存在；停止后
+  `after_stop=False`；未进行 provider 请求。
+
+**未宣称**：
+
+- 尚未做真实 provider `allowed`，尚未启动三拍 H1。
+- 尚未经过本轮修复后的独立审计；因此仍不宣称部署验证通过。
+- `/RSI/meristem-env` 仍是外部凭据来源，未读取、打印、提交或复制 key。
+- `soil/frozen-probe-registry.json` 仍未跟踪、未提交。
+
+### 2026-08-24 · P0-a 波次 6：symlink、删除 recovery、ABI 与 credential owner 修复
+
+针对独立审计发现的 1 个 BLOCKER、2 个 HIGH、3 个 MEDIUM 和 2 个 LOW，继续在现有
+soil-owned gateway 架构内修复，未修改规格正文：
+
+- worker surface 在复制前递归拒绝嵌套 symlink；`copytree` 不再可能把 soil 私有目标物化进副本。
+- recovery 递归拒绝 worker 目录 symlink，并对 worker 删除的白名单文件执行 soil-side 删除，保持 candidate commit 与 worker 结果一致。
+- gateway 改为纯 `soil` UID、无 `worker` supplementary group；supervisor 在 bind 后将 socket 设置为 `soil:worker`、`0660`，worker 通过 socket group 访问。
+- client 侧只保留 `status`，仅 `allowed` 保留 `content`；reason 不再进入 seed。
+- `build_context()` 自身对完整 prompt 超预算 fail closed，不再只由 `propose()` 二次检查。
+- credentials pointer 增加 `st_uid == soil UID` 校验。
+
+**新增验证**：
+
+- 嵌套 symlink 负向测试：拒绝复制，未发生目标内容泄漏。
+- recovery 目标 symlink 负向测试：soil worktree 外部目标未被写入。
+- 删除 recovery 测试：worker 删除白名单文件后，soil worktree 文件同步删除。
+- 全量 pytest：**235 passed, 3 skipped, 71 subtests passed**。
+- 全量 unittest：**238 tests OK, 3 skipped**。
+- 真实 gateway smoke：`soil UID=997`、`socket GID=worker(985)`、`mode=0660`，停止后 socket 删除。
+- `compileall` 与 `git diff --check`：通过。
+
+**仍未宣称**：
+
+- 真实 provider `allowed`、真实 provider retry、三拍 H1 尚未执行。
+- worker→recovery→soil Git commit 完整生产路径尚未用真实模型响应端到端跑通。
+- 本轮修复尚未经过新的独立审计。
+
+### 2026-08-24 · P0-a 波次 7：保留 worker 网络口作为进化能力实验变量
+
+经 owner 明确决定：**不继续实现 P0-a 的 worker 禁网闸门**。保留当前 worker 的网络能力，
+把它作为观察“隔离 worker 是否仍能通过 gateway 及其自身环境产生真实进化行为”的实验变量。
+
+这个决定只改变实验配置，不改变权威边界：
+
+- worker 仍无 provider credential、GitHub credential、`.git`、soil ledger、policy、vault。
+- worker 仍只能通过允许的 surface 产生 mutation；soil 仍负责 recovery、测量、裁决、晋升和本地 commit。
+- worker 网络可用意味着存在**已接受的实验风险**：不能宣称 worker 无法绕过 gateway 联网或外传数据。
+- 本波次不把“无网络”列为通过项，不以 `SECURITY_ASSURANCE=FULL` 或 H1 成功替代该风险说明。
+- 真实 provider 与 H1 三拍仍需 owner 后续明确启动；当前只记录实验决策，不自动启动。
+
+**最终隔离结论**：
+
+```text
+filesystem / UID / credential / recovery / soil commit：已验证
+worker 禁网：按 owner 决定保留为实验变量，未实现、未宣称
+```
+
+### 2026-08-24 · anchor 五条 case 复核记录
+
+已从仓库外 soil vault 读取并复核 `probe-classify-anchor` 的 5 条隐藏 case；具体内容不写入
+仓库 checklist，避免破坏 §8.1.2 的“种子不可读”边界。当前五条分别覆盖：
+
+- A1：contract-budget 的同义改写；
+- A2：protected-path 的另一种表述；
+- A3：无命名类别的负例；
+- A4：contract-budget 与 closure-budget 同时出现时的多信号判定；
+- A5：protected-path 的跨措辞回归。
+
+初步评价：A1/A2/A5 的 anti-overfit 方向正确，A3 很有价值；A4 保留原 case，但已把它的
+contract 明确为**多信号根因判定**：明确描述为“未超限/无问题”的类别不得获选，必须选择真正
+导致 gate 阻塞的类别。`ANCHOR-PROBE-SPEC.md` 已补充可重放 oracle 规则与未来成对控制要求；当前
+first-match-wins 只作为 baseline 实现限制，不再作为规范保证；后续 mutation 若修复 A4，必须以
+该语义和原始 vault case 为验收标准。
+
+---
+
+---
+
+### 2026-08-24 · P0-a 波次 8：v5.15 状态同步与 runtime bytecode closure 修复
+
+针对最终审计发现的两个 MEDIUM 完成修复：
+
+- checklist 顶部当前规格状态从 `spec-v5.14-frozen` 同步为 `spec-v5.15-amended`，避免活文档状态表落后于设计正文。
+- `meristem/engine.py::_mutation_closure()` 忽略 `__pycache__/` 与 `.pyc` runtime artifact；它们不是 mutation source，不能进入文本 closure，也不能因 UTF-8 解码失败污染整拍。
+- 新增回归测试：临时 organ 含合法 `.py` 与伪造 `.pyc` 时，只纳入 `.py`，并保持相对路径注入显式。
+
+**验证**：
+
+- 新增 closure bytecode 测试：先按预期失败，再修复后通过。
+- 全量 pytest：**236 passed, 3 skipped, 71 subtests passed**。
+- 全量 unittest：**239 tests OK, 3 skipped**。
+- `compileall` 与 `git diff --check`：通过。
+
+**仍未宣称**：真实 provider、H1 三拍、commit/push 尚未执行；worker 网络口仍按波次 7记录为已接受实验风险。
 
 ---
 

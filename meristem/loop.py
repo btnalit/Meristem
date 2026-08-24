@@ -72,6 +72,12 @@ def run_cycle(task: str | None, cycle: int | None, *, workdir: pathlib.Path | No
     if not changed:
         return Result(ok=False, reason="no_files_written")
 
+    # The soil supervisor commits after the worker exits.  The worker must not
+    # receive repository write access merely to turn its file edits into a
+    # candidate commit.
+    if os.environ.get("MERISTEM_DEFER_COMMIT") == "1":
+        return Result(ok=True, reason="commit_deferred")
+
     _git(["add", *changed], cwd=root)
     commit = _git(
         ["-c", "user.email=seed@meristem.local", "-c", "user.name=meristem-seed",

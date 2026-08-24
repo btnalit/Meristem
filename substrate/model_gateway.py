@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import stat
 import sys
 import tomllib
@@ -108,7 +109,8 @@ def _credential_value(slot: dict) -> str | None:
             return None
         try:
             st = os.stat(path, follow_symlinks=False)
-            if not stat.S_ISREG(st.st_mode) or (st.st_mode & 0o077):
+            if (not stat.S_ISREG(st.st_mode) or (st.st_mode & 0o077)
+                    or st.st_uid != pwd.getpwnam("soil").pw_uid):
                 return None
             flags = os.O_RDONLY
             if hasattr(os, "O_NOFOLLOW"):

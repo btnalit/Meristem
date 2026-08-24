@@ -3,7 +3,7 @@
 > 全新种子。除必要土壤层外，v3.1 的一切不继承。
 > 本文档是**可开工的规格**，不是回顾报告——每个模块给出职责、不变量、数据结构、函数签名、验收判据。
 
-**spec-v5.14-frozen** · 日期：2026-08-23 · 方法：本体论优先（Ontology → Domain → Invariants → State → Capability → Schema → Contract → Implementation → Verification）
+**spec-v5.15-amended** · 日期：2026-08-24 · 方法：本体论优先（Ontology → Domain → Invariants → State → Capability → Schema → Contract → Implementation → Verification）
 
 > **正文冻结**（§17.7 终止条款）。v5.8 修掉外部独立审计判定的 **1 项 P0 + 6 项 bootstrap/P1**；
 > 该审计对架构的裁定是 **APPROVED**，对开工的裁定是 **APPROVED WITH BOOTSTRAP FIXES**——**修完即开工**。
@@ -1456,16 +1456,17 @@ if candidate_parent != current_head:
 
 | 档 | 内容 | 何时必须有 | 理由 |
 |---|---|---|---|
-| **最小完整性隔离** | subprocess · stdin/stdout 严格 JSON ABI · **无 secrets** · **vault 不可读** · **ledger 不可写** · **禁网** · **墙钟超时** · 非法输出 → `unmeasured` | **P0-a** | 见下方重切理由 |
-| **资源强化** | 只读挂载 · CPU/内存上限 · 进程数限制 · seccomp / namespace · 更强 filesystem policy | **P0-b** | 工程量大，防的是自主运行下的资源滥用 |
+| **最小完整性隔离** | subprocess · stdin/stdout 严格 JSON ABI · **无 secrets** · **vault 不可读** · **ledger 不可写** · **worker 网络策略由实验配置显式声明** · **墙钟超时** · 非法输出 → `unmeasured` | **P0-a** | P0-a 可选择保留网络口做能力实验，但不得把该运行宣称为“禁网完整隔离” |
+| **资源强化** | 只读挂载 · CPU/内存上限 · 进程数限制 · seccomp / namespace · **禁网执行** · 更强 filesystem policy | **P0-b** | 工程量大，防的是自主运行下的资源滥用与外传 |
 
-> **两档边界经第四轮审查重切（原切法把最小隔离整体推到 P0-b，错了）。**
-> 原理由是「P0-a 没有自主运行的种子，实验者本人就是隔离」。**但威胁模型不只是恶意的自主种子——
-> 更是一个有 bug 的 organ 污染土壤状态、制造一次假的 `accepted_fitness`。那是实验完整性问题，从第一拍就存在。**
+> **两档边界经第四轮审查重切，现按实验决策修订。** P0-a 的最小完整性隔离仍必须保护
+> soil 权威状态、vault、凭据和输出 ABI；网络是否关闭不再由这张表隐含决定，而由每次实验的
+> execution policy 显式声明。保留网络口的实验必须把它记录为已接受风险，不得宣称禁网闭环。
 >
-> 而且**「不继承环境变量」≠「读不到 secrets」，「subprocess」≠「隔离」**：同 UID 下可读
-> `/proc/<pid>/environ`、可用绝对路径读 vault、可直接联网。
-> 最小完整性隔离的代价很低——主要是**不传路径 + 一个 timeout**，不需要 namespace/seccomp。
+> **「不继承环境变量」≠「读不到 secrets」，「subprocess」≠「隔离」**：同 UID 下可读
+> `/proc/<pid>/environ`、可用绝对路径读 vault、可直接联网。当前实验通过 soil/worker UID、
+> 过滤 filesystem、credential 不注入 worker、Unix socket ABI 和 soil-side recovery 保护权威边界；
+> 禁网与资源围栏留在 P0-b 的强化执行策略。
 
 #### 执行身份模型（必须写明，不得只写「文件系统属主」）
 
@@ -1486,15 +1487,15 @@ if candidate_parent != current_head:
 
 #### Anchor rubric 同样受执行契约约束
 
-「作者是人」≠「执行过程可无限信任」。人写的 anchor rubric 同样可能因 bug 误写 ledger、卡死
-supervisor、泄露其他 anchor。**anchor rubric 执行时：独立 worker · 只能读它自己的 rubric ·
-不可读其他 anchor · 不可写 ledger · 禁网 · 超时。**
+> 「作者是人」≠「执行过程可无限信任」。人写的 anchor rubric 同样可能因 bug 误写 ledger、
+> 卡死 supervisor、泄露其他 anchor。anchor rubric 执行时：独立 worker · 只能读它自己的 rubric ·
+> 不可读其他 anchor · 不可写 ledger · **网络策略按 execution policy 执行（本轮保留网络口时须记录风险）** · 超时。
 
 **「非法输出 → `unmeasured` 而非 0 分」为什么属于 P0-a 档**：
 一个 crash 的 organ 若记 0 分，**后续把它修好会读成一次 `improved`——凭空制造出点火判据要的那个事件**。
 
 **验收**：两档各有判据。接口形状档——构造一个尝试读环境变量的 organ，断言它读不到且记 `unmeasured`；
-资源围栏档——构造一个死循环 organ、一个联网 organ、一个写 ledger 的 organ，三者全部被拦。
+P0-a 的网络状态必须从 execution policy 读取并进入实验记录；资源强化档——构造一个死循环 organ、一个联网 organ、一个写 ledger 的 organ，三者全部被拦。
 
 ---
 
@@ -1836,6 +1837,7 @@ CA-2 是全套断言里**唯一直接检验执行隔离是否真实生效**的�
 
 | 版本 | 来源 | 主要变更 |
 |---|---|---|
+| **v5.15** | **owner 决策 + anchor A4 contract 复核** | ① §15.6 修订为：P0-a 的 worker 网络由 execution policy 显式声明；本实验保留网络口并记录为已接受风险，不得宣称禁网闭环；禁网与资源围栏归入 P0-b 强化策略 · ② anchor A4 保留原 hidden case，但语义从“固定顺序命中”收紧为**多信号根因判定**：明确 under-budget/okay 的类别不得获选，必须选择真正阻塞 gate 的类别 · ③ 当前 classifier 的 first-match-wins 明确标为 baseline 限制，尚未实现 A4 contract · ④ anchor vault 内容未改，具体 cases 仍不可写入仓库规格 |
 | **v5.14** | **S7 / C1 / anchor 三条并行落地 + 服务器实测** | ① **S7 的密钥边界在当前 IPC 形状下结构上不成立（架构级，需裁定）。** §8.1.3 与 `meristem/llm.py` 的 docstring 都声明「种子不持有 API key」，但 `llm.py` 是用 `subprocess.run(raw.split(), ...)` **不传 `env=`** 启动网关的 —— 网关继承的正是种子那份已被裁剪的环境，**密钥根本送不到网关**。也不能靠文件权限补救：网关是种子的子进程、同一 UID，种子读得到的它才读得到，反之亦然。**「网关是种子的子进程」这个形状，托不住一个种子不该看见的秘密。** 当前实现只能 fail closed（`no_credentials`），这不是开发环境的权宜，而是这个形状唯一能诚实做到的事。裁定属 P0-b：要么由土壤持有网关进程、种子经土壤拥有的通道说话，要么明写 S7 只是接口边界而非密钥边界 · ② `meristem/llm.py` 的 `_GATEWAY_TIMEOUT_SECONDS = 30` 与 `soil/model-policy.toml` 的 per-slot `timeout = 900` 冲突：一次合法的长推理会以 `gateway_unavailable` 回到种子，把「模型太慢」与「策略拒绝」混成同一个观测 · ③ **拍号推进不得挂在拍号所守的那道闸后面**（服务器实测的死锁）：`_next_soil_cycle` 原本数 `observed_fitness`，而那种事件只在 `validate_task()` 通过后才写，C1 的 `eligible_after` 又要求拍号先前进 —— 计数器永远停在原地。与 v3.1 `campaign_calls` 同族；I1 的「一切计数皆滚动窗口」防的是同一类，但这条更基本。改为「台账最大拍号 + 1」，且 `manual-cycle` 在任何校验之前先写一条 `kind:"cycle"` · ④ **anchor 接入被测集合**（`catalogue()` 现扫 `internal/active/` + `anchors/`）——§12.2 的「anchor 回归即拒」要成立，anchor 必须真的在 `run_all` 量的那个「全套」里。**同一改动必须同时做的**：`validate_task()` 原先靠「anchor 在清单里找不到」来拒绝它作 primary，anchor 一进集合那种写法就**静默失效**，已改为按来源目录判别 · ⑤ 登记 `soil/frozen-probe-registry.json` 这个路径（此前只由 CA-9 的测试代码发明，规格未命名）· ⑥ `build_context` 现在把种子的可写/只读面与宪法放进 prompt：此前种子被要求整文件替换却不知道自己能写哪些文件，每拍栽在路径违规上 —— **那测的是「能不能猜中白名单」，不是 H1 要问的「能不能沿梯度爬」** |
 | **v5.13** | **§13.3 的处置真正执行 + 独立 code review** | ① **v3.1 从 substrate 整块删除，不是加闸。** `supervisor.py` **1588 → 331 行**（删 promote/canary/heartbeat/rollback/run · journal/proposals/agenda 状态面 · cap case · lifecycle 守卫 · probe staging），`run_meristem.sh` 删除，`MERISTEM_ALLOW_LEGACY` 后门删除。**上一版给这些入口加默认拒绝是错的方向**：一个加了锁的第二入口仍然是第二入口，而那个后门存在的唯一理由是一个已在 §13 判死的系统。§13.3 本就写着「整段删除」/「重写或删除」/「保留骨架、重写判决回路」。P0-c 需要 keeper/breaker/rollback 阶梯时，**照 v5 语义重新设计、从 git 历史取材**，而不是解冻 v3.1 的实现 · ② **panic 闩接入 v5**：v3.1 删除后闩会变成零调用点的安全开关（`advance()` 就是这么活过 400 拍的），现由 `manual-cycle` 启动即检查；`ignition-status` 只读不受闩影响 —— **停机时最需要看的就是判据** · ③ **P0（独立 review 实测）**：`_isolated_organ()` 的 `shutil.copytree` 默认解引用符号链接，而 `body/organs/` 在种子可写面上 —— 种子放一个指向 vault 的链接，**复制在土壤进程里、降权之前完成读取**，vault 被搬进 worker 的工作副本。**为隔离而加的那一步正是绕过隔离的路。** 修法：拒绝含任何链接的 organ 目录（`unmeasured`），`symlinks=True` 作纵深 · ④ 「`worker` 无附加组」此前只在**创建账户那一刻**成立，现由运行时与部署脚本逐次核实；超时预算扩展到覆盖准备阶段。**两项未闭合已登记**：土壤实际以 root 而非 `soil` UID 运行（§15.6 身份模型未真正建立）；`SECURITY_ASSURANCE=FULL` 不观测本轮三条隔离属性 |
 | **v5.12** | **服务器部署 + 实机验证（`hermes-media`）** | **§15.6 的档位矛盾就此裁定，方式是把更严的那一边实现掉。** v5.11 登记过：档位表把「禁网」列在 **P0-a**，而同节验收判据散文把联网 organ 测试归入 **P0-b**。本轮在服务器上实现了完整的最小完整性隔离（`worker` UID + 无附加组 + 私有网络命名空间 + organ 独立工作副本，配合 vault `soil:0500` 与 `state/soil-*.jsonl` `soil:0600`），**三条要求全部由操作系统强制并有实机通过的断言** —— 因此**按档位表裁定：禁网属 P0-a**，散文那一处以本行为准。**裁决的依据不是文本推敲，是它已经做出来了**：私有网络命名空间与降权是同一条命令拿到的，没有理由把它推迟到 P0-b。② 顺带：`execution_policy_version` 由 `"1"` 升至 `"2"` —— 执行策略变了，隔离前后的分数**不可直接比较**，而让这种不可比显式发生正是 §4.1 那三个维度存在的全部理由。③ 隔离级别可被读出（`probe_runner.isolation_status()` → `enforced` / `best_effort`），**不再只活在注释里**；`best_effort` 下不得声称满足 §15.6 的 P0-a 档 |

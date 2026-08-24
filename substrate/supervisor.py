@@ -30,6 +30,7 @@ P0-c 需要 rollback 阶梯 / keeper / breaker 时，是**照 v5 的语义重新
 from __future__ import annotations
 
 import argparse
+import grp
 import hashlib
 import json
 import os
@@ -38,6 +39,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import pwd
 from types import SimpleNamespace
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -49,17 +52,162 @@ from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
 
 #: §13.3 表 C（v5.9 补）：种子经 `meristem/llm.py` 的每次模型调用都靠这个变量
-#: 转发到 `substrate/model_gateway.py`。**必须是绝对路径，不能是 `python -m
-#: substrate.model_gateway`。** `_seed_candidate()` 给种子子进程的 `PYTHONPATH`
-#: 指向候选 worktree（见下），若网关命令依赖 PYTHONPATH 解析，Python 会把
-#: `substrate.model_gateway` 解析成候选 worktree 里的那份拷贝——种子写不了
-#: `substrate/`（白名单挡着），拷贝内容不会被篡改，但网关随后要靠自己的
-#: `__file__` 找 `soil/model-policy.toml` 与 `state/`：worktree 里的 `state/`
-#: 要么是空的（`state/` 被 gitignore，新 worktree 里根本不存在），要么将来若
-#: 意外产生内容也是一份与真实台账脱钩的影子副本。绝对路径直接指向本仓库的
-#: `model_gateway.py`，它的 `__file__` 落在真实仓库根，与 `budget.py` 的 REPO
-#: 解析同一套逻辑，不依赖调用者的 cwd / PYTHONPATH。
-MODEL_GATEWAY_ENTRYPOINT = f"{sys.executable} {REPO / 'substrate' / 'model_gateway.py'}"
+#: 转发到 soil-owned `model_gateway_client.py`。client 只读
+#: `MERISTEM_MODEL_SOCKET`，真正读取 provider credential 的 server 进程使用
+#: 真实仓库路径与 soil UID；不能让 seed 的候选 worktree 解析 soil 模块。
+MODEL_GATEWAY_ENTRYPOINT = f"{sys.executable} {REPO / 'substrate' / 'model_gateway_client.py'}"
+MODEL_GATEWAY_SERVER = REPO / "substrate" / "model_gateway_server.py"
+
+
+_WORKER_COPY_DIRS = ("meristem", "body", "seed")
+_WORKER_COPY_FILES = ("substrate/model_gateway_client.py",)
+_WORKER_WRITABLE = (
+    "seed/constitution.md", "seed/agenda.md", "seed/narrative.md",
+    "seed/probe-proposals/", "body/organs/", "tests/",
+)
+
+
+def _is_worker_writable(rel: str) -> bool:
+    return any(rel == item.rstrip("/") or
+               (item.endswith("/") and rel.startswith(item))
+               for item in _WORKER_WRITABLE)
+
+
+def _copy_worker_surface(source: pathlib.Path, destination: pathlib.Path) -> None:
+    """Materialize only the seed-visible source surface for worker execution."""
+    destination.mkdir(mode=0o700, parents=True)
+    for name in _WORKER_COPY_DIRS:
+        src = source / name
+        if src.is_symlink():
+            raise OSError(f"worker source contains symlink: {src}")
+        if not src.is_dir():
+            continue
+        _reject_symlinks(src)
+        shutil.copytree(src, destination / name, symlinks=True)
+    for rel in _WORKER_COPY_FILES:
+        src = source / rel
+        if src.is_symlink():
+            raise OSError(f"worker source file invalid: {src}")
+        if not src.is_file():
+            continue
+        target = destination / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
+    uid = pwd.getpwnam("worker").pw_uid
+    gid = grp.getgrnam("worker").gr_gid
+    os.chown(destination, uid, gid)
+    for root, dirs, files in os.walk(destination, followlinks=False):
+        for name in (*dirs, *files):
+            path = pathlib.Path(root) / name
+            if path.is_symlink():
+                raise OSError(f"worker surface contains symlink: {path}")
+            os.chown(path, uid, gid, follow_symlinks=False)
+
+
+def _reject_symlinks(root: pathlib.Path) -> None:
+    for current, dirs, files in os.walk(root, followlinks=False):
+        for name in (*dirs, *files):
+            path = pathlib.Path(current) / name
+            if path.is_symlink():
+                raise OSError(f"worker source contains symlink: {path}")
+
+
+def _reject_target_links(root: pathlib.Path, rel: str) -> None:
+    current = root
+    for component in rel.split("/"):
+        current /= component
+        if current.is_symlink():
+            raise OSError(f"soil worktree target contains symlink: {current}")
+
+
+def _recover_worker_changes(worker_root: pathlib.Path, worktree: pathlib.Path) -> list[str]:
+    """Copy only soil-approved changed files back into the soil worktree."""
+    _reject_symlinks(worker_root)
+    changed: list[str] = []
+    for root, _dirs, files in os.walk(worker_root, followlinks=False):
+        for name in files:
+            path = pathlib.Path(root) / name
+            if path.is_symlink():
+                raise OSError(f"worker returned symlink: {path}")
+            rel = path.relative_to(worker_root).as_posix()
+            if not _is_worker_writable(rel):
+                continue
+            target = worktree / rel
+            _reject_target_links(worktree, rel)
+            old = target.read_bytes() if target.is_file() else None
+            new = path.read_bytes()
+            if old != new:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                changed.append(rel)
+    for root, _dirs, files in os.walk(worktree, followlinks=False):
+        for name in files:
+            target = pathlib.Path(root) / name
+            rel = target.relative_to(worktree).as_posix()
+            if _is_worker_writable(rel) and not (worker_root / rel).exists():
+                _reject_target_links(worktree, rel)
+                if target.is_symlink():
+                    raise OSError(f"soil worktree contains symlink: {target}")
+                target.unlink()
+                changed.append(rel)
+    return changed
+
+
+def _start_model_gateway(*, socket_path: pathlib.Path, soil_cycle: int):
+    """Start the credential-reading gateway outside the seed process.
+
+    The pointer is intentionally present only in this soil-owned process. On
+    POSIX production hosts, `setpriv` drops the gateway to the soil identity;
+    without that boundary the supervisor refuses to start a model call.
+    """
+    credentials_file = os.environ.get("MERISTEM_CREDENTIALS_FILE")
+    setpriv = shutil.which("setpriv")
+    if not credentials_file or not setpriv:
+        print("model gateway refused: soil credential process unavailable", file=sys.stderr)
+        return None
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PYTHONPATH": str(REPO),
+        "MERISTEM_MODEL_SOCKET": str(socket_path),
+        "MERISTEM_CREDENTIALS_FILE": credentials_file,
+        "MERISTEM_SOIL_CYCLE": str(soil_cycle),
+    }
+    command = [setpriv, "--reuid=soil", "--regid=soil", "--clear-groups",
+               sys.executable, str(MODEL_GATEWAY_SERVER), "--socket", str(socket_path)]
+    try:
+        proc = subprocess.Popen(command, cwd=str(REPO), env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                text=True)
+    except OSError as exc:
+        print(f"model gateway refused: {exc}", file=sys.stderr)
+        return None
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if socket_path.exists():
+            os.chown(socket_path, pwd.getpwnam("soil").pw_uid,
+                     grp.getgrnam("worker").gr_gid)
+            os.chmod(socket_path, 0o660)
+            return proc
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    if proc.poll() is None:
+        proc.terminate()
+        proc.wait(timeout=2)
+    print("model gateway refused: soil socket did not become ready", file=sys.stderr)
+    return None
+
+
+def _stop_model_gateway(proc) -> None:
+    if proc is None:
+        return
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
 
 
 def _refuse_if_latched() -> bool:
@@ -218,6 +366,22 @@ def _seed_candidate(repo, ctx, task):
     base = _pipeline.git(repo, "rev-parse", "HEAD")
     worktree = pathlib.Path(tempfile.mkdtemp(prefix="meristem-candidate-")) / "wt"
     _pipeline.git(repo, "worktree", "add", "-q", "--detach", str(worktree), base)
+    worker_parent = pathlib.Path(tempfile.mkdtemp(prefix="meristem-worker-", dir="/tmp"))
+    os.chown(worker_parent, pwd.getpwnam("worker").pw_uid,
+             grp.getgrnam("worker").gr_gid)
+    worker_parent.chmod(0o700)
+    worker_root = worker_parent / "surface"
+    _copy_worker_surface(worktree, worker_root)
+    socket_dir = pathlib.Path(tempfile.mkdtemp(prefix="meristem-gateway-", dir="/tmp"))
+    os.chown(socket_dir, pwd.getpwnam("soil").pw_uid, grp.getgrnam("worker").gr_gid)
+    socket_dir.chmod(0o730)
+    socket_path = socket_dir / "model-gateway.sock"
+    gateway_proc = _start_model_gateway(socket_path=socket_path,
+                                         soil_cycle=ctx.soil_cycle)
+    if gateway_proc is None:
+        shutil.rmtree(socket_dir, ignore_errors=True)
+        shutil.rmtree(worker_parent, ignore_errors=True)
+        return None, worktree
     # **裁剪环境，不整份传递**（§15.6 C6）。种子的 `cycle` 是种子自己的代码，
     # 整份 `os.environ` 会把 `MERISTEM_VAULT`（C-65 保证一定在）连同任何模型 key、
     # webhook 一起交给它 —— vault 存在的全部理由就是种子看不见它。
@@ -232,22 +396,50 @@ def _seed_candidate(repo, ctx, task):
     # 变量，效果完全一样**——两者都会让 `llm.py` fail closed 成
     # `gateway_not_injected`，而这正是 v5.9 那行原文点名要防的「哑故障」。
     # 与 `MERISTEM_SOIL_CYCLE` 同一处理方式：现算，不依赖继承。
-    env = {**_probe_runner._sandboxed_env(), "PYTHONPATH": str(worktree),
+    worker_client = worker_root / "substrate" / "model_gateway_client.py"
+    worker_gateway_entrypoint = f"{sys.executable} {worker_client}"
+    env = {**_probe_runner._sandboxed_env(), "PYTHONPATH": str(worker_root),
            "MERISTEM_SOIL_CYCLE": str(ctx.soil_cycle),
-           "MERISTEM_MODEL_GATEWAY": MODEL_GATEWAY_ENTRYPOINT}
-    # Pass only a pointer to the soil-owned credential file.  Never widen the
-    # allowlist with the provider key itself.  An absent pointer stays absent;
-    # the gateway then returns its normal fail-closed no_credentials result.
-    credentials_file = os.environ.get("MERISTEM_CREDENTIALS_FILE")
-    if credentials_file:
-        env["MERISTEM_CREDENTIALS_FILE"] = credentials_file
+           "MERISTEM_MODEL_GATEWAY": worker_gateway_entrypoint,
+           "MERISTEM_DEFER_COMMIT": "1"}
+    # The seed gets only a socket endpoint. The credential pointer is held by
+    # the soil-owned gateway process, never copied into this environment.
+    env["MERISTEM_MODEL_SOCKET"] = str(socket_path)
     try:
-        result = subprocess.run([sys.executable, "-m", "meristem.loop", "cycle"],
-                                cwd=str(worktree), env=env, capture_output=True,
-                                text=True, timeout=1800)
+        setpriv = shutil.which("setpriv")
+        if not setpriv:
+            raise OSError("setpriv unavailable")
+        command = [setpriv, "--reuid=worker", "--regid=worker", "--clear-groups",
+                   sys.executable, "-m", "meristem.loop", "cycle"]
+        result = subprocess.run(command,
+                                cwd=str(worker_root), env=env, capture_output=True,
+                                text=True, timeout=4200)
     except (subprocess.SubprocessError, OSError) as exc:
         result = SimpleNamespace(returncode=-1, stdout="", stderr=str(exc))
-    head = _pipeline.git(worktree, "rev-parse", "HEAD") if result.returncode == 0 else None
+    _stop_model_gateway(gateway_proc)
+    shutil.rmtree(socket_dir, ignore_errors=True)
+    recovered: list[str] = []
+    try:
+        if result.returncode == 0:
+            recovered = _recover_worker_changes(worker_root, worktree)
+    except (OSError, ValueError) as exc:
+        result = SimpleNamespace(returncode=1, stdout=result.stdout,
+                                 stderr=result.stderr + f"\nWORKER_RECOVER_FAILED {exc}")
+    shutil.rmtree(worker_parent, ignore_errors=True)
+    if result.returncode == 0 and recovered:
+        commit_result = subprocess.run(
+            ["git", "add", "--", *recovered], cwd=str(worktree),
+            capture_output=True, text=True)
+        if commit_result.returncode == 0:
+            commit_result = subprocess.run(
+                ["git", "-c", "user.email=seed@meristem.local",
+                 "-c", "user.name=meristem-seed", "commit", "-m",
+                 f"seed cycle {ctx.soil_cycle}: {task.task_id}"],
+                cwd=str(worktree), capture_output=True, text=True)
+        if commit_result.returncode != 0:
+            result = SimpleNamespace(returncode=1, stdout=result.stdout,
+                                     stderr=result.stderr + commit_result.stderr)
+    head = _pipeline.git(worktree, "rev-parse", "HEAD") if result.returncode == 0 and recovered else None
     # 退出码 0 但 HEAD 没动 = 种子没提交任何东西。**那不是一个候选**，
     # 台账里就不能把 base 记成本拍产出的 commit —— 错标签比没有标签更坏，
     # 它看起来像数据（同 loop.py 拒绝把未知拍号伪造成 0 的理由）。

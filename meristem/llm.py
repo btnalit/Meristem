@@ -7,10 +7,10 @@ only one of three outcomes -- allowed / refused / deferred -- per the
 call_result contract in seed/model-interface.json. It never learns
 remaining quota, retry counts, or slot order.
 
-The soil may inject ``MERISTEM_CREDENTIALS_FILE`` as an opaque pointer for the
-gateway subprocess.  The seed never opens that path and never receives the
-credential value; the gateway reads it on the soil side and fails closed when
-the pointer is absent or unsafe.
+The seed receives only ``MERISTEM_MODEL_SOCKET``. A soil-owned gateway server
+reads the external credential file and exposes only the three-state response
+contract over a private Unix socket. The credential pointer is never present
+in the seed environment.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from meristem import SEED_DIR, read_json_readonly
 
 #: Spine-side wall-clock bound on the gateway round trip. Not the soil's
 #: retry/backoff policy, which stays invisible to the seed (SS8.1.3).
-_GATEWAY_TIMEOUT_SECONDS = 1200  # 1800s seed timeout > 1200s gateway > 900s provider
+_GATEWAY_TIMEOUT_SECONDS = 4000  # 4*900s provider attempts + 15+30+60 backoff, with margin
 
 
 @dataclasses.dataclass(frozen=True)

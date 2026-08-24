@@ -18,10 +18,15 @@ from meristem import llm
 #: PROMPT_BUDGET. SS10.1 mandates the mechanism but gives no number --
 #: conservative P0-a placeholder pending real calibration.
 PROMPT_BUDGET = 8000
+CONTRACT_BUDGET = 16
 
 
 class PromptOverBudget(Exception):
     """build_context exceeded PROMPT_BUDGET; refused before any model call."""
+
+
+class ContractOverBudget(Exception):
+    """The model returned more file changes than the soil contract allows."""
 
 
 class PathViolation(Exception):
@@ -36,6 +41,7 @@ class ClosureViolation(Exception):
 class Mutation:
     task: str
     files: dict[str, str]  # relative path -> full new file content
+    budgets: dict[str, dict] = dataclasses.field(default_factory=dict)
 
 
 def _estimate_tokens(text: str) -> int:
@@ -62,6 +68,10 @@ def _mutation_closure() -> tuple[list[tuple[str, str]], int]:
     Symlinks are refused rather than followed.  A seed-controlled link under
     the writable body must never turn prompt construction into a read of a
     soil-private path.
+
+    Runtime bytecode is not mutation source and is ignored.  In particular,
+    ``compileall`` may create ``__pycache__/*.pyc`` under the organ tree; those
+    binary artifacts must not enter the text closure or cause a UTF-8 failure.
     """
     organs_root = BODY_DIR / "organs"
     if not organs_root.exists():
@@ -73,6 +83,8 @@ def _mutation_closure() -> tuple[list[tuple[str, str]], int]:
     for path in sorted(organs_root.rglob("*")):
         if path.is_symlink():
             raise ClosureViolation(f"mutation closure contains a symlink: {path}")
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
         if not path.is_file():
             continue
         try:
@@ -87,7 +99,7 @@ def _mutation_closure() -> tuple[list[tuple[str, str]], int]:
     return entries, _estimate_tokens(closure_text) if closure_text else 0
 
 
-def build_context(task: str, *, config, extra: str = "") -> str:
+def _build_context_with_budget(task: str, *, config, extra: str = "") -> tuple[str, dict[str, dict]]:
     """Assemble the model prompt. Never touches a soil-private path.
 
     **可写面必须进 prompt。** 上一版只拼 task/extra/config —— 于是种子被要求
@@ -104,6 +116,9 @@ def build_context(task: str, *, config, extra: str = "") -> str:
     CA-3 断言种子代码里连这些名字都不该出现，本 docstring 因此也避开它们。
     """
     closure, closure_tokens = _mutation_closure()
+    if closure_tokens > PROMPT_BUDGET:
+        raise PromptOverBudget(
+            f"closure tokens={closure_tokens} > budget={PROMPT_BUDGET}")
     parts = [
         "You are the seed's mutation engine. Reply with ONLY a JSON object "
         "mapping relative file path to the FULL new file content "
@@ -131,7 +146,29 @@ def build_context(task: str, *, config, extra: str = "") -> str:
         parts.append(extra)
     if config:
         parts.append(f"Config: {config}")
-    return "\n\n".join(parts)
+    prompt = "\n\n".join(parts)
+    prompt_tokens = _estimate_tokens(prompt)
+    budgets = {
+        "closure_budget": {
+            "files": len(closure), "tokens": closure_tokens,
+            "fits": closure_tokens <= PROMPT_BUDGET,
+        },
+        "prompt_budget": {
+            "tokens": prompt_tokens, "fits": prompt_tokens <= PROMPT_BUDGET,
+        },
+        "contract_budget": {
+            "changed_contracts": 0, "review_surface": len(closure), "fits": True,
+        },
+    }
+    return prompt, budgets
+
+
+def build_context(task: str, *, config, extra: str = "") -> str:
+    prompt, budgets = _build_context_with_budget(task, config=config, extra=extra)
+    if not budgets["prompt_budget"]["fits"]:
+        raise PromptOverBudget(
+            f"prompt tokens={budgets['prompt_budget']['tokens']} > budget={PROMPT_BUDGET}")
+    return prompt
 
 
 def _read_constitution() -> str:
@@ -307,14 +344,23 @@ def _safe_write(target: pathlib.Path, content: str) -> None:
 
 
 def propose(task: str, *, config, extra: str = "") -> Mutation:
-    prompt = build_context(task, config=config, extra=extra)
-    tokens = _estimate_tokens(prompt)
-    if tokens > PROMPT_BUDGET:
-        raise PromptOverBudget(f"prompt tokens={tokens} > budget={PROMPT_BUDGET}")
+    prompt, budgets = _build_context_with_budget(task, config=config, extra=extra)
+    if not budgets["prompt_budget"]["fits"]:
+        raise PromptOverBudget(
+            f"prompt tokens={budgets['prompt_budget']['tokens']} > budget={PROMPT_BUDGET}")
     result = llm.call_model("mutate", prompt)
     if result.status != "allowed":
         raise RuntimeError(f"model call {result.status}: {result.reason}")
-    return Mutation(task=task, files=llm.parse_file_map(result.content or ""))
+    files = llm.parse_file_map(result.content or "")
+    contract_budget = {
+        "changed_contracts": len(files), "review_surface": len(files),
+        "fits": len(files) <= CONTRACT_BUDGET,
+    }
+    budgets["contract_budget"] = contract_budget
+    if not contract_budget["fits"]:
+        raise ContractOverBudget(
+            f"changed contracts={len(files)} > budget={CONTRACT_BUDGET}")
+    return Mutation(task=task, files=files, budgets=budgets)
 
 
 def apply(mutation: Mutation, workdir: pathlib.Path) -> list[str]:

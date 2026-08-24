@@ -97,6 +97,26 @@ class BuildContextTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assertIn(entry, prompt)
 
+    def test_proposal_carries_all_i10_budget_records(self):
+        with mock.patch.object(engine.llm, "call_model",
+                               return_value=mock.Mock(status="allowed",
+                                                       content='{"body/organs/classifier/run.py":"x"}',
+                                                       reason=None)):
+            mutation = engine.propose("task", config={})
+        self.assertEqual(set(mutation.budgets),
+                         {"closure_budget", "prompt_budget", "contract_budget"})
+        self.assertIn("files", mutation.budgets["closure_budget"])
+        self.assertIn("tokens", mutation.budgets["prompt_budget"])
+        self.assertIn("changed_contracts", mutation.budgets["contract_budget"])
+
+    def test_contract_budget_rejects_too_many_changed_files(self):
+        payload = {f"body/organs/classifier/f{i}.py": "x" for i in range(engine.CONTRACT_BUDGET + 1)}
+        with mock.patch.object(engine.llm, "call_model",
+                               return_value=mock.Mock(status="allowed",
+                                                       content=json.dumps(payload), reason=None)):
+            with self.assertRaises(engine.ContractOverBudget):
+                engine.propose("task", config={})
+
     def test_prompt_carries_current_mutation_closure(self):
         prompt = engine.build_context("任务", config={})
         organ = REPO / "body" / "organs" / "classifier" / "run.py"
@@ -110,6 +130,20 @@ class BuildContextTests(unittest.TestCase):
         paths = {path for path, _content in closure}
         self.assertTrue(paths)
         self.assertTrue(all(not path.startswith("tests/") for path in paths))
+
+    def test_mutation_closure_ignores_runtime_bytecode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "body" / "organs" / "classifier"
+            root.mkdir(parents=True)
+            (root / "run.py").write_text("VALUE = 1\n", encoding="utf-8")
+            cache = root / "__pycache__"
+            cache.mkdir()
+            (cache / "run.cpython-313.pyc").write_bytes(b"not source text")
+            with mock.patch.object(engine, "BODY_DIR", Path(tmp) / "body"), \
+                 mock.patch.object(engine, "REPO", Path(tmp)):
+                closure, _tokens = engine._mutation_closure()
+            paths = {path for path, _content in closure}
+            self.assertEqual(paths, {"body/organs/classifier/run.py"})
 
     def test_mutation_closure_refuses_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:

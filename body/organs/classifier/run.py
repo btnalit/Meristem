@@ -17,22 +17,27 @@ isolation"):
     as a classification result -- see spec 15.6 ("non-legal output ->
     unmeasured, not a score of 0").
 
-This module runs inside an isolated worker with no inherited environment
-variables, no filesystem access beyond its own stdin, no vault access, no
-ledger access, and no network. It must not assume any of those are
-available: it is a pure text -> label function and must stay that way.
+This module is designed as a pure text -> label function and must not rely on
+filesystem, vault, ledger, credentials, or network access. The current P0-a
+experiment may leave a worker network path available to measure escape/side
+capability, but that is an execution-policy risk and is not part of this
+organ's classification contract.
 """
 import json
 import sys
 
-# category -> substrings that identify it. Checked in this fixed order; the
-# first category whose keyword list contains a substring of the (lowercased)
-# input text wins. Each category's list is looked up independently of every
-# other category's list -- there is no shared parsing/extraction helper
-# behind this table, so growing one category's coverage cannot change any
-# other category's behavior.
+# category -> substrings that identify it. The current implementation checks
+# categories in a fixed order and returns the first substring match. This is a
+# deliberately small baseline, not the long-term organ contract.
 #
-# ORDERING COUPLING -- measured, and deliberately left in place.
+# A future mutation that handles anchor A4 must choose the category whose
+# condition actually blocks the gate; a condition explicitly described as
+# under-budget/okay must not win merely because its keyword appears first.
+# Until such a mutation is accepted, first-match-wins remains measurable and
+# may score A4 as unclassified.
+#
+# ORDERING COUPLING -- measured as a baseline limitation, not a specification
+# guarantee.
 #
 # First-match-wins means a careless widening CAN regress a passing check even
 # though the lists themselves are independent. Measured example: adding the
@@ -40,15 +45,9 @@ import sys
 # from prompt-budget, because closure-budget is consulted first. Net score
 # stays 40. Adding "closure" instead fixes c1 alone and scores 60.
 #
-# This is kept because it is what a real keyword table does, and because the
-# loop already handles it: 40 -> 40 is judged `unfulfilled` against a declared
-# score_increase, the reason lands in failure_history, and the seed retries.
-#
-# It is written down here for one reason. If P0-a shows no gradient across
-# three cycles, the H1 falsification clause says to change model tier or
-# change the ruler. Before concluding that, CHECK FOR THIS: a run that keeps
-# landing on the coupled fix is an apparatus trap, not evidence about the
-# seed. Diagnose by reading which keyword the candidate added.
+# The baseline is intentionally retained to give the seed a visible,
+# reproducible gradient. The successful A4 contract is the root-cause rule
+# above, not preservation of dictionary order.
 KEYWORD_TABLE = {
     "protected-path": [
         "substrate/", "soil/", "state/", "vault",

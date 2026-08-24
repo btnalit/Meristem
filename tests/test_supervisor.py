@@ -51,7 +51,7 @@ class ModelGatewayEntrypointShapeTests(unittest.TestCase):
         self.assertEqual(parts[0], sys.executable)
         gateway_path = Path(" ".join(parts[1:]))
         self.assertTrue(gateway_path.is_absolute())
-        self.assertEqual(gateway_path, REPO / "substrate" / "model_gateway.py")
+        self.assertEqual(gateway_path, REPO / "substrate" / "model_gateway_client.py")
         self.assertTrue(gateway_path.is_file())
 
 
@@ -87,7 +87,9 @@ class SeedCandidateInjectsGatewayVarTests(unittest.TestCase):
 
             worktree = None
             try:
-                with mock.patch("substrate.supervisor.subprocess.run", side_effect=fake_run):
+                fake_gateway = SimpleNamespace(poll=lambda: 0)
+                with mock.patch("substrate.supervisor._start_model_gateway", return_value=fake_gateway), \
+                     mock.patch("substrate.supervisor.subprocess.run", side_effect=fake_run):
                     _commit, worktree = supervisor._seed_candidate(repo, ctx, task)
             finally:
                 if worktree is not None:
@@ -96,13 +98,14 @@ class SeedCandidateInjectsGatewayVarTests(unittest.TestCase):
         self.assertEqual(len(captured), 1, "expected exactly one non-git subprocess call")
         env = captured[0]
         self.assertIn("MERISTEM_MODEL_GATEWAY", env)
-        self.assertEqual(env["MERISTEM_MODEL_GATEWAY"], supervisor.MODEL_GATEWAY_ENTRYPOINT)
+        self.assertIn("/tmp/meristem-worker-", env["MERISTEM_MODEL_GATEWAY"])
+        self.assertTrue(env["MERISTEM_MODEL_GATEWAY"].endswith("/substrate/model_gateway_client.py"))
         # The seed's own model-key/vault secrets must still be absent --
         # this fix must not have widened the env beyond the one new key.
         self.assertNotIn("MERISTEM_VAULT", env)
         self.assertNotIn("SENSENOVA_API_KEY", env)
 
-    def test_seed_receives_credential_pointer_but_not_credential_value(self):
+    def test_seed_receives_socket_only_not_credential_pointer(self):
         real_run = subprocess.run
         captured = []
 
@@ -128,7 +131,9 @@ class SeedCandidateInjectsGatewayVarTests(unittest.TestCase):
             task = SimpleNamespace(task_id="t1")
             worktree = None
             try:
-                with mock.patch("substrate.supervisor.subprocess.run", side_effect=fake_run):
+                fake_gateway = SimpleNamespace(poll=lambda: 0)
+                with mock.patch("substrate.supervisor._start_model_gateway", return_value=fake_gateway), \
+                     mock.patch("substrate.supervisor.subprocess.run", side_effect=fake_run):
                     _commit, worktree = supervisor._seed_candidate(repo, ctx, task)
             finally:
                 if worktree is not None:
@@ -136,8 +141,78 @@ class SeedCandidateInjectsGatewayVarTests(unittest.TestCase):
 
         self.assertEqual(len(captured), 1)
         env = captured[0]
-        self.assertEqual(env["MERISTEM_CREDENTIALS_FILE"], "/soil/provider.key")
+        self.assertIn("MERISTEM_MODEL_SOCKET", env)
+        self.assertNotIn("MERISTEM_CREDENTIALS_FILE", env)
         self.assertNotIn("SENSENOVA_API_KEY", env)
+
+
+class WorkerSurfaceIsolationTests(unittest.TestCase):
+    def test_worker_surface_has_no_soil_state_vault_or_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            for rel in ("meristem", "body/organs", "seed", "soil", "state", "vault", ".git"):
+                (source / rel).mkdir(parents=True, exist_ok=True)
+            (source / "soil/model-policy.toml").write_text("private", encoding="utf-8")
+            (source / "state/soil-ledger.jsonl").write_text("private", encoding="utf-8")
+            (source / "vault/secret").write_text("private", encoding="utf-8")
+            (source / "body/organs/a.py").write_text("old", encoding="utf-8")
+            worker = Path(tmp) / "worker"
+            supervisor._copy_worker_surface(source, worker)
+            self.assertFalse((worker / "soil").exists())
+            self.assertFalse((worker / "state").exists())
+            self.assertFalse((worker / "vault").exists())
+            self.assertFalse((worker / ".git").exists())
+            self.assertTrue((worker / "body/organs/a.py").is_file())
+
+    def test_worker_surface_rejects_nested_symlink_before_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            (source / "meristem").mkdir(parents=True)
+            (source / "body/organs").mkdir(parents=True)
+            (source / "seed").mkdir()
+            (source / "soil").mkdir()
+            (source / "soil/secret").write_text("private", encoding="utf-8")
+            try:
+                (source / "seed/leak").symlink_to(source / "soil", target_is_directory=True)
+            except OSError:
+                self.skipTest("platform does not permit symlink creation")
+            with self.assertRaises(OSError):
+                supervisor._copy_worker_surface(source, Path(tmp) / "worker")
+
+    def test_recovery_only_copies_declared_worker_writable_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = Path(tmp) / "worker"
+            worktree = Path(tmp) / "worktree"
+            (worker / "body/organs").mkdir(parents=True)
+            (worker / "soil").mkdir()
+            (worker / "body/organs/a.py").write_text("new", encoding="utf-8")
+            (worker / "soil/model-policy.toml").write_text("attack", encoding="utf-8")
+            (worktree / "body/organs").mkdir(parents=True)
+            (worktree / "soil").mkdir()
+            (worktree / "body/organs/a.py").write_text("old", encoding="utf-8")
+            (worktree / "soil/model-policy.toml").write_text("private", encoding="utf-8")
+            changed = supervisor._recover_worker_changes(worker, worktree)
+            self.assertEqual(changed, ["body/organs/a.py"])
+            self.assertEqual((worktree / "body/organs/a.py").read_text(), "new")
+            self.assertEqual((worktree / "soil/model-policy.toml").read_text(), "private")
+            (worker / "body/organs/a.py").unlink()
+            changed = supervisor._recover_worker_changes(worker, worktree)
+            self.assertEqual(changed, ["body/organs/a.py"])
+            self.assertFalse((worktree / "body/organs/a.py").exists())
+
+    def test_recovery_rejects_target_symlink_before_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = Path(tmp) / "worker"
+            worktree = Path(tmp) / "worktree"
+            (worker / "body/organs").mkdir(parents=True)
+            (worktree / "body/organs").mkdir(parents=True)
+            outside = Path(tmp) / "outside.txt"
+            outside.write_text("private", encoding="utf-8")
+            (worktree / "body/organs/x").symlink_to(outside)
+            (worker / "body/organs/x").write_text("attack", encoding="utf-8")
+            with self.assertRaises(OSError):
+                supervisor._recover_worker_changes(worker, worktree)
+            self.assertEqual(outside.read_text(), "private")
 
 
 if __name__ == "__main__":
