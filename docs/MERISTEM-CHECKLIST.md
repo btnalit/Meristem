@@ -1113,6 +1113,57 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 
 ---
 
+### 2026-08-24 · P0-a 波次 15：OpenAI SDK soil transport 三供应商验证
+
+按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
+`openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem
+soil 自己控制。
+
+新增：
+
+```text
+requirements.txt
+substrate/provider_client.py
+soil/model-policies/agnes-temporary.toml
+```
+
+Agnes 官方文档确认 Chat Completions 与当前接口兼容：
+
+```text
+https://apihub.agnes-ai.com/v1/chat/completions
+agnes-2.5-flash
+agnes-2.0-flash
+Authorization: Bearer
+```
+
+真实 gateway + SDK 矩阵（独立 cycle）：
+
+```text
+OpenRouter / poolside/laguna-s-2.1:free / cycle 990001：allowed，content length 3
+SenseNova / glm-5.2 / cycle 990002：allowed，content length 2
+Agnes / agnes-2.5-flash / cycle 990003：allowed，content length 4
+```
+
+三者均真实通过：
+
+```text
+worker request → Unix socket → soil gateway → OpenAI SDK → provider → 有限 ABI
+```
+
+单元/全量验证：
+
+```text
+provider SDK/gateway tests：通过
+全量：241 passed, 3 skipped, 71 subtests passed
+compileall：通过
+git diff --check：通过
+```
+
+Agnes mode 仅作为额外实验/备用 mode，不改变正式 OpenRouter 或 SenseNova 选择；Agnes 与同血统审查模型
+的独立性限制仍需在 H1 之前单独记录为实验边界。阶段 3/4 的正式继续运行等待本波次独立审计后执行。
+
+---
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash

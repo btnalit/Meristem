@@ -1,0 +1,4 @@
+# Soil-owned provider transport dependency.
+# Keep SDK retries disabled in substrate/provider_client.py; Meristem owns retry,
+# budget, telemetry, and the worker-visible ABI.
+openai==2.54.0

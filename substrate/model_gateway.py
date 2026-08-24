@@ -42,18 +42,18 @@ import pwd
 import stat
 import sys
 import tomllib
-import urllib.error
-import urllib.request
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from substrate import budget as _budget  # noqa: E402
+from substrate import provider_client as _provider_client  # noqa: E402
 
 POLICY_DIR = REPO / "soil" / "model-policies"
 DEFAULT_EXECUTION_MODE = "openrouter-free"
-EXECUTION_MODES = frozenset({"openrouter-free", "sensenova"})
+EXECUTION_MODES = frozenset({"openrouter-free", "sensenova", "agnes-temporary"})
 
 
 def execution_mode(mode: str | None = None) -> str:
@@ -163,12 +163,11 @@ def _credential_value(slot: dict) -> str | None:
 
 def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
                    before_attempt=None, on_attempt=None) -> tuple[str, str | None, str | None]:
-    """provider 调用的唯一入口。返回 `(status, content, reason)`。
+    """Call one OpenAI-compatible provider through the soil-owned SDK seam.
 
-    **本环境没有凭据，也不能编一个。** 这不是「没写完的占位符」——是这道缝
-    故意留白：拿到真实凭据之前，唯一诚实的行为就是在发出任何网络请求之前
-    fail closed，而不是假装调用成功后编一段回复（造假响应）。凭据缺失时
-    整个函数在联网之前就返回，下面的 HTTP 代码在本仓库的测试里从未被真正执行过。
+    The SDK performs exactly one request (`max_retries=0`); this function owns
+    retry classification, budget callbacks, and the worker-visible three-state
+    result.
     """
     api_key = _credential_value(slot)
     if not api_key:
@@ -186,43 +185,30 @@ def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
         if on_attempt is not None:
             on_attempt(attempt + 1)
 
-        # 真正的 provider 调用：OpenAI 兼容的 chat/completions（三个槽位的
-        # base_url 都是这个形状）。**只用 stdlib**——仓库里没有任何第三方依赖声明
-        # （无 requirements.txt / pyproject.toml），不该由这一个模块悄悄引入一个。
-        url = str(slot.get("base_url", "")).rstrip("/") + "/chat/completions"
-        body = json.dumps({
-            "model": slot.get("model"),
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": slot.get("max_tokens", 4096),
-            "temperature": slot.get("temperature", 0.0),
-        }).encode("utf-8")
-        request = urllib.request.Request(url, data=body, method="POST", headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        })
-        try:
-            with urllib.request.urlopen(request, timeout=slot.get("timeout", 60)) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            # 429：土壤按 policy 退避；种子只看到最终 deferred，不看到等待节奏。
-            if exc.code == 429:
-                if attempt + 1 >= max_attempts:
-                    return "deferred", None, "rate_limited"
-                import time
+        result = _provider_client.chat_once(
+            base_url=str(slot.get("base_url", "")).rstrip("/"),
+            api_key=api_key,
+            model=str(slot.get("model", "")),
+            prompt=prompt,
+            max_tokens=int(slot.get("max_tokens", 4096)),
+            temperature=float(slot.get("temperature", 0.0)),
+            timeout=float(slot.get("timeout", 60)),
+        )
+        if result.ok:
+            return "allowed", result.content, None
+        if result.error_kind == "rate_limited":
+            if attempt + 1 >= max_attempts:
+                return "deferred", None, "rate_limited"
+            time.sleep(backoff[min(attempt, len(backoff) - 1)])
+            continue
+        if result.error_kind == "connection_error":
+            if retry is not None and attempt + 1 < max_attempts:
                 time.sleep(backoff[min(attempt, len(backoff) - 1)])
                 continue
             return "refused", None, "provider_error"
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-            return "refused", None, "provider_error"
-
-        try:
-            content = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
+        if result.error_kind == "bad_response":
             return "refused", None, "provider_bad_response"
-        if not isinstance(content, str) or not content.strip():
-            # 空 content 不算一次可用的 allowed。
-            return "refused", None, "provider_bad_response"
-        return "allowed", content, None
+        return "refused", None, "provider_error"
 
     return "deferred", None, "rate_limited"
 

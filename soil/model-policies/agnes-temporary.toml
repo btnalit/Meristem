@@ -1,0 +1,109 @@
+# 土壤私有的模型策略。种子不可读、不可写（§16 权威矩阵：Seed 读 ✗ / Seed 写 ✗）。
+#
+# 由 v3.1 的 control/models.toml 拆出（§13.2）。拆分的红线是 §8.1.3：
+#   soil/model-policy.toml   预算、配额、review 槽位与血统、endpoint、retry
+#   seed/model-interface.json 哪些角色可用；**不含任何配额数字**
+#
+# 为什么配额数字不能给种子看：否则它可以通过挑角色、改 retry、卡窗口来影响选择压力。
+# 种子从接口只能知道一次调用的结果：allowed / refused / deferred。
+#
+# NO KEYS IN THIS FILE, EVER. 只写环境变量的名字。
+#
+# ---------------------------------------------------------------------------
+# 对这个 endpoint 的实测事实（v3.1 400 拍里付过学费的部分，逐条保留）：
+#
+#   * 这里全部是 REASONING 模型。思维链与答案共用同一预算，因此 max_tokens 收紧会
+#     返回 HTTP 200 但 content 为空。max_tokens 必须给足。
+#     SenseNova 把思维链放在 `reasoning`，DeepSeek 放在 `reasoning_content`。
+#   * 这里的 429 意思是请求速率**爬升过快**，不是配额用尽，约 15s 自行清除。
+#     调用方须节流并按 15/30/60s 退避。
+#   * `sensenova-u1-fast` 文档里有，但此 endpoint 返回 "model is not found"。不路由。
+#   * 配额按**调用次数**计，不按 token 计——所以起约束作用的是 calls 上限，
+#     usd_* 恒为 0，USD 上限是一条不会响的皮带。
+#
+# 配额：sensenova-6.8-flash-lite 1500/5h；deepseek-v4-flash 500/5h；glm-5.2 500/5h。
+# ---------------------------------------------------------------------------
+
+[budget]
+# I1（§5）：任何计数若单调递增且封顶，必须带滚动窗口或退役机制。
+#
+# **v3.1 的 `campaign_calls = 1000` 已删除，不得复活。** 它是全时段累计计数：撞顶之后
+# check() 在每次变异和每次反思抛错 —— 循环死锁，而唯一能修这道门的人被锁在门外（S7 实证）。
+# 这是 v5 把预算执行整体移入土壤的直接原因（§3.3）。
+window_cycles = 12          # 一切配额以此滚动窗口计；与 §17.2 Metric Registry 的窗口一致
+
+# 单拍上限。v3.1 实测 38 个真实 cycle：一拍 1–6 次调用，中位 3。
+# 旧上限 40 是观测最大值的 ~7 倍 —— 那不是上限，是一个永远不会响的数（P-006 记过同一缺陷）。
+calls_per_cycle = 12
+
+# 滚动窗口上限。**当前取 window_cycles × calls_per_cycle 的恒等值，即不施加
+# 超出单拍上限之外的额外约束** —— 因为 v5 尚无真实数据可据以收紧。
+# P0-a 产出真实调用分布后必须重新标定；在那之前，诚实的说法是「这道门还没有校准」，
+# 而不是假装它已经在防什么。
+calls_per_window = 144
+
+# 配额按调用次数计，USD 上限恒不触发（见抬头实测）。保留字段只为让越界可见。
+cycle_usd  = 1.0
+window_usd = 25.0
+
+[retry]
+backoff_seconds = [15, 30, 60]   # 对应 429 的自清除时间
+max_attempts    = 4
+
+# ---------------------------------------------------------------------------
+# 角色。v5 只保留两个：
+#
+#   mutate  种子经土壤 IPC 请求（§10.1 llm.py）——种子侧唯一能触发的角色
+#   review  土壤的评审面板（S4）。P0-a 判决位坐的是人（manual_prompt），
+#           P0-b 才把它换成真 panel；槽位配置先在此就位。
+#
+# **v3.1 的 score 与 escalate 角色不再存在**：
+#   score    v5 的探针判定是声明式的，由 substrate/probe_runner.py 确定性解释（§8.1.1），
+#            不再调模型打分 —— 这正是「量尺不可被模型的当天状态左右」的实现。
+#   escalate Tier C 专用，v3.1 自己也标注「Not used in P0」。
+# ---------------------------------------------------------------------------
+
+# 能力关键角色：读整个种子树，返回完整替换文件。
+# Agnes temporary experiment profile: OpenAI-compatible Chat Completions
+# routed through the soil-owned OpenAI SDK transport.
+# **写**多少，不在能读多少。
+# 槽位按顺序尝试：配额是某一个模型的属性，不是这项能力的属性；免费模型限流时，
+# 真实观测必须记录为 deferred，而不能伪装成成功或把 provider 细节透给种子。
+[[roles.mutate.slots]]
+id = "mutate:agnes-2.5-flash"
+lineage = "agnes"
+base_url = "https://apihub.agnes-ai.com/v1"
+model = "agnes-2.5-flash"
+credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
+temperature = 0.2
+max_tokens = 32000
+timeout = 900
+
+# 当前不配置 mutate 回退。评审模型不参与 mutation，避免同一模型既是作者又是裁判，
+# 把面板独立性坍缩进单一血统（P-029）。
+
+# 评审员优化的是**失败的独立性**，不是模型数量。
+# 这里有三个家族，变异用掉其中一个。把变异者自己的家族路由成评审员，是可选项里
+# **最差**的一个——那个模型推理上的盲区会同时出现在闸门两侧。
+# 所以评审跑两个异构家族，法定人数即 2/2：全票。比一个包含作者血统的 2-of-3 更严。
+#
+# **评审槽位刻意不做回退**：替换一个评审员，就把独立性坍缩成「谁答得上来算谁的」。
+[[roles.review.slots]]
+id = "review:agnes-2.5-flash"
+lineage = "agnes"
+base_url = "https://apihub.agnes-ai.com/v1"
+model = "agnes-2.5-flash"
+credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
+temperature = 0.0
+max_tokens = 16000
+timeout = 600
+
+[[roles.review.slots]]
+id = "review:agnes-2.0-flash"
+lineage = "agnes"
+base_url = "https://apihub.agnes-ai.com/v1"
+model = "agnes-2.0-flash"
+credentials_file_env = "MERISTEM_CREDENTIALS_FILE"
+temperature = 0.0
+max_tokens = 16000
+timeout = 600

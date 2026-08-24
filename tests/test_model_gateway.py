@@ -31,6 +31,7 @@ from substrate import budget  # noqa: E402
 from substrate import model_gateway  # noqa: E402
 from meristem import llm  # noqa: E402
 from substrate import model_gateway_client  # noqa: E402
+from substrate.provider_client import ProviderResult  # noqa: E402
 
 
 def _policy(*, calls_per_cycle=100, window_cycles=2, calls_per_window=100,
@@ -74,11 +75,11 @@ class HandleBasicShapeTests(unittest.TestCase):
 
 class ModelGatewayTests(unittest.TestCase):
     def test_provider_telemetry_is_separate_from_budget_call_ledger(self):
-        body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.dict(os.environ, {"MERISTEM_TEST_UNSET_KEY": "fake-key-for-test",
                                            "MERISTEM_MODEL_MODE": "openrouter-free"}), \
-             mock.patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(body)):
+             mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(content="ok")):
             calls = Path(tmp) / "soil-model-calls.jsonl"
             resp = model_gateway.handle({"role": "mutate", "prompt": "x"},
                                         policy=_policy(), calls_ledger=calls, cycle=7)
@@ -98,6 +99,10 @@ class ModelGatewayTests(unittest.TestCase):
         self.assertEqual(
             model_gateway.policy_path_for_mode("sensenova").name,
             "sensenova.toml",
+        )
+        self.assertEqual(
+            model_gateway.policy_path_for_mode("agnes-temporary").name,
+            "agnes-temporary.toml",
         )
         with self.assertRaises(ValueError):
             model_gateway.policy_path_for_mode("../leak")
@@ -254,13 +259,11 @@ class BudgetGatingUsesTheDedicatedModuleTests(unittest.TestCase):
             self.assertEqual(resp, {"status": "refused", "reason": "budget"})
 
     def test_retry_attempts_are_each_recorded_and_budget_can_stop_them(self):
-        import urllib.error
         os.environ["MERISTEM_TEST_UNSET_KEY"] = "fake-key-for-test"
         self.addCleanup(os.environ.pop, "MERISTEM_TEST_UNSET_KEY", None)
-        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
-                                     "Too Many Requests", hdrs=None, fp=None)
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch("urllib.request.urlopen", side_effect=err) as urlopen, \
+             mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(error_kind="rate_limited")) as client, \
              mock.patch("time.sleep"):
             ledger = Path(tmp) / "soil-model-calls.jsonl"
             policy = _policy(calls_per_cycle=2, calls_per_window=2)
@@ -268,7 +271,7 @@ class BudgetGatingUsesTheDedicatedModuleTests(unittest.TestCase):
             resp = model_gateway.handle({"role": "mutate", "prompt": "x"},
                                         policy=policy, calls_ledger=ledger, cycle=1)
             self.assertEqual(resp, {"status": "refused", "reason": "budget"})
-            self.assertEqual(urlopen.call_count, 2)
+            self.assertEqual(client.call_count, 2)
             self.assertEqual(len(budget.ModelCallLedger(ledger).read()), 2)
 
 
@@ -306,63 +309,57 @@ class CallProviderSeamWithMockedTransportTests(unittest.TestCase):
         self.addCleanup(self._patcher.stop)
 
     def test_successful_response_is_mapped_to_allowed_with_content(self):
-        body = json.dumps({"choices": [{"message": {"content": "hello back"}}]}).encode()
-        with mock.patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(body)):
+        with mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(content="hello back")):
             status, content, reason = model_gateway._call_provider(self.SLOT, "hi")
         self.assertEqual((status, content, reason), ("allowed", "hello back", None))
 
     def test_empty_content_is_refused_not_allowed(self):
         """soil/model-policy.toml's own documented gotcha: a too-tight
         max_tokens can yield HTTP 200 with an empty content string."""
-        body = json.dumps({"choices": [{"message": {"content": ""}}]}).encode()
-        with mock.patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(body)):
+        with mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(error_kind="bad_response")):
             status, content, reason = model_gateway._call_provider(self.SLOT, "hi")
         self.assertEqual(status, "refused")
         self.assertEqual(reason, "provider_bad_response")
 
     def test_malformed_response_shape_is_refused_not_crashes(self):
-        body = json.dumps({"unexpected": "shape"}).encode()
-        with mock.patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(body)):
+        with mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(error_kind="bad_response")):
             status, content, reason = model_gateway._call_provider(self.SLOT, "hi")
         self.assertEqual((status, reason), ("refused", "provider_bad_response"))
 
     def test_http_429_is_deferred_not_refused(self):
-        import urllib.error
-        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
-                                     "Too Many Requests", hdrs=None, fp=None)
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(error_kind="rate_limited")):
             status, content, reason = model_gateway._call_provider(self.SLOT, "hi")
         self.assertEqual((status, reason), ("deferred", "rate_limited"))
 
     def test_http_429_retries_using_soil_policy_then_allows(self):
-        import urllib.error
-        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
-                                     "Too Many Requests", hdrs=None, fp=None)
-        body = json.dumps({"choices": [{"message": {"content": "allowed"}}]}).encode()
-        with mock.patch("urllib.request.urlopen", side_effect=[err, err, _FakeHTTPResponse(body)]) as urlopen, \
+        with mock.patch("substrate.provider_client.chat_once",
+                        side_effect=[ProviderResult(error_kind="rate_limited"),
+                                     ProviderResult(error_kind="rate_limited"),
+                                     ProviderResult(content="allowed")]) as client, \
              mock.patch("time.sleep") as sleep:
             status, content, reason = model_gateway._call_provider(
                 self.SLOT, "hi", retry={"backoff_seconds": [15, 30, 60], "max_attempts": 4})
         self.assertEqual((status, content, reason), ("allowed", "allowed", None))
-        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(client.call_count, 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [15, 30])
 
     def test_http_429_stops_after_declared_max_attempts(self):
-        import urllib.error
-        err = urllib.error.HTTPError("https://example.invalid/v1/chat/completions", 429,
-                                     "Too Many Requests", hdrs=None, fp=None)
-        with mock.patch("urllib.request.urlopen", side_effect=err) as urlopen, \
+        with mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(error_kind="rate_limited")) as client, \
              mock.patch("time.sleep") as sleep:
             status, content, reason = model_gateway._call_provider(
                 self.SLOT, "hi", retry={"backoff_seconds": [15, 30, 60], "max_attempts": 4})
         self.assertEqual((status, content, reason), ("deferred", None, "rate_limited"))
-        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual(client.call_count, 4)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [15, 30, 60])
 
     def test_network_error_is_refused_not_crashes(self):
-        import urllib.error
-        with mock.patch("urllib.request.urlopen",
-                        side_effect=urllib.error.URLError("connection refused")):
+        with mock.patch("substrate.provider_client.chat_once",
+                        return_value=ProviderResult(error_kind="connection_error")):
             status, content, reason = model_gateway._call_provider(self.SLOT, "hi")
         self.assertEqual((status, reason), ("refused", "provider_error"))
 
