@@ -1106,8 +1106,8 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 
 ```text
 阶段 2：OpenRouter 临时 laguna smoke 通过；SenseNova 仍 blocked（rate_limited）
-阶段 3：Agnes 单圈 manual-cycle 已真实执行；provider 调用阶段可达，但 seed exit=1、未产出 candidate，输出尾部为 `logout`；未进入 recovery/promotion，因此阶段 3 未通过
-阶段 4：Agnes stability observation 已完成 3 次：cycle=991001/991002/991003 均 gateway started、allowed、content 非空（各 length=4）；provider transport 稳定性通过，但不等于 mutation 能力通过
+阶段 3：Agnes 首次 manual-cycle 曾因旧 parser 丢弃非裸 JSON 而未产出 candidate；提交 `73a141e` 后，Agnes mutation slot 增加 `response_format=json_object`，最新完整 manual-cycle（soil_cycle=17）已生成 candidate `4f7f63aaba7a9e407ca76c3efcdf2853355ef2d9` 并完成 measurement，但 primary probe before=40.0、after=40.0、delta=0.0 < minimum_delta=20.0，最终 `UNFULFILLED`；未计入 H1 进步
+阶段 4：Agnes stability observation 已完成 3 次 provider smoke（991001/991002/991003 均 allowed）；结构化输出修复后的完整 candidate stability observation 也通过：soil_cycle=18/19/20 分别生成 candidate `129acd2f6bbd`、`b4718247ef5e`、`4c24d8fccf95`，均未进入 recovery/promotion
 阶段 5：继续冻结，不启动 H1
 
 修复仅接受完整 JSON code fence，不接受任意解释文本或 brace 截取。修复必须提交后才会进入 supervisor 创建的 HEAD-based worker worktree。
