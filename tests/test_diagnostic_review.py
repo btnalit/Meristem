@@ -19,6 +19,13 @@ class DiagnosticReviewTests(unittest.TestCase):
         self.assertEqual(result["diagnosis_class"], "repeated_strategy_no_effect")
         self.assertIn("strategy", result["next_experiment_constraint"])
 
+    def test_zero_delta_requires_new_classifier_rule(self):
+        result = diagnose_failure(
+            failure_class="delta_below_threshold",
+            changed_paths=["body/organs/classifier/run.py"])
+        self.assertEqual(result["mechanism_status"], "healthy")
+        self.assertIn("classifier decision rule", result["next_experiment_constraint"])
+
     def test_mechanism_failure_is_not_model_failure(self):
         result = diagnose_failure(failure_class="provider_error", changed_paths=[])
         self.assertEqual(result["mechanism_status"], "unhealthy")

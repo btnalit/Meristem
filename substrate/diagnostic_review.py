@@ -18,6 +18,10 @@ def diagnose_failure(*, failure_class: str, changed_paths: list[str],
         diagnosis = "model_or_strategy_failure"
         mechanism = "healthy"
         constraint = "return syntactically valid Python before changing strategy"
+    elif failure_class == "delta_below_threshold":
+        diagnosis = "model_or_strategy_failure"
+        mechanism = "healthy"
+        constraint = "change the classifier decision rule and target a falsifiable primary-probe improvement"
     elif repeated_strategy and delta == 0.0:
         diagnosis = "repeated_strategy_no_effect"
         mechanism = "healthy"

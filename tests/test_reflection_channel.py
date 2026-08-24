@@ -4,7 +4,14 @@ from substrate.reflection import build_reflection
 
 
 class ReflectionTests(unittest.TestCase):
-    def test_syntax_failure_requires_compile_safe_next_strategy(self):
+    def test_zero_delta_requires_primary_probe_change(self):
+        result = build_reflection({"recent_attempts": [
+            {"soil_cycle": 35, "reason": "delta_below_threshold",
+             "delta": 0.0, "attempt_id": "att-1"}
+        ], "source_attempt_ids": ["att-1"]})
+        self.assertEqual(result["hypothesis"], "candidate_is_valid_but_primary_probe_delta_is_zero")
+        self.assertIn("primary-probe improvement", result["next_strategy"])
+
         result = build_reflection({"recent_attempts": [
             {"soil_cycle": 34, "reason": "syntax_failure", "attempt_id": "att-1"}
         ], "source_attempt_ids": ["att-1"], "source_ledger_tail_hash": "hash"})
