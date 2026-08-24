@@ -593,8 +593,17 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
                 "soil_cycle": ctx.soil_cycle,
                 "calibration": False,      # 校准强制回滚，永不到达此处（§12.0.1）
                 "counts_as_progress": True})
-            ctx.ledger.append({"kind": "promotion_committed", "attempt_id": ctx.attempt_id,
-                               "commit": commit})
+            ctx.ledger.append({"kind": "promotion_committed",
+                               "attempt_id": ctx.attempt_id,
+                               "source": oid,
+                               "commit": commit,
+                               "parent": parent,
+                               "task_id": task.task_id,
+                               "primary_probe": task.primary_probe,
+                               "generation": ctx.generation,
+                               "soil_cycle": ctx.soil_cycle,
+                               "calibration": False,
+                               "counts_as_progress": True})
             return Outcome.PROMOTED
 
 
@@ -656,8 +665,10 @@ def reconcile_on_start(repo, ctx) -> list:
     # 同一次晋升被 §1.2 的判据数成两次点火。CA-10 抓不到它（它只验每条 accepted
     # 都有配对的 intent/committed/scoreboard，**从不验基数**），
     # 而那个数字是整个 P0-a 的唯一出口。
-    accepted_keys = {(r.get("source"), r.get("attempt_id"), r.get("commit"))
-                     for r in rows if r.get("kind") == "accepted_fitness"}
+    accepted_by_key = {
+        (r.get("source"), r.get("attempt_id"), r.get("commit")): r
+        for r in rows if r.get("kind") == "accepted_fitness"
+    }
     by_id = {r.get("event_id"): r for r in rows}
     resolved = []
 
@@ -681,11 +692,21 @@ def reconcile_on_start(repo, ctx) -> list:
                     quota=False, commit=commit)))
                 continue
 
-            if (source, intent.get("attempt_id"), commit) in accepted_keys:
+            accepted_key = (source, intent.get("attempt_id"), commit)
+            if accepted_key in accepted_by_key:
                 # accepted_fitness 已经写过了，缺的只是收尾那一条。**只补收尾。**
+                accepted_event = accepted_by_key[accepted_key]
                 ctx.ledger.append({"kind": "promotion_committed",
                                "attempt_id": intent.get("attempt_id"),
-                               "commit": commit})
+                               "source": source,
+                               "commit": commit,
+                               "parent": intent.get("parent"),
+                               "task_id": accepted_event.get("task_id"),
+                               "primary_probe": accepted_event.get("primary_probe"),
+                               "generation": accepted_event.get("generation"),
+                               "soil_cycle": accepted_event.get("soil_cycle"),
+                               "calibration": False,
+                               "counts_as_progress": True})
                 committed.add((intent.get("attempt_id"), commit))
                 resolved.append((commit, Outcome.PROMOTED))
                 continue
@@ -725,10 +746,26 @@ def reconcile_on_start(repo, ctx) -> list:
                 "counts_as_progress": True})
             ctx.ledger.append({"kind": "promotion_committed",
                                "attempt_id": observed_event.get("attempt_id"),
-                               "commit": commit})
+                               "source": source,
+                               "commit": commit,
+                               "parent": intent.get("parent"),
+                               "task_id": observed_event["task_id"],
+                               "primary_probe": observed_event["primary_probe"],
+                               "generation": observed_event["generation"],
+                               "soil_cycle": observed_event["soil_cycle"],
+                               "calibration": False,
+                               "counts_as_progress": True})
             # 本次调用内新写的事实要立刻并进账本快照，否则同一批里的第二条
             # intent 会对着一份过期快照重跑同样的补写。
-            accepted_keys.add((source, intent.get("attempt_id"), commit))
+            accepted_by_key[(source, intent.get("attempt_id"), commit)] = {
+                "source": source,
+                "attempt_id": intent.get("attempt_id"),
+                "commit": commit,
+                "task_id": observed_event.get("task_id"),
+                "primary_probe": observed_event.get("primary_probe"),
+                "generation": observed_event.get("generation"),
+                "soil_cycle": observed_event.get("soil_cycle"),
+            }
             committed.add((observed_event.get("attempt_id"), commit))
             resolved.append((commit, Outcome.PROMOTED))
     return resolved

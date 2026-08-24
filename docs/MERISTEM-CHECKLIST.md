@@ -36,7 +36,7 @@
 | v5 实现 · P0-a 波次 1 | **已落地**：种子脊柱 6 模块 · `probe_runner` · `fitness` · 点火 organ · 权威矩阵 · SA/CA 断言集 | `meristem/` `substrate/` `body/organs/classifier/` `tests/ci/` |
 | v5 实现 · P0-a 波次 2 | **已落地并在服务器验证**：`pipeline.py` · `soil_state.py` · `manual-cycle` / `ignition-status` · C6 worker 隔离 · anchor 接线 · freeze-probe | `main` `b537c93` |
 | v5 实现 · P0-a 波次 3 | **已落地并推送**：mutation closure · credential file pointer · gateway timeout 1200s · 429 retry | `main` `972afb6` |
-| **P0-a 是否可跑通一圈** | **尚未宣称可跑**：代码/测试闭环已具备，但真实 provider allowed、模型产出候选、anchor 非 calibration 晋升尚未实测 | 见本文件最新任务记录 |
+| **P0-a 是否可跑通一圈** | **已通过**：Agnes soil-autonomous cycle50 真实 provider allowed、candidate、anchor 非 calibration measurement、完整 promotion transaction 与 `ignition-status=1` 已回读；H1 仍待 owner 决策 | 见本文件 2026-08-25 最新任务记录 |
 
 > **这张表 2026-08-23 之前有三行是陈旧的**（规格写 v5.8、清盘写「待合并」、实现写「未开工」），
 > 而那时 P0-a 波次 1 的 5 个 commit 早已在 main 上。
@@ -1371,6 +1371,49 @@ ignition events=0
 Agnes 的真实 allowed、candidate 与 stability observation 证据见前述波次记录；正式 Agnes-primary P0-a 需在 mode-specific policy loading 修复并重新审查后单独运行。
 
 结论：Agnes 主模式配置已进入待审查工作树，但正式 P0-a 尚未因 provider deferred 产生 candidate；H1 继续 frozen。
+
+### 2026-08-25 · Agnes 主模式正式 P0-a acceptance
+
+在完成 mode-specific policy loading 修复、默认 task identity 修复、文档同步并通过独立审查后，使用正式：
+
+```text
+MERISTEM_MODEL_MODE=agnes-temporary
+manual-cycle --autonomous --task soil/p0a-task-h1.json
+```
+
+真实回读：
+
+```text
+soil_cycle=50
+provider=agnes-temporary / agnes-2.5-flash / allowed
+candidate=15f3874cb49163ed47bd5c314dc7d655b15f2dfd
+primary=40.0→60.0
+anchor=20.0→20.0
+```
+
+promotion transaction 完整闭合：
+
+```text
+observed_fitness
+→ promotion_intent (verdict_authority=soil-autonomous)
+→ merge
+→ accepted_fitness
+→ promotion_committed
+```
+
+运行态回读：
+
+```text
+promotion_count=1
+accepted_fitness=1
+promotion_committed=1
+ignition events=1
+H1=frozen
+```
+
+达到 P0-a `ignition-status >= 1` 后按边界停止，没有继续运行第二、第三圈。credential 临时文件已清理，worker 未获得 key 或 credential pointer。该证据已进入正式 runtime ledger，但 H1 开关仍需最终独立审查和 owner 决策。
+
+真实 accepted 后 CA-2 首次回读发现新建 `state/soil-scoreboard.jsonl` 曾为 `root:root`；按既有部署契约执行 `substrate/deploy-permissions.sh` 后恢复为 `soil:soil 0600`。部署自检 `isolation=enforced`，全量回归重新通过：`293 passed, 2 skipped, 71 subtests passed`。
 
 ---
 

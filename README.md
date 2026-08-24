@@ -36,9 +36,9 @@ impossible to produce**, and the system reported progress anyway.
 | `soil/report_renderer.py` | not implemented |
 | **organ filesystem/network isolation (§15.6 C6, P0-a tier)** | **implemented and verified on the server** — `worker` UID, no supplementary groups, private netns, isolated organ copy; `SECURITY_ASSURANCE=FULL`. Falls back to a loudly-reported `best_effort` where the host cannot enforce it |
 | calibration control group (§12.0.1) | **run on the server: 40.0 → 60.0, `improved`** — the apparatus measures |
-| **full P0-a loop (three cycles, H1)** | **blocked** |
+| **full P0-a loop (bounded, H1)** | **P0-a acceptance reached in one Agnes autonomous cycle; H1 owner decision pending** |
 
-**Current runtime snapshot (2026-08-24):** cycles 41–43 were completed on fresh task `b69b6f74d77fa935`; cycle43 measured primary `40→60` and anchor `20→40`, but preflight intentionally produced no promotion. `accepted_fitness=0`, ignition events `=0`, and H1 remains frozen. Runtime projections and manifest are deployment state and are intentionally ignored by Git.
+**Current runtime snapshot (2026-08-25):** task `948d2c0b3aec5b81` completed one bounded Agnes autonomous P0-a cycle at soil_cycle 50; primary `40→60`, anchor `20→20`, `accepted_fitness=1`, `promotion_committed=1`, and `ignition events=1`. H1 remains frozen pending final owner decision. Runtime projections and manifest are deployment state and are intentionally ignored by Git.
 
 ## The thesis
 
