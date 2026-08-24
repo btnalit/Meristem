@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 
 from substrate.rollback import (
-    build_plan, validate_receipt, validate_receipt_contract, verify_receipt_state,
+    build_plan, execute_autonomous_rollback, validate_receipt,
+    validate_receipt_contract, verify_receipt_state,
 )
 
 
@@ -55,7 +56,15 @@ class RollbackContractTests(unittest.TestCase):
             stable = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
             (repo / "root/generations.json").write_text(json.dumps({"live": "gen-2"}))
             ledger = repo / "state/soil-ledger.jsonl"
-            ledger.write_text(json.dumps({"kind": "cycle", "soil_cycle": 41}) + "\n")
+            ledger.write_text("".join(json.dumps(row) + "\n" for row in [
+                {"kind": "cycle", "soil_cycle": 41},
+                {"kind": "rollback_intent", "task_id": "task-new", "attempt_id": "att-new",
+                 "from_commit": "candidate", "restore_commit": stable,
+                 "phase": "promoted_bad_candidate", "authority": "root_manual"},
+                {"kind": "rollback_committed", "task_id": "task-new", "attempt_id": "att-new",
+                 "from_commit": "candidate", "restored_commit": stable,
+                 "phase": "promoted_bad_candidate", "authority": "root_manual"},
+            ]))
             (repo / "seed/feedback.json").write_text(json.dumps({
                 "facts": {"task_states": {"task-new": {"state": "open"}}}
             }))
@@ -74,10 +83,52 @@ class RollbackContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_receipt_state(repo, plan, receipt)
 
-    def test_plan_rejects_non_manual_authority(self):
+    def test_plan_rejects_unknown_authority(self):
         with self.assertRaises(ValueError):
             from substrate.rollback import RollbackPlan
             RollbackPlan("t", "a", "x", "y", "merged_pre_accept", "x", "seed")
+
+    def test_autonomous_executor_restores_bound_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
+            (repo / "state.txt").write_text("stable")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "stable"], cwd=repo, check=True)
+            stable = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            (repo / "state.txt").write_text("bad candidate")
+            subprocess.run(["git", "commit", "-qam", "bad candidate"], cwd=repo, check=True)
+            bad = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            plan = build_plan(task_id="task-new", attempt_id="att-new",
+                              from_commit=bad, restore_commit=stable,
+                              phase="promoted_bad_candidate", reason="regression",
+                              authority="soil-autonomous")
+            self.assertEqual(execute_autonomous_rollback(repo, plan), stable)
+            self.assertEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(), stable)
+
+    def test_autonomous_executor_refuses_moved_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
+            (repo / "state.txt").write_text("stable")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "stable"], cwd=repo, check=True)
+            stable = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            (repo / "state.txt").write_text("candidate")
+            subprocess.run(["git", "commit", "-qam", "candidate"], cwd=repo, check=True)
+            candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            (repo / "state.txt").write_text("moved")
+            subprocess.run(["git", "commit", "-qam", "moved"], cwd=repo, check=True)
+            plan = build_plan(task_id="task-new", attempt_id="att-new",
+                              from_commit=candidate, restore_commit=stable,
+                              phase="promoted_bad_candidate", reason="regression",
+                              authority="soil-autonomous")
+            with self.assertRaises(ValueError):
+                execute_autonomous_rollback(repo, plan)
 
 
 if __name__ == "__main__":

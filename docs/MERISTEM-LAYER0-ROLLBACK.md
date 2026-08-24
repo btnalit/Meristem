@@ -25,9 +25,9 @@ If any required projection or manifest is absent/mismatched, refuse mutation.
 | Phase | Action | Promotion allowed |
 |---|---|---:|
 | `candidate_unmerged` | discard isolated candidate; preserve ledger evidence | no |
-| `merged_pre_accept` | root/manual restore to stable commit; append rollback receipt | no |
-| `accepted_pre_commit` | reconcile accepted event, restore stable generation, append receipt | no |
-| `promoted_bad_candidate` | root/manual restore stable generation and preserve bad candidate evidence | no |
+| `merged_pre_accept` | soil-autonomous restore to stable commit; append rollback receipt | no |
+| `accepted_pre_commit` | soil-autonomous reconcile accepted event, restore stable generation, append receipt | no |
+| `promoted_bad_candidate` | soil-autonomous restore stable generation and preserve bad candidate evidence | no |
 
 A rollback receipt must pass `substrate.rollback.validate_receipt()` and bind:
 `task_id`, `attempt_id`, restored commit, generation, soil cycle, ledger tail
@@ -50,6 +50,9 @@ Before formal H1, exercise in a disposable controlled workspace:
 4. post-promotion semantic regression;
 5. missing/mismatched runtime projection.
 
-Every drill must end with either `candidate_unmerged` or a validated rollback
-receipt. No drill may create `accepted_fitness`, `promotion_committed`, or an
-ignition event.
+The no-promotion counterfactual drills (1, 2, 5) must end with either
+`candidate_unmerged` or a validated rollback receipt and must not create
+`accepted_fitness`, `promotion_committed`, or an ignition event. The autonomous
+promotion/recovery integration rehearsal (3, 4) intentionally creates and then
+reconciles/rolls back those events in an isolated repository; it is not formal
+production H1 acceptance.

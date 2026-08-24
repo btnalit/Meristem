@@ -70,7 +70,7 @@ Fresh task `b69b6f74d77fa935` cycles 41–43：cycles 41–42 为 `delta=0`，cy
 
 Ontology review follow-up：将 `PREFLIGHT_GATED` 与普通 `REJECTED` 分离；preflight gate 不计 semantic quota，runtime manifest 在 ledger/projection 写出后刷新，避免正常 task guard 造成 stale snapshot。
 
-Autonomous H1 soil gate：新增 `soil-autonomous` authority 与 deterministic autonomous panel，禁止 `input()`/人工审批；受控 panel/path-policy tests 已通过。rollback 在临时隔离 Git 仓库完成真实演练：candidate merge 后 reset 到 restore commit，`verify_receipt_state` 成功绑定 HEAD、ledger tail、generation、task state。pending promotion recovery 现在要求 source+attempt_id+commit 三元严格匹配；manifest 仅在 projections 未篡改且 ledger 前进形成的 recovery window 内允许先 reconcile。正式 H1 仍需独立接受 autonomous promotion transaction 的真实 rehearsal 后才能解冻。
+Autonomous plan rehearsal（隔离 Git 仓库）：已真实验证 `soil-autonomous → observed_fitness → promotion_intent → accepted_fitness → promotion_committed`；验证 promotion intent 后恢复、accepted_fitness 后恢复幂等、错 attempt/commit 进入 `SOIL_RECOVERY`，以及 soil-owned `execute_autonomous_rollback` + live receipt verification。新增集成测试 `tests/test_autonomous_plan.py`，本轮全量 `292 passed, 2 skipped, 71 subtests passed`。当前生产 ledger 仍无 autonomous `accepted_fitness`，因此该证据不等同于正式 H1 runtime acceptance；H1 继续 frozen。
 
 ### 2026-08-23 · v5 规格 v5.7 → v5.8-frozen + 停 v3.1 进化
 

@@ -61,6 +61,20 @@ class PreflightPanelTests(unittest.TestCase):
                 "".join(json.dumps(row) + "\n" for row in rows))
             self.assertTrue(_preflight_has_pending_promotion(repo))
 
+    def test_preflight_blocks_accepted_before_committed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "state").mkdir()
+            rows = [
+                {"kind": "promotion_intent", "source": "obs-1",
+                 "attempt_id": "att-1", "commit": "candidate"},
+                {"kind": "accepted_fitness", "source": "obs-1",
+                 "attempt_id": "att-1", "commit": "candidate"},
+            ]
+            (repo / "state" / "soil-ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows))
+            self.assertTrue(_preflight_has_pending_promotion(repo))
+
     def test_manifest_recovery_window_requires_only_ledger_advance(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

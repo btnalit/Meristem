@@ -38,8 +38,9 @@ open -> fulfilled          accepted_fitness after merge
 6. Projection and manifest hashes must match the current ledger before the next mutation.
 7. A promotion-gated task cannot start another blind mutation cycle.
 8. Formal H1 must not depend on `input()` or human approval; autonomous soil authority is a separate, explicitly tested panel adapter.
-9. Rollback receipts describe and bind a real operator-executed rollback; receipt validation is not rollback execution.
-10. Provider success, parser success, strategy variation, or candidate creation alone never establishes H1.
+9. Formal H1 bad-candidate rollback is executed by the soil-owned `soil-autonomous` authority. `root_manual` is infrastructure emergency recovery only, not a candidate decision authority.
+10. Rollback receipts describe and bind the autonomous rollback execution; receipt validation is not rollback execution.
+11. Provider success, parser success, strategy variation, or candidate creation alone never establishes H1.
 
 ## H1 readiness boundary
 

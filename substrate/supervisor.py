@@ -563,11 +563,9 @@ def _preflight_has_pending_promotion(repo: pathlib.Path) -> bool:
         commit = intent.get("commit")
         for row in rows:
             if row.get("kind") == "accepted_fitness":
-                if (source and attempt and commit
-                        and row.get("source") == source
-                        and row.get("attempt_id") == attempt
-                        and row.get("commit") == commit):
-                    return True
+                # accepted_fitness alone is an incomplete transaction; preflight
+                # must leave it for soil recovery to finish the committed tail.
+                continue
             if row.get("kind") == "promotion_committed":
                 if (attempt and commit
                         and row.get("attempt_id") == attempt

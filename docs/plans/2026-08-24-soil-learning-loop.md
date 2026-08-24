@@ -139,7 +139,7 @@ Require full test suite, calibration proof, fresh projection, clean ownership, n
 3. Run static checks and `git diff --check`.
 4. Run real server preflight with Agnes credentials only through the existing soil-owned bridge.
 5. Run bounded Learning Runway on the same controlled task; do not promote.
-6. Run controlled autonomous-panel, promotion-transaction, crash-recovery, and rollback rehearsals in isolated repositories.
+6. Run controlled autonomous-panel, promotion-transaction, crash-recovery, and rollback rehearsals in isolated repositories; the rollback executor must use `soil-autonomous`, not a human candidate reviewer.
 7. Independent read-only audit of code, runtime ownership, ledger linkage, projection privacy, autonomous authority, and H1 gate.
 8. Commit and push only after all evidence passes.
 9. Report residual risks; do not announce Stage 5/H1 readiness if any gate is incomplete.
