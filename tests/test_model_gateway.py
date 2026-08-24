@@ -72,7 +72,24 @@ class HandleBasicShapeTests(unittest.TestCase):
             self.assertIn(resp["status"], ("allowed", "refused", "deferred"))
 
 
-class RoleBoundaryTests(unittest.TestCase):
+class ModelGatewayTests(unittest.TestCase):
+    def test_execution_mode_selects_only_soil_owned_allowlisted_policy(self):
+        self.assertEqual(
+            model_gateway.policy_path_for_mode("openrouter-free").name,
+            "openrouter-free.toml",
+        )
+        self.assertEqual(
+            model_gateway.policy_path_for_mode("sensenova").name,
+            "sensenova.toml",
+        )
+        with self.assertRaises(ValueError):
+            model_gateway.policy_path_for_mode("../leak")
+
+    def test_missing_execution_mode_uses_openrouter_default(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                model_gateway.execution_mode(), "openrouter-free")
+
     """§8.1.3 / §16: `review` is soil-only. The gateway must enforce this
     independently of meristem/llm.py's own client-side check (defense in
     depth -- a hand-crafted request bypassing llm.py must not reach the

@@ -1014,6 +1014,38 @@ endpoint：https://openrouter.ai/api/v1
 
 ---
 
+### 2026-08-24 · P0-a 波次 11：OpenRouter / SenseNova 显式执行模式
+
+按 owner 确认，保留原 SenseNova 作为备用模式，但不做同一 cycle 内的隐式 provider fallback。
+新增 soil-owned 模式选择：
+
+```text
+MERISTEM_MODEL_MODE=openrouter-free
+MERISTEM_MODEL_MODE=sensenova
+```
+
+策略文件：
+
+```text
+soil/model-policies/openrouter-free.toml
+soil/model-policies/sensenova.toml
+```
+
+规则：
+
+- gateway 启动时只接受 allowlist 中的模式，并在整个 gateway 进程生命周期内固定 policy。
+- 缺省模式为 `openrouter-free`；未知模式或缺失 profile 直接 fail closed。
+- worker 不接收 `MERISTEM_MODEL_MODE`，不能自行切换 provider/model。
+- provider 失败不会在同一 cycle 内自动切换；本 cycle 记录 `deferred`，由 soil 操作员选择模式后
+  以新的 cycle 重跑，保证 H1 证据可复现。
+- 两个 profile 的 credential 仍统一通过 soil-owned `MERISTEM_CREDENTIALS_FILE`，不把
+  `OPENROUTER_API_KEY` 或 `SENSENOVA_API_KEY` 注入 worker。
+
+**TDD/验证**：mode allowlist 与默认模式测试先 RED 后 GREEN；相关测试 **51 passed**；
+两个 TOML profile 解析并核对角色/模型成功。尚未执行双 provider 的真实 allowed smoke。
+
+---
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash

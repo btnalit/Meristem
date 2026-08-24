@@ -169,6 +169,10 @@ def _start_model_gateway(*, socket_path: pathlib.Path, soil_cycle: int):
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "PYTHONPATH": str(REPO),
         "MERISTEM_MODEL_SOCKET": str(socket_path),
+        # Soil operator selects one immutable mode for the whole gateway
+        # process; the worker never receives this variable.
+        "MERISTEM_MODEL_MODE": os.environ.get(
+            "MERISTEM_MODEL_MODE", "openrouter-free"),
         "MERISTEM_CREDENTIALS_FILE": credentials_file,
         "MERISTEM_SOIL_CYCLE": str(soil_cycle),
     }

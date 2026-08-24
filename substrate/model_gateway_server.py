@@ -24,6 +24,13 @@ def _serve(socket_path: Path) -> int:
     # worker group to the socket after bind.
     old_umask = os.umask(0o077)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        mode = model_gateway.execution_mode()
+        policy = model_gateway.load_execution_policy(mode)
+    except (OSError, ValueError) as exc:
+        print(f"model_gateway_server: invalid execution mode/policy: {exc!r}",
+              file=sys.stderr)
+        return 2
     def _shutdown(_signum, _frame):
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, _shutdown)
@@ -40,7 +47,6 @@ def _serve(socket_path: Path) -> int:
                 raw = conn.recv(2 * 1024 * 1024)
                 try:
                     request = json.loads(raw.decode("utf-8").strip())
-                    policy = model_gateway._budget.load_policy()
                     cycle = model_gateway._resolve_cycle()
                     if cycle is None:
                         response = {"status": "refused", "reason": "cycle_unknown"}

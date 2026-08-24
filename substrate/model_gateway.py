@@ -51,6 +51,32 @@ sys.path.insert(0, str(REPO))
 
 from substrate import budget as _budget  # noqa: E402
 
+POLICY_DIR = REPO / "soil" / "model-policies"
+DEFAULT_EXECUTION_MODE = "openrouter-free"
+EXECUTION_MODES = frozenset({"openrouter-free", "sensenova"})
+
+
+def execution_mode(mode: str | None = None) -> str:
+    """Resolve the soil-selected provider mode, fail-closed on unknown values."""
+    selected = mode if mode is not None else os.environ.get(
+        "MERISTEM_MODEL_MODE", DEFAULT_EXECUTION_MODE)
+    if not isinstance(selected, str) or selected not in EXECUTION_MODES:
+        raise ValueError(f"unsupported model execution mode: {selected!r}")
+    return selected
+
+
+def policy_path_for_mode(mode: str | None = None) -> Path:
+    """Return only an allowlisted soil-owned policy path."""
+    selected = execution_mode(mode)
+    path = POLICY_DIR / f"{selected}.toml"
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"model policy unavailable for mode: {selected}")
+    return path
+
+
+def load_execution_policy(mode: str | None = None) -> dict:
+    return _budget.load_policy(policy_path_for_mode(mode))
+
 #: seed 端可见角色的权威来源在 `seed/model-interface.json`（土壤写、种子只读，
 #: §16 权威矩阵）。**不信任种子自己的检查**：`llm.py._roles_available()` 已经
 #: 挡过一次角色白名单，但那是种子自己代码里的检查——一个绕开 `llm.py`、直接
