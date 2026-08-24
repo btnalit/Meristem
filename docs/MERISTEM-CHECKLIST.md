@@ -1203,7 +1203,19 @@ promotion：0
 结论：土壤观测、反馈投影、反思 lineage、task state 迁移和策略变化真实成立；但三种不同策略均未改善 probe，且 task 已因三次 semantic failure parked。该 task 不再继续消耗 provider。阶段 5/H1 继续冻结。
 
 
-按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
+### 2026-08-24 · 综合优化后重测（新 task）
+
+新 task：`1a6f502d84ae7a99`，baseline primary/anchor=`40.0/20.0`。
+
+| cycle | attempt | prompt feedback | reflection attempts | result | constraint evidence |
+|---:|---|---|---:|---|---|
+| 31 | `att-66be377b85434db0aa86c5f1a4c5e4e9` | true | 0 | UNMEASURED | `tests/` 22 files returned; soil rejected before measurement |
+| 32 | `att-cb2457c2531445a0a93925f1a50ae108` | true | 1 | UNMEASURED | `tests/` 22 files returned again; soil rejected before measurement |
+
+Cycle 32 prompt hash 与 cycle 31 不同，response hash 也不同，reflection 已消费；returned path-set hash 相同，说明模型仍返回相同结构的 tests 污染。两轮均无 semantic failure、无 fitness 记录、无 promotion；task 保持 `open`，不因机制/contract rejection 消耗语义 quota。bridge 每轮清理成功。
+
+结论：task-scoped projection、无敏感 prompt/response telemetry 和 forbidden-path soil gate 已真实生效；当前 Agnes 仍未遵守 task-specific scope，因此本 runway 暂停，不能把 UNMEASURED 当作 probe 失败，也不能进入 H1。
+
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem
 soil 自己控制。
 
