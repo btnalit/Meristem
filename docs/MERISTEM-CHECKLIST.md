@@ -949,7 +949,27 @@ first-match-wins 只作为 baseline 实现限制，不再作为规范保证；�
 
 ---
 
-## 常用命令
+### 2026-08-24 · P0-a 波次 9：真实 provider smoke（首次）
+
+在 owner 明确允许一次真实 provider 调用后，使用临时兼容桥完成一次不改动仓库的 smoke：
+
+- 外部 `/RSI/meristem-env` 仍提供 `SENSENOVA_API_KEY`；测试 shell 将其写入临时
+  `soil:soil`、`0600` 文件，仅注入 soil-owned gateway 的 `MERISTEM_CREDENTIALS_FILE`。
+- 临时 credential 文件在测试结束时由 `trap` 删除；未打印、提交、进入 worker 环境或写入仓库。
+- 第一次夹具因 root 创建的 socket 父目录 `0700` 无法让 soil 进入，未发起 provider 请求；修正为
+  supervisor 同等的 `soil:worker` 共享目录后重跑。
+- gateway 以 soil UID 启动；socket `uid=997/gid=985/mode=0660`；worker 以 uid=996、无附加组
+  通过 Unix socket 请求。
+- provider 侧实际记录 `mutate:glm` **4 次 attempt**，按 `15s/30s/60s` retry；最终 worker
+  只收到 `{"status":"deferred"}`，没有收到 provider 错误、retry 细节或 credential。
+- smoke 结束后 socket 删除；当前结果是 provider rate limit/deferred，不是 `allowed/content`。
+
+**结论**：soil gateway、真实 provider 请求、retry/budget 与有限 worker ABI 已被真实串通；
+但首次 provider smoke 未获得 allowed 响应，**不得启动 manual-cycle 或 H1**。需要下一步
+单独确认 provider 配置/额度/限流状态后，才可重试一次真实调用。
+
+---
+
 
 ```bash
 # 出生判据的唯一求值点（§1.2 / §12.0.2）
