@@ -1106,8 +1106,8 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 
 ```text
 阶段 2：OpenRouter 临时 laguna smoke 通过；SenseNova 仍 blocked（rate_limited）
-阶段 3：未启动，等待备用模式与 mutation-style allowed/content 完成
-阶段 4：尚未形成两模式稳定性样本
+阶段 3：临时 laguna `manual-cycle` 已真实执行（cycle=5），provider 返回 allowed，但 seed exit=1、未产出 candidate；soil 记录 cycle，未进入 recovery/promotion
+阶段 4：临时 laguna stability observation 已执行 3 次（cycles 970001–970003），均 gateway started 但最终 `refused/provider_error`；样本显示可达性波动，尚不能判定稳定
 阶段 5：保持冻结
 ```
 
