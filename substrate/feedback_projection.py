@@ -48,18 +48,28 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
             if line.strip()]
     observed = [r for r in rows if r.get("kind") == "observed_fitness"
                 and (task_id is None or r.get("task_id") == task_id)]
+    cycles = [r for r in rows if r.get("kind") == "cycle"
+              and r.get("task_id") and (task_id is None or r.get("task_id") == task_id)]
     outcomes = [r for r in rows if r.get("kind") == "promotion_outcome"]
     recent = []
-    for event in observed[-8:]:
-        item = _observed_summary(event)
-        cycle = event.get("soil_cycle")
-        matching = [o for o in outcomes if o.get("source") == event.get("event_id")]
-        if matching:
-            item["outcome"] = matching[-1].get("outcome")
-            item["reason"] = matching[-1].get("why")
-        elif cycle is not None:
-            item["outcome"] = "MEASURED"
-        recent.append(item)
+    for event in cycles[-8:]:
+        if event.get("commit"):
+            match = next((o for o in observed if o.get("commit") == event.get("commit")), None)
+            if match:
+                item = _observed_summary(match)
+                matching = [o for o in outcomes if o.get("source") == match.get("event_id")]
+                if matching:
+                    item["outcome"] = matching[-1].get("outcome")
+                    item["reason"] = matching[-1].get("why")
+                recent.append(item)
+                continue
+        recent.append({k: v for k, v in {
+            "task_id": event.get("task_id"),
+            "soil_cycle": event.get("soil_cycle"),
+            "candidate": None,
+            "outcome": "NO_CANDIDATE",
+            "reason": event.get("failure_reason", "no_candidate"),
+        }.items() if v is not None})
     last = recent[-1] if recent else {}
     facts = {
         "done_task_ids": [],

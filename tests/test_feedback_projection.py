@@ -22,6 +22,8 @@ class FeedbackProjectionTests(unittest.TestCase):
                               "after": 40.0, "delta": 0.0, "status": "no_regression"}]},
                 {"kind": "promotion_outcome", "source": "obs-1",
                  "outcome": "UNFULFILLED", "why": "delta 0 < minimum_delta 20"},
+                {"kind": "cycle", "task_id": "task-1", "soil_cycle": 2,
+                 "commit": None, "exit_code": 1, "failure_reason": "path_violation"},
             ]
             ledger = repo / "state" / "soil-ledger.jsonl"
             ledger.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
@@ -29,8 +31,8 @@ class FeedbackProjectionTests(unittest.TestCase):
             doc = json.loads(target.read_text())
             self.assertEqual(doc["source_ledger_tail_hash"],
                              hashlib.sha256(ledger.read_bytes()).hexdigest())
-            self.assertEqual(doc["facts"]["last_attempt"]["outcome"], "UNFULFILLED")
-            self.assertEqual(doc["facts"]["last_attempt"]["delta"], 0.0)
+            self.assertEqual(doc["facts"]["last_attempt"]["outcome"], "NO_CANDIDATE")
+            self.assertEqual(doc["facts"]["last_attempt"]["reason"], "path_violation")
             self.assertNotIn("records", json.dumps(doc))
             self.assertNotIn("prompt", json.dumps(doc))
 

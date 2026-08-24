@@ -455,9 +455,20 @@ def _seed_candidate(repo, ctx, task):
     # 台账里就不能把 base 记成本拍产出的 commit —— 错标签比没有标签更坏，
     # 它看起来像数据（同 loop.py 拒绝把未知拍号伪造成 0 的理由）。
     commit = head if head is not None and head != base else None
+    failure_reason = None
+    stderr = result.stderr or ""
+    if "PATH_VIOLATION" in stderr:
+        failure_reason = "path_violation"
+    elif "PROPOSE_FAILED" in stderr:
+        failure_reason = "propose_failed"
+    elif "PROMPT_OVER_BUDGET" in stderr:
+        failure_reason = "prompt_over_budget"
+    elif result.returncode != 0:
+        failure_reason = "no_candidate"
     ctx.ledger.append({"kind": "cycle", "commit": commit, "task_id": task.task_id,
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
-                       "exit_code": result.returncode})
+                       "exit_code": result.returncode,
+                       **({"failure_reason": failure_reason} if failure_reason else {})})
     if commit is None:
         print(f"种子未产出候选（exit {result.returncode}）："
               f"{(result.stdout + result.stderr)[-400:]}", file=sys.stderr)
@@ -515,6 +526,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
     if candidate is None:
         commit, worktree = _seed_candidate(repo, ctx, task)
         if commit is None:
+            feedback_projection.write_projection(repo, task_id=task.task_id)
             _drop_worktree(repo, worktree)
             return 1
     else:
