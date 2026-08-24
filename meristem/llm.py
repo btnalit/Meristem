@@ -84,14 +84,26 @@ def call_model(role: str, prompt: str) -> CallResult:
 
 
 def parse_file_map(content: str) -> dict[str, str]:
-    """Model reply -> {path: new content}. The model is instructed
-    (engine.build_context) to reply with exactly one JSON object; a
-    malformed reply yields an empty map rather than a guessed partial parse.
+    """Model reply -> ``{path: new content}``.
+
+    Accept the contract's bare JSON object and the equivalent complete
+    Markdown JSON fence commonly emitted by OpenAI-compatible models.  Do not
+    search arbitrary prose for a brace pair: explanatory text or partial JSON
+    must remain a rejected mutation.
     """
-    try:
-        parsed = json.loads(content)
-    except ValueError:
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    return {str(k): str(v) for k, v in parsed.items()}
+    raw = content.strip()
+    candidates = [raw]
+    if raw.startswith("```") and raw.endswith("```"):
+        lines = raw.splitlines()
+        language = lines[0].strip().lower()
+        if (len(lines) >= 3 and lines[-1].strip() == "```"
+                and language in ("```", "```json")):
+            candidates.insert(0, "\n".join(lines[1:-1]).strip())
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return {str(k): str(v) for k, v in parsed.items()}
+    return {}

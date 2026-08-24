@@ -1106,9 +1106,11 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 
 ```text
 阶段 2：OpenRouter 临时 laguna smoke 通过；SenseNova 仍 blocked（rate_limited）
-阶段 3：临时 laguna `manual-cycle` 已真实执行（cycle=5），provider 返回 allowed，但 seed exit=1、未产出 candidate；soil 记录 cycle，未进入 recovery/promotion
-阶段 4：临时 laguna stability observation 已执行 3 次（cycles 970001–970003），均 gateway started 但最终 `refused/provider_error`；样本显示可达性波动，尚不能判定稳定
-阶段 5：保持冻结
+阶段 3：Agnes 单圈 manual-cycle 已真实执行；provider 调用阶段可达，但 seed exit=1、未产出 candidate，输出尾部为 `logout`；未进入 recovery/promotion，因此阶段 3 未通过
+阶段 4：Agnes stability observation 已完成 3 次：cycle=991001/991002/991003 均 gateway started、allowed、content 非空（各 length=4）；provider transport 稳定性通过，但不等于 mutation 能力通过
+阶段 5：继续冻结，不启动 H1
+
+本轮交叉诊断确认：三家 mutation response 均可能返回完整 JSON code fence。旧版 seed `parse_file_map()` 仅执行裸 `json.loads()`，导致 fenced JSON 被静默解析为空 map，`run_cycle()` 返回 `empty_mutation`（无 stderr），supervisor 最终只显示 `logout`。修复仅接受完整 JSON code fence，不接受任意解释文本或 brace 截取。修复必须提交后才会进入 supervisor 创建的 HEAD-based worker worktree。
 ```
 
 ---
@@ -1161,6 +1163,14 @@ git diff --check：通过
 
 Agnes mode 仅作为额外实验/备用 mode，不改变正式 OpenRouter 或 SenseNova 选择；Agnes 与同血统审查模型
 的独立性限制仍需在 H1 之前单独记录为实验边界。阶段 3/4 的正式继续运行等待本波次独立审计后执行。
+
+本轮 owner 已确认正式纳入 Agnes experimental/backup mode，并执行：
+
+```text
+阶段 3：Agnes 单圈 manual-cycle
+阶段 4：Agnes 三次独立 stability observation
+阶段 5：继续冻结，不启动 H1
+```
 
 ---
 
