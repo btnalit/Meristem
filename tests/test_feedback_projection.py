@@ -86,6 +86,30 @@ class FeedbackProjectionTests(unittest.TestCase):
             doc = json.loads(write_projection(repo, task_id="task-1").read_text())
             self.assertEqual(doc["facts"]["task_states"]["task-1"]["state"], "parked")
             self.assertTrue(doc["facts"]["strategy_memory"]["strat-same"]["repeated_failure"])
+    def test_task_filter_preserves_old_task_state_from_source_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "state").mkdir()
+            (repo / "seed").mkdir()
+            rows = []
+            for cycle in (1, 2, 3):
+                attempt = f"att-{cycle:032x}"
+                event = f"obs-{cycle}"
+                rows.extend([
+                    {"kind": "cycle", "task_id": "old", "soil_cycle": cycle,
+                     "attempt_id": attempt, "commit": f"c{cycle}", "exit_code": 0},
+                    {"kind": "observed_fitness", "event_id": event,
+                     "task_id": "old", "attempt_id": attempt, "commit": f"c{cycle}",
+                     "primary_probe": "probe", "records": [{"probe_id": "probe",
+                     "before": 1.0, "after": 1.0, "delta": 0.0}]},
+                    {"kind": "promotion_outcome", "source": event,
+                     "attempt_id": attempt, "outcome": "UNFULFILLED",
+                     "counts_against_task_quota": True},
+                ])
+            (repo / "state" / "soil-ledger.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n")
+            doc = json.loads(write_projection(repo, task_id="new").read_text())
+            self.assertEqual(doc["facts"]["task_states"]["old"]["state"], "parked")
 
 
 if __name__ == "__main__":

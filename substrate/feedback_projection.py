@@ -82,8 +82,9 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
     ledger_path = repo / "state" / "soil-ledger.jsonl"
     rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()
             if line.strip()]
-    observed = [r for r in rows if r.get("kind") == "observed_fitness"
-                and (task_id is None or r.get("task_id") == task_id)]
+    all_observed = [r for r in rows if r.get("kind") == "observed_fitness"]
+    observed = [r for r in all_observed
+                if task_id is None or r.get("task_id") == task_id]
     cycles = [r for r in rows if r.get("kind") == "cycle"
               and r.get("task_id") and r.get("exit_code") is not None
               and (task_id is None or r.get("task_id") == task_id)]
@@ -129,7 +130,7 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
                 failure_reason=syntax_reason or event.get("failure_reason")),
         })
     last = recent[-1] if recent else {}
-    observed_by_event = {r.get("event_id"): r for r in observed if r.get("event_id")}
+    observed_by_event = {r.get("event_id"): r for r in all_observed if r.get("event_id")}
     normalized_rows = []
     for row in rows:
         if row.get("kind") == "promotion_outcome" and not row.get("task_id"):
