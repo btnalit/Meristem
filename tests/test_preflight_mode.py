@@ -23,6 +23,13 @@ class PreflightPanelTests(unittest.TestCase):
             self.assertTrue(_preflight_has_pending_promotion(repo))
             with (repo / "state" / "soil-ledger.jsonl").open("a") as handle:
                 handle.write(json.dumps({"kind": "promotion_outcome", "source": "intent-1"}) + "\n")
+            (repo / "state" / "soil-ledger.jsonl").write_text(
+                json.dumps({"kind": "promotion_intent", "source": "obs-1",
+                            "attempt_id": "att-1", "commit": "candidate"}) + "\n")
+            self.assertTrue(_preflight_has_pending_promotion(repo))
+            with (repo / "state" / "soil-ledger.jsonl").open("a") as handle:
+                handle.write(json.dumps({"kind": "promotion_outcome", "source": "obs-1",
+                                         "attempt_id": "att-1", "outcome": "ABANDONED"}) + "\n")
             self.assertFalse(_preflight_has_pending_promotion(repo))
 
 

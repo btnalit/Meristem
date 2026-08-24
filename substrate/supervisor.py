@@ -52,6 +52,7 @@ from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
 from substrate import learning_state, strategy_memory
+from substrate import runtime_manifest
 
 #: §13.3 表 C（v5.9 补）：种子经 `meristem/llm.py` 的每次模型调用都靠这个变量
 #: 转发到 soil-owned `model_gateway_client.py`。client 只读
@@ -553,12 +554,28 @@ def _preflight_has_pending_promotion(repo: pathlib.Path) -> bool:
                 if line.strip()]
     except (OSError, ValueError):
         return True
-    intents = {row.get("event_id") for row in rows if row.get("kind") == "promotion_intent"}
-    terminal_sources = {
-        row.get("source") for row in rows
-        if row.get("kind") in {"accepted_fitness", "promotion_committed", "promotion_outcome"}
-    }
-    return bool({item for item in intents if item} - terminal_sources)
+    intents = [row for row in rows if row.get("kind") == "promotion_intent"]
+    if not intents:
+        return False
+    def resolved(intent: dict) -> bool:
+        source = intent.get("source") or intent.get("event_id")
+        attempt = intent.get("attempt_id")
+        commit = intent.get("commit")
+        for row in rows:
+            if row.get("kind") == "accepted_fitness":
+                if ((source and row.get("source") == source)
+                        or (attempt and row.get("attempt_id") == attempt)):
+                    return True
+            if row.get("kind") == "promotion_committed":
+                if ((attempt and row.get("attempt_id") == attempt)
+                        or (commit and row.get("commit") == commit)):
+                    return True
+            if row.get("kind") == "promotion_outcome":
+                if ((source and row.get("source") == source)
+                        or (attempt and row.get("attempt_id") == attempt)):
+                    return True
+        return False
+    return any(not resolved(intent) for intent in intents)
 
 
 def _preflight_panel(commit: str, diff: str, task):
@@ -570,6 +587,12 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
                  preflight: bool = False) -> int:
     """§12.0.2：**走与未来 heartbeat 完全相同的代码路径。** 唯一的区别是判决位上坐着人。"""
     repo = REPO
+    task = _load_task(repo, task_path)
+    try:
+        runtime_manifest.verify(repo, task_id=task.task_id)
+    except runtime_manifest.RuntimeManifestError as exc:
+        print(f"runtime manifest refused: {exc}", file=sys.stderr)
+        return 2
     ctx = _soil_state.SoilContext.open(
         repo, generation=_generation(repo), soil_cycle=_next_soil_cycle(repo),
         calibration=calibration)
@@ -600,7 +623,6 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
               "变更**（§12.0.1），不经种子产出。", file=sys.stderr)
         return 2
 
-    task = _load_task(repo, task_path)
     feedback_projection.write_projection(repo, task_id=task.task_id)
     if not feedback_projection.projection_is_fresh(repo):
         raise RuntimeError("task-scoped feedback projection freshness gate failed before worker start")
