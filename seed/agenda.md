@@ -16,4 +16,4 @@
 # 而 soil/p0a-task.json 里的声明必须同步 —— 土壤在 manual-cycle 启动时核对两者，
 # 不一致直接拒绝运行。**一个任务只能有一个身份。**
 
-提高 classifier 在 probe-classify-basic 上的得分
+Improve classifier behavior on probe-classify-basic without modifying tests, probes, constitution, or agenda; use a materially different strategy from prior attempts.

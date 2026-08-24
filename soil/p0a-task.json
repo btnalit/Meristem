@@ -1,7 +1,7 @@
 {
   "_comment": "P0-a 的点火任务声明（§8.1.4 schema，内容由 §12.2 写死）。放在 soil/ 而不是 seed/：P0-a 是「人给任务，人做判决」，且 §10.1 的种子可写白名单里本来就没有任何 Task 声明文件——它是判种子自己的那张声明。P0-b「种子自己选题」需要一条种子可写的声明路径，§10.1 尚未给出，那是未闭合项。",
   "_task_id_note": "task_id 必须等于 seed/agenda.md 首条任务行的 sha256 前 16 位；土壤在 manual-cycle 启动时核对，不一致即拒绝运行。改议程那一行就要同步改这里。",
-  "task_id": "0726d71e8f27c025",
+  "task_id": "0695fc39e6fd1af7",
   "kind": "repair",
   "target": "classifier",
   "primary_probe": "probe-classify-basic",
