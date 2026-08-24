@@ -1,13 +1,17 @@
 {
-  "_comment": "P0-a controlled H1-preflight task. The previous parked task remains historical and is not unparked.",
+  "_comment": "P0-a controlled H1-preflight task v2. Previous parked tasks remain historical and are not unparked.",
   "_task_id_note": "task_id equals sha256 prefix of the first task line in seed/agenda.md; soil verifies this before manual-cycle.",
-  "task_id": "8388cd245b011a91",
+  "task_id": "b69b6f74d77fa935",
   "kind": "repair",
   "target": "classifier",
   "primary_probe": "probe-classify-basic",
   "expected": "score_increase",
   "minimum_delta": 20.0,
   "regression_policy": "all-active-probes",
-  "forbidden_paths": ["tests/"],
-  "required_target_paths": ["body/organs/classifier/"]
+  "forbidden_paths": [
+    "tests/"
+  ],
+  "required_target_paths": [
+    "body/organs/classifier/"
+  ]
 }
