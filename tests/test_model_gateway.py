@@ -126,6 +126,50 @@ class NoCredentialsFailsClosedTests(unittest.TestCase):
                 self.assertEqual(resp["reason"], "no_credentials")
             self.assertEqual(budget.ModelCallLedger(ledger).read(), [])
 
+    def test_credentials_file_pointer_is_read_on_soil_side(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential_file = Path(tmp) / "provider.key"
+            credential_file.write_text("unit-test-secret\n", encoding="utf-8")
+            credential_file.chmod(0o600)
+            slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE"}
+            with mock.patch.dict(os.environ, {"MERISTEM_TEST_CREDENTIALS_FILE": str(credential_file)},
+                                 clear=False):
+                self.assertEqual(model_gateway._credential_value(slot), "unit-test-secret")
+
+    def test_credentials_file_pointer_does_not_fall_back_to_api_key_env(self):
+        slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE",
+                "api_key_env": "MERISTEM_TEST_UNSET_KEY"}
+        with mock.patch.dict(os.environ, {"SENSENOVA_API_KEY": "must-not-be-used",
+                                          "MERISTEM_TEST_UNSET_KEY": "must-not-be-used"},
+                             clear=False):
+            os.environ.pop("MERISTEM_TEST_CREDENTIALS_FILE", None)
+            self.assertIsNone(model_gateway._credential_value(slot))
+
+    def test_credentials_file_pointer_rejects_public_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential_file = Path(tmp) / "provider.key"
+            credential_file.write_text("unit-test-secret\n", encoding="utf-8")
+            credential_file.chmod(0o644)
+            slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE"}
+            with mock.patch.dict(os.environ, {"MERISTEM_TEST_CREDENTIALS_FILE": str(credential_file)},
+                                 clear=False):
+                self.assertIsNone(model_gateway._credential_value(slot))
+
+    def test_credentials_file_pointer_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "real.key"
+            target.write_text("unit-test-secret\n", encoding="utf-8")
+            target.chmod(0o600)
+            link = Path(tmp) / "provider.key"
+            try:
+                link.symlink_to(target)
+            except OSError:
+                self.skipTest("platform does not permit symlink creation")
+            slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE"}
+            with mock.patch.dict(os.environ, {"MERISTEM_TEST_CREDENTIALS_FILE": str(link)},
+                                 clear=False):
+                self.assertIsNone(model_gateway._credential_value(slot))
+
 
 class SeedNeverReceivesQuotaNumbersTests(unittest.TestCase):
     """§8.1.3: 'the seed learns only the outcome -- never remaining quota,

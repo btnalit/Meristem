@@ -6,6 +6,11 @@ A call is forwarded to a soil-provided gateway subprocess; the seed learns
 only one of three outcomes -- allowed / refused / deferred -- per the
 call_result contract in seed/model-interface.json. It never learns
 remaining quota, retry counts, or slot order.
+
+The soil may inject ``MERISTEM_CREDENTIALS_FILE`` as an opaque pointer for the
+gateway subprocess.  The seed never opens that path and never receives the
+credential value; the gateway reads it on the soil side and fails closed when
+the pointer is absent or unsafe.
 """
 from __future__ import annotations
 

@@ -26,16 +26,19 @@ deferred」，配额判定整段委托给 `budget.check()`；budget.py 自己不
 否则种子可以通过挑角色、改 retry、卡窗口来影响选择压力」——就被这一行代码
 原样推翻了。同理，槽位 id、provider 报错细节等只进 stderr，不进 stdout。
 
-**凭据缝（P0-a，本环境无凭据，不得编造）**：本仓库当前没有 `SENSENOVA_API_KEY`，
-也不该有——任务要求不得发明密钥。`_call_provider()` 是真正对接 provider 的唯一
-入口：凭据不在时**必须**在打任何网络请求之前 fail closed，原因是一个独立于
-`budget` / `gateway_not_injected` 之外的第三个名字（`no_credentials`），
-不是「假装调用成功后编一段回复」——那和造假响应是同一类错误，本模块不做。
+**凭据缝（P0-a，本环境无凭据，不得编造）**：生产 policy 只声明
+`MERISTEM_CREDENTIALS_FILE` 这个文件指针环境变量，不保存也不要求
+`SENSENOVA_API_KEY` 出现在 seed 环境。`_call_provider()` 是真正对接 provider 的
+唯一入口：凭据文件不在、不可读或权限不安全时**必须**在打任何网络请求之前
+fail closed，原因是一个独立于 `budget` / `gateway_not_injected` 之外的第三个名字
+（`no_credentials`），不是「假装调用成功后编一段回复」——那和造假响应是同一类
+错误，本模块不做。
 """
 from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tomllib
 import urllib.error
@@ -84,6 +87,52 @@ def _select_slot(policy: dict, role: str) -> dict | None:
     return slot if isinstance(slot, dict) else None
 
 
+def _credential_value(slot: dict) -> str | None:
+    """Read a provider credential on the soil side, never in the seed.
+
+    Production slots name an environment variable containing a *file pointer*
+    (``MERISTEM_CREDENTIALS_FILE``), not an environment variable containing the
+    secret.  The seed receives only that pointer.  The file must be absolute,
+    non-symlink, regular, and private to its owner; otherwise the gateway
+    fails closed before any network request.  A legacy ``api_key_env`` is kept
+    only for injected unit-test policies, so the production policy cannot
+    silently fall back to a secret-bearing environment variable.
+    """
+    pointer_env = slot.get("credentials_file_env")
+    if isinstance(pointer_env, str):
+        raw_path = os.environ.get(pointer_env, "")
+        if not raw_path:
+            return None
+        path = Path(raw_path)
+        if not path.is_absolute() or path.is_symlink() or not path.is_file():
+            return None
+        try:
+            st = os.stat(path, follow_symlinks=False)
+            if not stat.S_ISREG(st.st_mode) or (st.st_mode & 0o077):
+                return None
+            flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(path, flags)
+            try:
+                value = os.read(fd, 8193)
+            finally:
+                os.close(fd)
+        except OSError:
+            return None
+        if len(value) > 8192:
+            return None
+        try:
+            credential = value.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return None
+        return credential or None
+
+    # Test-only compatibility for policies injected directly into handle().
+    api_key_env = slot.get("api_key_env")
+    return os.environ.get(api_key_env) if isinstance(api_key_env, str) else None
+
+
 def _call_provider(slot: dict, prompt: str) -> tuple[str, str | None, str | None]:
     """provider 调用的唯一入口。返回 `(status, content, reason)`。
 
@@ -92,8 +141,7 @@ def _call_provider(slot: dict, prompt: str) -> tuple[str, str | None, str | None
     fail closed，而不是假装调用成功后编一段回复（造假响应）。凭据缺失时
     整个函数在联网之前就返回，下面的 HTTP 代码在本仓库的测试里从未被真正执行过。
     """
-    api_key_env = slot.get("api_key_env")
-    api_key = os.environ.get(api_key_env) if isinstance(api_key_env, str) else None
+    api_key = _credential_value(slot)
     if not api_key:
         return "refused", None, "no_credentials"
 

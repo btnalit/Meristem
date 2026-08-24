@@ -102,6 +102,43 @@ class SeedCandidateInjectsGatewayVarTests(unittest.TestCase):
         self.assertNotIn("MERISTEM_VAULT", env)
         self.assertNotIn("SENSENOVA_API_KEY", env)
 
+    def test_seed_receives_credential_pointer_but_not_credential_value(self):
+        real_run = subprocess.run
+        captured = []
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[:1] == ["git"]:
+                return real_run(cmd, *args, **kwargs)
+            captured.append(kwargs.get("env"))
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, {"MERISTEM_CREDENTIALS_FILE": "/soil/provider.key",
+                             "SENSENOVA_API_KEY": "must-not-be-forwarded"}, clear=False):
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            real_run(["git", "-c", "init.defaultBranch=main", "init", "-q"],
+                     cwd=str(repo), env=GIT_ENV, check=True)
+            (repo / "README.md").write_text("x", encoding="utf-8")
+            real_run(["git", "add", "."], cwd=str(repo), env=GIT_ENV, check=True)
+            real_run(["git", "commit", "-q", "-m", "init"], cwd=str(repo), env=GIT_ENV,
+                     check=True)
+            ctx = SimpleNamespace(soil_cycle=1, generation="gen-test",
+                                  ledger=SimpleNamespace(append=lambda e: "ev-x"))
+            task = SimpleNamespace(task_id="t1")
+            worktree = None
+            try:
+                with mock.patch("substrate.supervisor.subprocess.run", side_effect=fake_run):
+                    _commit, worktree = supervisor._seed_candidate(repo, ctx, task)
+            finally:
+                if worktree is not None:
+                    supervisor._drop_worktree(repo, worktree)
+
+        self.assertEqual(len(captured), 1)
+        env = captured[0]
+        self.assertEqual(env["MERISTEM_CREDENTIALS_FILE"], "/soil/provider.key")
+        self.assertNotIn("SENSENOVA_API_KEY", env)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -235,6 +235,12 @@ def _seed_candidate(repo, ctx, task):
     env = {**_probe_runner._sandboxed_env(), "PYTHONPATH": str(worktree),
            "MERISTEM_SOIL_CYCLE": str(ctx.soil_cycle),
            "MERISTEM_MODEL_GATEWAY": MODEL_GATEWAY_ENTRYPOINT}
+    # Pass only a pointer to the soil-owned credential file.  Never widen the
+    # allowlist with the provider key itself.  An absent pointer stays absent;
+    # the gateway then returns its normal fail-closed no_credentials result.
+    credentials_file = os.environ.get("MERISTEM_CREDENTIALS_FILE")
+    if credentials_file:
+        env["MERISTEM_CREDENTIALS_FILE"] = credentials_file
     try:
         result = subprocess.run([sys.executable, "-m", "meristem.loop", "cycle"],
                                 cwd=str(worktree), env=env, capture_output=True,
