@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 
 from substrate import pipeline
-from substrate.supervisor import _preflight_has_pending_promotion, _preflight_panel
+from substrate.supervisor import (
+    _preflight_has_pending_promotion, _preflight_panel, autonomous_panel,
+)
 
 
 class PreflightPanelTests(unittest.TestCase):
@@ -14,6 +16,21 @@ class PreflightPanelTests(unittest.TestCase):
         self.assertFalse(verdict.passed)
         self.assertEqual(verdict.authority, "manual")
         self.assertIn("promotion disabled", verdict.reason)
+    def test_autonomous_panel_has_no_human_authority(self):
+        task = pipeline.Task(
+            task_id="task", kind="repair", target="classifier",
+            primary_probe="probe-classify-basic", required_target_paths=("body/organs/classifier/",),
+            forbidden_paths=("tests/",))
+        verdict = autonomous_panel(
+            "candidate", "diff --git a/body/organs/classifier/run.py b/body/organs/classifier/run.py\n",
+            task)
+        self.assertTrue(verdict.passed)
+        self.assertEqual(verdict.authority, "soil-autonomous")
+        rejected = autonomous_panel(
+            "candidate", "diff --git a/tests/x.py b/tests/x.py\n", task)
+        self.assertFalse(rejected.passed)
+        self.assertEqual(rejected.authority, "soil-autonomous")
+
     def test_preflight_does_not_resolve_same_attempt_different_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

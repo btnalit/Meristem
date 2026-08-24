@@ -586,6 +586,32 @@ def _preflight_panel(commit: str, diff: str, task):
     return _pipeline.Verdict(False, "manual", "H1-preflight: promotion disabled")
 
 
+def autonomous_panel(commit: str, diff: str, task):
+    """Soil-owned deterministic panel for formal autonomous H1.
+
+    It receives only the candidate diff and task declaration. Measurement is
+    deliberately evaluated outside this panel; process_candidate performs the
+    soil-owned task/probe gates before and the canary/transaction gates after it.
+    """
+    if not diff.strip():
+        return _pipeline.Verdict(False, "soil-autonomous", "empty candidate diff")
+    headers = [line[6:].split(" b/", 1)[-1]
+               for line in diff.splitlines() if line.startswith("diff --git ")]
+    if not headers:
+        return _pipeline.Verdict(False, "soil-autonomous", "candidate diff has no paths")
+    forbidden = tuple(task.forbidden_paths) + (
+        "tests/", "probes/", "constitution", "agenda", "root/", "soil/", "state/")
+    def matches(path: str, rule: str) -> bool:
+        rule = rule.rstrip("/")
+        return path == rule or path.startswith(rule + "/")
+    if any(matches(path, rule) for path in headers for rule in forbidden):
+        return _pipeline.Verdict(False, "soil-autonomous", "autonomous path policy rejected candidate")
+    required = tuple(task.required_target_paths)
+    if required and not any(matches(path, rule) for path in headers for rule in required):
+        return _pipeline.Verdict(False, "soil-autonomous", "autonomous target policy rejected candidate")
+    return _pipeline.Verdict(True, "soil-autonomous", "autonomous soil gate passed")
+
+
 def _refresh_projection_and_manifest(repo: pathlib.Path, task_id: str) -> None:
     feedback_projection.write_projection(repo, task_id=task_id)
     if not feedback_projection.projection_is_fresh(repo):
@@ -594,9 +620,12 @@ def _refresh_projection_and_manifest(repo: pathlib.Path, task_id: str) -> None:
 
 
 def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
-                 preflight: bool = False) -> int:
+                 preflight: bool = False, autonomous: bool = False) -> int:
     """§12.0.2：**走与未来 heartbeat 完全相同的代码路径。** 唯一的区别是判决位上坐着人。"""
     repo = REPO
+    if preflight and autonomous:
+        print("--preflight and --autonomous are mutually exclusive", file=sys.stderr)
+        return 2
     task = _load_task(repo, task_path)
     try:
         runtime_manifest.verify(repo, task_id=task.task_id)
@@ -664,7 +693,8 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
     try:
         outcome = _pipeline.process_candidate(
             commit, task, repo=repo,
-            panel=_preflight_panel if preflight else manual_prompt,
+            panel=(_preflight_panel if preflight else
+                   autonomous_panel if autonomous else manual_prompt),
             ctx=ctx)
     except _pipeline.TaskDeclarationError as exc:
         # **设计内的拒绝不该以 traceback 出现。** Task 声明违反 §8.1.4 是一个
@@ -825,6 +855,8 @@ def main(argv=None) -> int:
                         help="处理一个已存在的候选 commit，而不是跑种子产出候选")
     parser.add_argument("--preflight", action="store_true",
                         help="H1-preflight：允许测量但强制禁止 promotion")
+    parser.add_argument("--autonomous", action="store_true",
+                        help="正式 H1 soil-owned autonomous panel（默认不启动）")
     parser.add_argument("--task", default=None,
                         help=f"Task 声明路径（默认 {DEFAULT_TASK_DECLARATION}）")
     args = parser.parse_args(argv)
@@ -846,7 +878,8 @@ def main(argv=None) -> int:
         return freeze_probe(args.proposal)
 
     return manual_cycle(calibration=args.calibration, candidate=args.candidate,
-                        task_path=args.task, preflight=args.preflight)
+                        task_path=args.task, preflight=args.preflight,
+                        autonomous=args.autonomous)
 
 
 if __name__ == "__main__":

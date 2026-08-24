@@ -143,16 +143,16 @@ class Task:
 
 @dataclasses.dataclass(frozen=True)
 class Verdict:
-    """判决。`authority ∈ {manual, panel}` —— **这是 manual 与 panel 之间唯一的差别**
-    （§12.0.2）。y/n 落在这里，不落在 merge 位置。"""
+    """判决。`authority ∈ {manual, panel, soil-autonomous}` ——
+    manual 是测试适配器，soil-autonomous 是正式 H1 的土壤权限。"""
 
     passed: bool
     authority: str
     reason: str = ""
 
     def __post_init__(self):
-        if self.authority not in ("manual", "panel"):
-            raise ValueError(f"verdict.authority 只能是 manual 或 panel，收到 {self.authority!r}")
+        if self.authority not in ("manual", "panel", "soil-autonomous"):
+            raise ValueError(f"verdict.authority 只能是 manual、panel 或 soil-autonomous，收到 {self.authority!r}")
 
 
 # ---------------------------------------------------------------------------
