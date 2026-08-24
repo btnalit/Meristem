@@ -47,6 +47,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from root import panic  # noqa: E402
+from substrate import feedback_projection  # noqa: E402
 from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
@@ -376,6 +377,12 @@ def _seed_candidate(repo, ctx, task):
     worker_parent.chmod(0o700)
     worker_root = worker_parent / "surface"
     _copy_worker_surface(worktree, worker_root)
+    projection = pathlib.Path(repo) / "seed" / "feedback.json"
+    if projection.is_file():
+        target = worker_root / "seed" / "feedback.json"
+        shutil.copy2(projection, target)
+        os.chown(target, pwd.getpwnam("worker").pw_uid,
+                 grp.getgrnam("worker").gr_gid)
     socket_dir = pathlib.Path(tempfile.mkdtemp(prefix="meristem-gateway-", dir="/tmp"))
     os.chown(socket_dir, pwd.getpwnam("soil").pw_uid, grp.getgrnam("worker").gr_gid)
     socket_dir.chmod(0o730)
@@ -526,6 +533,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
         if worktree is not None:
             _drop_worktree(repo, worktree)
 
+    feedback_projection.write_projection(repo, task_id=task.task_id)
     print(f"outcome: {outcome.name}")
     if calibration:
         print("校准：已测量、强制回滚、**永不 merge** —— 结构上产不出 accepted_fitness"

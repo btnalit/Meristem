@@ -1117,7 +1117,9 @@ sensenova      / cycle 940002：4 attempts，最终 result=deferred，reason=rat
 
 ---
 
-### 2026-08-24 · P0-a 波次 15：OpenAI SDK soil transport 三供应商验证
+### 2026-08-24 · Agnes 多轮自优化实验准备
+
+Agnes 已完成结构化 mutation 输出与单圈 measurement，但若连续运行前没有 soil-owned `seed/feedback.json` 投影，失败不会进入下一轮 prompt，实验会退化成无学习的重复调用。本轮先补齐最小反馈闭环：soil ledger → 受限 seed feedback projection → 下一轮 mutation context；投影不包含 prompt、provider 原文、credential、soil 私有路径或完整 mutation 内容。
 
 按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem

@@ -8,6 +8,7 @@ lesson), and any symlink aimed at a protected file.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import pathlib
 
@@ -142,6 +143,9 @@ def _build_context_with_budget(task: str, *, config, extra: str = "") -> tuple[s
     constitution = _read_constitution()
     if constitution:
         parts.append(constitution)
+    feedback = _read_feedback()
+    if feedback:
+        parts.append(feedback)
     if extra:
         parts.append(extra)
     if config:
@@ -185,6 +189,31 @@ def _read_constitution() -> str:
         return ""
     return ("Your constitution (you may rewrite it; the mechanisms it describes "
             f"are enforced regardless of what this file says):\n{text}")
+
+
+def _read_feedback() -> str:
+    """Read only the soil-rendered, bounded learning projection."""
+    path = SEED_DIR / "feedback.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    facts = doc.get("facts", {}) if isinstance(doc, dict) else {}
+    if not isinstance(facts, dict):
+        return ""
+    recent = facts.get("recent_attempts", [])
+    if not isinstance(recent, list):
+        return ""
+    safe = []
+    for item in recent[-8:]:
+        if isinstance(item, dict):
+            safe.append({k: item[k] for k in (
+                "soil_cycle", "outcome", "reason", "primary_probe",
+                "before", "after", "delta", "status") if k in item})
+    if not safe:
+        return ""
+    return "Previous soil-measured attempts (do not repeat an unchanged strategy):\n" + json.dumps(
+        safe, ensure_ascii=False, sort_keys=True)
 
 
 def _is_writable_path(rel: str) -> bool:
