@@ -1152,7 +1152,8 @@ cycle=25：candidate a37cd0524125；完成 measurement；UNFULFILLED；delta=0.0
 - 记录 changed-path family 与 strategy fingerprint，形成有界 strategy memory；
 - 增加不具备 promotion 权限的 diagnostic review 分类；
 - 增加显式标注 hypothesis/next_strategy/source_cycles 的 reflection projection；
-- 新增只读 `learning-status`，只报告学习跑道状态，不求值 H1、不启动模型；
+- 增加只读 `learning-status`，只报告学习跑道状态，不求值 H1、不启动模型；
+- parked/fulfilled/blocked task 在 soil supervisor 启动 gateway 前被 task gate 拒绝，写入 `task_guarded`，不消耗 provider 调用；
 - `seed/feedback.json` 仍只由 soil 写入，保持 freshness gate、soil ownership、无 prompt/response/credential/mutation body。
 
 阶段 5/H1 的前置 gate：全量测试、attempt linkage 完整、task state 可迁移、strategy fingerprint 可去重、diagnostic/reflection 可读、真实 Learning Runway 通过，且 calibration 能证明 soil measurement 正常。任何一项未通过均继续冻结 H1。

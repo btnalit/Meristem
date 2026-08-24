@@ -530,6 +530,20 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
         return 2
 
     task = _load_task(repo, task_path)
+    try:
+        feedback_doc = json.loads((repo / "seed" / "feedback.json").read_text(encoding="utf-8"))
+        task_state = feedback_doc.get("facts", {}).get("task_states", {}).get(task.task_id, {})
+    except (OSError, ValueError, TypeError):
+        task_state = {}
+    if task_state.get("state") in {"parked", "fulfilled", "blocked"}:
+        ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": task.task_id,
+                           "attempt_id": getattr(ctx, "attempt_id", "att-legacy-test"),
+                           "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
+                           "exit_code": 2, "failure_reason": "task_guarded",
+                           "task_state": task_state.get("state")})
+        feedback_projection.write_projection(repo, task_id=task.task_id)
+        print(f"task guarded: {task.task_id} state={task_state.get('state')}", file=sys.stderr)
+        return 2
     worktree = None
     if candidate is None:
         commit, worktree = _seed_candidate(repo, ctx, task)
