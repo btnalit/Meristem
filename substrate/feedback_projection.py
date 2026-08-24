@@ -97,7 +97,13 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
                 match = next((o for o in observed if o.get("commit") == event.get("commit")), None)
             if match:
                 item = _observed_summary(match)
-                item["strategy_fingerprint"] = event.get("strategy_fingerprint")
+                shape = event.get("strategy_shape") or strategy_memory.diff_shape(repo, event["commit"])
+                item["strategy_shape"] = shape
+                if shape.get("patch_sha256") is None and event.get("strategy_fingerprint"):
+                    item["strategy_fingerprint"] = event["strategy_fingerprint"]
+                else:
+                    item["strategy_fingerprint"] = strategy_memory.strategy_fingerprint(
+                        event.get("changed_paths", []), shape)
                 item["changed_paths"] = [strategy_memory.path_family(p)
                                          for p in event.get("changed_paths", [])]
                 matching = [o for o in outcomes if o.get("source") == match.get("event_id")]

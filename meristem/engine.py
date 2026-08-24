@@ -214,7 +214,7 @@ def _read_feedback() -> str:
             safe.append({k: item[k] for k in (
                 "soil_cycle", "attempt_id", "outcome", "reason", "primary_probe",
                 "before", "after", "delta", "status",
-                "strategy_fingerprint", "changed_paths", "diagnosis_class",
+                "strategy_fingerprint", "strategy_shape", "changed_paths", "diagnosis_class",
                 "mechanism_status", "next_experiment_constraint") if k in item})
     if reflection and (reflection.get("authoritative") is not False
                        or not reflection.get("source_ledger_tail_hash")

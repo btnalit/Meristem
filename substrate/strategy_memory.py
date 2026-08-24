@@ -2,14 +2,48 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import subprocess
 from collections import defaultdict
 from typing import Iterable
 
 
-def strategy_fingerprint(changed_paths: Iterable[str]) -> str:
+def diff_shape(repo, commit: str) -> dict:
+    """Return bounded soil-side diff metadata; never return patch content."""
+    try:
+        patch = subprocess.run(
+            ["git", "diff", "--no-ext-diff", f"{commit}^", commit],
+            cwd=str(repo), capture_output=True, text=True, check=True).stdout
+        numstat = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--numstat", f"{commit}^", commit],
+            cwd=str(repo), capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {"files": 0, "families": [], "patch_sha256": None}
+    families = defaultdict(lambda: {"files": 0, "added": 0, "deleted": 0})
+    for line in numstat.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        added, deleted, path = parts
+        if not added.isdigit() or not deleted.isdigit():
+            continue
+        item = families[path_family(path)]
+        item["files"] += 1
+        item["added"] += int(added)
+        item["deleted"] += int(deleted)
+    return {
+        "files": sum(item["files"] for item in families.values()),
+        "families": [{"family": family, **families[family]}
+                     for family in sorted(families)],
+        "patch_sha256": hashlib.sha256(patch.encode()).hexdigest(),
+    }
+
+
+def strategy_fingerprint(changed_paths: Iterable[str], diff_shape: dict | None = None) -> str:
     families = sorted({path_family(path) for path in changed_paths if path})
-    payload = "\n".join(families).encode("utf-8")
-    return "strat-" + hashlib.sha256(payload).hexdigest()[:24]
+    payload = {"families": families, "diff_shape": diff_shape or {}}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "strat-" + hashlib.sha256(encoded).hexdigest()[:24]
 
 
 def path_family(path: str) -> str:

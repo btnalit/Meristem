@@ -10,7 +10,12 @@ class StrategyMemoryTests(unittest.TestCase):
             strategy_fingerprint(["body/organs/classifier/run.py", "tests/a.py"]),
         )
 
-    def test_summary_counts_repeated_task_strategy(self):
+    def test_fingerprint_distinguishes_diff_shape(self):
+        paths = ["tests/a.py", "body/organs/classifier/run.py"]
+        first = {"files": 2, "families": [{"family": "body/organs/classifier", "files": 1, "added": 4, "deleted": 1}], "patch_sha256": "a"}
+        second = {"files": 2, "families": [{"family": "body/organs/classifier", "files": 1, "added": 9, "deleted": 2}], "patch_sha256": "b"}
+        self.assertNotEqual(strategy_fingerprint(paths, first), strategy_fingerprint(paths, second))
+
         rows = [
             {"task_id": "t1", "strategy_fingerprint": "s1", "delta": 0.0,
              "outcome": "UNFULFILLED"},

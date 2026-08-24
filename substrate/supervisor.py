@@ -473,12 +473,16 @@ def _seed_candidate(repo, ctx, task):
                                        for line in stderr.splitlines()
                                        if line.startswith("SOIL_REFLECTION_SOURCE_ATTEMPTS=")
                                        and line.split("=", 1)[1].strip().isdigit()), None)
+    strategy_shape = strategy_memory.diff_shape(repo, commit) if commit else None
+    strategy_id = (strategy_memory.strategy_fingerprint(recovered, strategy_shape)
+                   if recovered else None)
     ctx.ledger.append({"kind": "cycle", "commit": commit, "task_id": task.task_id,
                        "attempt_id": getattr(ctx, "attempt_id", learning_state.new_attempt_id()),
                        "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
                        "exit_code": result.returncode,
                        "changed_paths": recovered,
-                       "strategy_fingerprint": strategy_memory.strategy_fingerprint(recovered) if recovered else None,
+                       "strategy_fingerprint": strategy_id,
+                       "strategy_shape": strategy_shape,
                        **({"feedback_source_hash": feedback_source_hash} if feedback_source_hash else {}),
                        **({"reflection_source_attempts": reflection_source_attempts} if reflection_source_attempts is not None else {}),
                        **({"failure_reason": failure_reason} if failure_reason else {})})

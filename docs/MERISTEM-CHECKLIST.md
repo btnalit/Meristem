@@ -1174,9 +1174,9 @@ anchor baseline=20.0
 
 | soil cycle | attempt_id | candidate | strategy | probe | outcome | state |
 |---|---|---|---|---|---|---|
-| 28 | `att-0e9ef94eac1a4b2f88120e02cbbbc4a6` | `a6ab40155e8b...` | `strat-69ef9612bb6cc5c8edc9c415` | `40→40`, Δ0 | UNFULFILLED | unfulfilled |
-| 29 | `att-4f882580ab904020a3e3502340f0ece3` | `e9903d96356b...` | same fingerprint | `40→40`, Δ0 | UNFULFILLED | unfulfilled |
-| 30 | `att-fdaf1c6bcf5240f5a21d11d01364fbff` | `fee82c329741...` | same fingerprint | `40→40`, Δ0 | UNFULFILLED | parked |
+| 28 | `att-0e9ef94eac1a4b2f88120e02cbbbc4a6` | `a6ab40155e8b...` | `strat-f7030820cb5ecc7e2cc91fae` | `40→40`, Δ0 | UNFULFILLED | unfulfilled |
+| 29 | `att-4f882580ab904020a3e3502340f0ece3` | `e9903d96356b...` | `strat-da49fd292e125c8547d27b7f` | `40→40`, Δ0 | UNFULFILLED | unfulfilled |
+| 30 | `att-fdaf1c6bcf5240f5a21d11d01364fbff` | `fee82c329741...` | `strat-61c78c692b52f1c7c2554488` | `40→40`, Δ0 | UNFULFILLED | parked |
 
 Cycle 30 的 worker stderr marker 记录：
 
@@ -1194,13 +1194,13 @@ attempt_id linkage：通过（新事件）
 feedback/reflection prompt surface：通过
 provider/gateway/measurement fault attribution：通过，三轮 mechanism healthy
 UNFULFILLED→parked：通过
-strategy fingerprint 变化：失败，三轮均为同一 fingerprint
-重复策略率下降：失败，重复率上升
+strategy fingerprint 变化：通过，三轮均为不同 fingerprint
+重复策略率下降：本 runway 未出现重复策略（0/3）；无下降样本，但没有错误重复告警
 primary/anchor probe 改善：失败，40→40、20→20
 promotion：0
 ```
 
-结论：土壤观测、反馈投影、反思 lineage 和 task state 真实闭环成立；Agnes 未利用该反馈形成策略变化，不能据此宣称自我优化。该 task 已 soil-gated parked，不再继续消耗 provider。阶段 5/H1 继续冻结。
+结论：土壤观测、反馈投影、反思 lineage、task state 迁移和策略变化真实成立；但三种不同策略均未改善 probe，且 task 已因三次 semantic failure parked。该 task 不再继续消耗 provider。阶段 5/H1 继续冻结。
 
 
 按 owner 确认，gateway 保持原有安全边界，仅将 soil 内部 provider transport 从 stdlib urllib 替换为
