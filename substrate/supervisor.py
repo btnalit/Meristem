@@ -75,6 +75,17 @@ def _is_worker_writable(rel: str) -> bool:
                for item in _WORKER_WRITABLE)
 
 
+def _worker_surface_materialized(rel: str) -> bool:
+    """Whether absence in worker can represent an intentional deletion.
+
+    Recovery may infer deletions only inside materialized source directories.
+    A writable path outside that surface was never presented to the worker, so
+    its absence is not evidence of a mutation.
+    """
+    top = rel.split("/", 1)[0]
+    return top in _WORKER_COPY_DIRS
+
+
 def _copy_worker_surface(source: pathlib.Path, destination: pathlib.Path) -> None:
     """Materialize only the seed-visible source surface for worker execution."""
     destination.mkdir(mode=0o700, parents=True)
@@ -146,7 +157,9 @@ def _recover_worker_changes(worker_root: pathlib.Path, worktree: pathlib.Path) -
         for name in files:
             target = pathlib.Path(root) / name
             rel = target.relative_to(worktree).as_posix()
-            if _is_worker_writable(rel) and not (worker_root / rel).exists():
+            if (_is_worker_writable(rel)
+                    and _worker_surface_materialized(rel)
+                    and not (worker_root / rel).exists()):
                 _reject_target_links(worktree, rel)
                 if target.is_symlink():
                     raise OSError(f"soil worktree contains symlink: {target}")

@@ -1216,8 +1216,22 @@ Cycle 32 prompt hash 与 cycle 31 不同，response hash 也不同，reflection 
 
 结论：task-scoped projection、无敏感 prompt/response telemetry 和 forbidden-path soil gate 已真实生效；当前 Agnes 仍未遵守 task-specific scope，因此本 runway 暂停，不能把 UNMEASURED 当作 probe 失败，也不能进入 H1。
 
-`openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem
-soil 自己控制。
+### 2026-08-24 · 模型通信完整性复核与 recovery 根因修复
+
+独立审查和 cycle 33 真实 telemetry 排除了模型通信截断：
+
+```text
+cycle 33: response_length=3861
+provider finish_reason=stop
+provider prompt_tokens=2700
+provider completion_tokens=1723
+parse_status=ok
+returned_paths_hash=f7b492...  # 仅 classifier path
+```
+
+真正根因是 worker surface/recovery 断链：`_WORKER_COPY_DIRS` 没有 materialize `tests/`，但 `_WORKER_WRITABLE` 包含 `tests/`；recovery 将 worker 中不存在的 tests 文件错误解释为删除。修复后 recovery 只在已 materialize 的目录推断 deletion，并新增回归测试。此前 cycle31/32/33 的 tests/22 变化不得再归因于模型返回。
+
+`openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem soil 自己控制。
 
 新增：
 

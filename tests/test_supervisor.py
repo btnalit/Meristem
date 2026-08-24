@@ -200,6 +200,17 @@ class WorkerSurfaceIsolationTests(unittest.TestCase):
             self.assertEqual(changed, ["body/organs/a.py"])
             self.assertFalse((worktree / "body/organs/a.py").exists())
 
+    def test_recovery_does_not_infer_deletion_outside_materialized_surface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = Path(tmp) / "worker"
+            worktree = Path(tmp) / "worktree"
+            worker.mkdir()
+            (worktree / "tests").mkdir(parents=True)
+            (worktree / "tests/test_kept.py").write_text("keep", encoding="utf-8")
+            changed = supervisor._recover_worker_changes(worker, worktree)
+            self.assertEqual(changed, [])
+            self.assertTrue((worktree / "tests/test_kept.py").exists())
+
     def test_recovery_rejects_target_symlink_before_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             worker = Path(tmp) / "worker"
