@@ -60,14 +60,15 @@ def _safe_reason(*, outcome: str | None = None, failure_reason: str | None = Non
 def projection_is_fresh(repo: pathlib.Path) -> bool:
     repo = pathlib.Path(repo)
     ledger = repo / "state" / "soil-ledger.jsonl"
-    target = repo / "seed" / "feedback.json"
-    if not ledger.is_file() or not target.is_file():
+    targets = (repo / "seed" / "feedback.json", repo / "soil" / "report-facts.json")
+    if not ledger.is_file() or any(not target.is_file() for target in targets):
         return False
+    expected = _tail_hash(ledger)
     try:
-        doc = json.loads(target.read_text(encoding="utf-8"))
+        return all(json.loads(target.read_text(encoding="utf-8")).get(
+            "source_ledger_tail_hash") == expected for target in targets)
     except (OSError, ValueError):
         return False
-    return doc.get("source_ledger_tail_hash") == _tail_hash(ledger)
 
 
 def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathlib.Path:
@@ -171,21 +172,26 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
         "source_ledger_tail_hash": _tail_hash(ledger_path),
         "facts": facts,
     }
-    target = repo / "seed" / "feedback.json"
-    fd, tmp_name = tempfile.mkstemp(prefix=".feedback.", dir=str(target.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(tmp_name, 0o644)
-        os.chown(tmp_name, pwd.getpwnam("soil").pw_uid,
-                 grp.getgrnam("soil").gr_gid)
-        os.replace(tmp_name, target)
-    finally:
+    targets = (
+        (repo / "seed" / "feedback.json", 0o644),
+        (repo / "soil" / "report-facts.json", 0o600),
+    )
+    for target, mode in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(target.parent), text=True)
         try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
-    return target
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp_name, mode)
+            os.chown(tmp_name, pwd.getpwnam("soil").pw_uid,
+                     grp.getgrnam("soil").gr_gid)
+            os.replace(tmp_name, target)
+        finally:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+    return repo / "seed" / "feedback.json"

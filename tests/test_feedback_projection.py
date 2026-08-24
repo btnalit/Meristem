@@ -48,7 +48,16 @@ class FeedbackProjectionTests(unittest.TestCase):
                 fh.write(json.dumps({"kind": "cycle", "soil_cycle": 2}) + "\n")
             self.assertFalse(projection_is_fresh(repo))
 
-    def test_projection_derives_task_state_and_strategy_memory(self):
+    def test_projection_is_not_fresh_when_report_projection_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "state").mkdir()
+            (repo / "seed").mkdir()
+            ledger = repo / "state" / "soil-ledger.jsonl"
+            ledger.write_text(json.dumps({"kind": "cycle"}) + "\n")
+            payload = {"source_ledger_tail_hash": "wrong", "facts": {}}
+            (repo / "seed" / "feedback.json").write_text(json.dumps(payload))
+            self.assertFalse(projection_is_fresh(repo))
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             (repo / "state").mkdir()

@@ -545,13 +545,40 @@ def _drop_worktree(repo, worktree) -> None:
     shutil.rmtree(worktree.parent, ignore_errors=True)
 
 
-def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -> int:
+def _preflight_has_pending_promotion(repo: pathlib.Path) -> bool:
+    """Preflight refuses to reconcile promotion transactions into acceptance."""
+    path = repo / "state" / "soil-ledger.jsonl"
+    try:
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+    except (OSError, ValueError):
+        return True
+    intents = {row.get("event_id") for row in rows if row.get("kind") == "promotion_intent"}
+    terminal_sources = {
+        row.get("source") for row in rows
+        if row.get("kind") in {"accepted_fitness", "promotion_committed", "promotion_outcome"}
+    }
+    return bool({item for item in intents if item} - terminal_sources)
+
+
+def _preflight_panel(commit: str, diff: str, task):
+    """H1-preflight is measurement-only: it can never authorize promotion."""
+    return _pipeline.Verdict(False, "manual", "H1-preflight: promotion disabled")
+
+
+def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
+                 preflight: bool = False) -> int:
     """§12.0.2：**走与未来 heartbeat 完全相同的代码路径。** 唯一的区别是判决位上坐着人。"""
     repo = REPO
     ctx = _soil_state.SoilContext.open(
         repo, generation=_generation(repo), soil_cycle=_next_soil_cycle(repo),
         calibration=calibration)
 
+    # Preflight must not let startup reconciliation create accepted/promotion events.
+    if preflight and _preflight_has_pending_promotion(repo):
+        print("H1-preflight refused: pending promotion transaction requires soil recovery first",
+              file=sys.stderr)
+        return 2
     # 启动必跑。**P0-a 不只是在测种子，也是在测土壤自己的事务链**：
     # 崩溃恢复要到 P0-c 无人值守时才第一次被真正需要，绕过它就等于没测（§12.0.2）。
     for commit, outcome in _pipeline.reconcile_on_start(repo, ctx):
@@ -602,8 +629,10 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None) -
         commit = _pipeline.git(repo, "rev-parse", candidate)
 
     try:
-        outcome = _pipeline.process_candidate(commit, task, repo=repo,
-                                              panel=manual_prompt, ctx=ctx)
+        outcome = _pipeline.process_candidate(
+            commit, task, repo=repo,
+            panel=_preflight_panel if preflight else manual_prompt,
+            ctx=ctx)
     except _pipeline.TaskDeclarationError as exc:
         # **设计内的拒绝不该以 traceback 出现。** Task 声明违反 §8.1.4 是一个
         # 预期结果（C1 的 eligible_after 就是靠它生效的），操作员该看到的是
@@ -760,6 +789,8 @@ def main(argv=None) -> int:
                         help="装置对照组（§12.0.1）：人工给定的变更，强制回滚、永不 merge")
     parser.add_argument("--candidate", default=None,
                         help="处理一个已存在的候选 commit，而不是跑种子产出候选")
+    parser.add_argument("--preflight", action="store_true",
+                        help="H1-preflight：允许测量但强制禁止 promotion")
     parser.add_argument("--task", default=None,
                         help=f"Task 声明路径（默认 {DEFAULT_TASK_DECLARATION}）")
     args = parser.parse_args(argv)
@@ -781,7 +812,7 @@ def main(argv=None) -> int:
         return freeze_probe(args.proposal)
 
     return manual_cycle(calibration=args.calibration, candidate=args.candidate,
-                        task_path=args.task)
+                        task_path=args.task, preflight=args.preflight)
 
 
 if __name__ == "__main__":

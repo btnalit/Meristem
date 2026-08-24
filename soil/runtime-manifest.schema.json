@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Meristem soil runtime manifest",
+  "type": "object",
+  "required": ["schema_version", "task_id", "generation", "ledger_tail_hash", "projection_hashes", "ownership", "fail_closed"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "generation": {"type": "string", "minLength": 1},
+    "ledger_tail_hash": {"type": "string", "minLength": 1},
+    "projection_hashes": {"type": "object", "required": ["seed_feedback"], "additionalProperties": {"type": "string", "minLength": 1}},
+    "ownership": {"type": "object", "required": ["owner", "group", "modes"], "properties": {"owner": {"const": "soil"}, "group": {"const": "soil"}, "modes": {"type": "object"}}},
+    "fail_closed": {"type": "object", "required": ["missing_projection", "manifest_mismatch"], "properties": {"missing_projection": {"const": true}, "manifest_mismatch": {"const": true}}}
+  },
+  "additionalProperties": false
+}

@@ -130,7 +130,7 @@ Add a read-only status command that reports strategy diversity, repeated strateg
 
 **Files:** `substrate/supervisor.py`, `docs/MERISTEM-CHECKLIST.md`, `docs/MERISTEM-V5-SPEC.md`
 
-Require full test suite, calibration proof, fresh projection, clean ownership, no leaked secrets, complete attempt linkage, and a successful bounded Learning Runway before Stage 5/H1 can be started. H1 remains frozen until an explicit later owner decision.
+Require full test suite, calibration proof, fresh projection, clean ownership, no leaked secrets, complete attempt linkage, and a successful bounded Learning Runway before Stage 5/H1 can be started. **Layer 0/H1-preflight requires both soil-owned projections (`seed/feedback.json` and `soil/report-facts.json`) to carry the same ledger tail hash; a missing projection is fail-closed, not a silent skip.** H1 remains frozen until an explicit later owner decision.
 
 ## Phase 6: Verification and release
 

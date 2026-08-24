@@ -45,7 +45,24 @@
 
 ---
 
+### Layer 0 / H1-preflight boundary (2026-08-24)
+
+当前保持 `H1=frozen`。Layer 0 先完成 repeated-strategy 分类、parked task 新 identity、rollback contract、runtime manifest schema 和 CA-12 projection 口径。无晋级 H1-preflight 要求 `seed/feedback.json` 与 `soil/report-facts.json` 使用同一 ledger tail hash；缺失即 fail-closed。
+
+新受控 task：
+
+```text
+task_id=8388cd245b011a91
+previous task 1a6f502d84ae7a99=parked，仅保留历史，不 unpark
+```
+
+Layer 0 rollback contract 与演练要求：`docs/MERISTEM-LAYER0-ROLLBACK.md`。
+
 ## 任务记录
+
+### 2026-08-24 · Layer 0 治理修复启动
+
+新受控 task 已切换到 soil declaration 与 agenda 首条；旧 parked task 只保留历史。
 
 ### 2026-08-23 · v5 规格 v5.7 → v5.8-frozen + 停 v3.1 进化
 
