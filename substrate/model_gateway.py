@@ -162,7 +162,7 @@ def _credential_value(slot: dict) -> str | None:
 
 
 def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
-                   before_attempt=None) -> tuple[str, str | None, str | None]:
+                   before_attempt=None, on_attempt=None) -> tuple[str, str | None, str | None]:
     """provider 调用的唯一入口。返回 `(status, content, reason)`。
 
     **本环境没有凭据，也不能编一个。** 这不是「没写完的占位符」——是这道缝
@@ -183,6 +183,8 @@ def _call_provider(slot: dict, prompt: str, *, retry: dict | None = None,
     for attempt in range(max_attempts):
         if before_attempt is not None and not before_attempt():
             return "refused", None, "budget"
+        if on_attempt is not None:
+            on_attempt(attempt + 1)
 
         # 真正的 provider 调用：OpenAI 兼容的 chat/completions（三个槽位的
         # base_url 都是这个形状）。**只用 stdlib**——仓库里没有任何第三方依赖声明
@@ -275,6 +277,13 @@ def handle(request, *, policy: dict, calls_ledger: Path, cycle: int) -> dict:
     if "retry" in policy and retry is None:
         return {"status": "refused", "reason": "policy"}
 
+    mode = execution_mode()
+    telemetry_path = (_budget.DEFAULT_PROVIDER_EVENTS_LEDGER
+                      if Path(calls_ledger) == _budget.DEFAULT_CALLS_LEDGER
+                      else Path(calls_ledger).with_name("soil-provider-events.jsonl"))
+    telemetry = _budget.ProviderEventLedger(telemetry_path)
+    attempts_seen = 0
+
     def before_attempt() -> bool:
         attempt_violation = _budget.check(calls_ledger, cycle, policy=policy)
         if attempt_violation is not None:
@@ -286,8 +295,20 @@ def handle(request, *, policy: dict, calls_ledger: Path, cycle: int) -> dict:
             cycle=cycle, role=role, slot_id=str(slot.get("id")))
         return True
 
+    def on_attempt(attempt: int) -> None:
+        nonlocal attempts_seen
+        attempts_seen = attempt
+        telemetry.record(cycle=cycle, mode=mode, role=role,
+                         slot_id=str(slot.get("id")), model=str(slot.get("model")),
+                         event="attempt", attempt=attempt)
+
     status, content, reason = _call_provider(slot, prompt, retry=retry,
-                                              before_attempt=before_attempt)
+                                              before_attempt=before_attempt,
+                                              on_attempt=on_attempt)
+    telemetry.record(cycle=cycle, mode=mode, role=role,
+                     slot_id=str(slot.get("id")), model=str(slot.get("model")),
+                     event="result", status=status, reason=reason,
+                     attempt=attempts_seen)
 
     response: dict = {"status": status}
     if content is not None:

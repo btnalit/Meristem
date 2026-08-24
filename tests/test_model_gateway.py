@@ -73,6 +73,23 @@ class HandleBasicShapeTests(unittest.TestCase):
 
 
 class ModelGatewayTests(unittest.TestCase):
+    def test_provider_telemetry_is_separate_from_budget_call_ledger(self):
+        body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(os.environ, {"MERISTEM_TEST_UNSET_KEY": "fake-key-for-test",
+                                           "MERISTEM_MODEL_MODE": "openrouter-free"}), \
+             mock.patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(body)):
+            calls = Path(tmp) / "soil-model-calls.jsonl"
+            resp = model_gateway.handle({"role": "mutate", "prompt": "x"},
+                                        policy=_policy(), calls_ledger=calls, cycle=7)
+            self.assertEqual(resp["status"], "allowed")
+            events = Path(tmp) / "soil-provider-events.jsonl"
+            rows = [json.loads(line) for line in events.read_text().splitlines()]
+            self.assertEqual([row["event"] for row in rows], ["attempt", "result"])
+            self.assertEqual(rows[-1]["status"], "allowed")
+            self.assertEqual(rows[-1]["attempt"], 1)
+            self.assertEqual(len(calls.read_text().splitlines()), 1)
+
     def test_execution_mode_selects_only_soil_owned_allowlisted_policy(self):
         self.assertEqual(
             model_gateway.policy_path_for_mode("openrouter-free").name,

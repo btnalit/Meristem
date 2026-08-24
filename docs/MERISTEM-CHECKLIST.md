@@ -1059,6 +1059,58 @@ credential 仍为临时 soil:soil 0600 文件，测试后删除；key 未进入 
 
 ---
 
+### 2026-08-24 · P0-a 波次 12：provider telemetry
+
+阶段 1 已补齐 soil-side provider 观测台账：
+
+```text
+state/soil-provider-events.jsonl
+```
+
+与 `state/soil-model-calls.jsonl` 分离，避免 result 行影响滚动预算计数。每次真实 provider 调用只在 soil
+侧记录脱敏元数据：
+
+```text
+mode / role / slot_id / model / event(attempt|result)
+status / reason / attempt count
+```
+
+不记录 prompt、content、credential；worker 仍只收到三态 ABI。429 由 provider adapter 映射为
+`reason=rate_limited`、最终 `status=deferred`，表示 provider 可达但当前限流，不等同 provider 不可用。
+新增回归测试确认 telemetry 与预算台账分离。
+
+验证：
+
+```text
+telemetry 定向测试：5 passed
+全量测试：239 passed, 3 skipped, 71 subtests passed
+```
+
+阶段 1–4 尚未全部完成：本波次真实 provider smoke 仍未取得 `allowed/content`，因此 manual-cycle 与稳定性结论继续阻塞；阶段 5 H1 保持冻结。
+
+---
+
+### 2026-08-24 · P0-a 波次 13：telemetry 真实回读与阶段 2 阻塞证据
+
+阶段 1 telemetry 已在真实 gateway 路径回读：
+
+```text
+openrouter-free / cycle 940001：1 attempt，result=refused，reason=provider_error；随后 soil-side 同模型诊断请求实测 HTTP 429，Retry-After=5
+sensenova      / cycle 940002：4 attempts，result=deferred，reason=rate_limited
+```
+
+两条记录均包含 mode、model、attempt/result、最终 status/reason，且未包含 prompt/content/credential。
+本波次尚未获得任何 `allowed + non-empty content`，因此：
+
+```text
+阶段 2：blocked（OpenRouter 当前 provider_error，SenseNova 当前 rate_limited）
+阶段 3：未启动，避免在无真实 mutation content 时伪造 manual-cycle 证据
+阶段 4：未形成稳定性样本，当前只能判定 provider 可达但暂不可用于 mutation
+阶段 5：保持冻结
+```
+
+---
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash

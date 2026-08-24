@@ -58,6 +58,7 @@ DEFAULT_POLICY_PATH = REPO / "soil" / "model-policy.toml"
 #: 语义已经很重），把「模型调用发生过一次」这种高频、低语义的事件混进去，
 #: 只会让 §17.8 的 CA-6a/6b（`kind` 集合核对）多背一堆与晋升无关的噪音。
 DEFAULT_CALLS_LEDGER = REPO / "state" / "soil-model-calls.jsonl"
+DEFAULT_PROVIDER_EVENTS_LEDGER = REPO / "state" / "soil-provider-events.jsonl"
 
 
 def _utcnow() -> str:
@@ -80,6 +81,28 @@ class ModelCallLedger(_AppendOnlyJsonl):
 
     def record(self, *, cycle: int, role: str, slot_id: str) -> None:
         self._append_raw({"ts": _utcnow(), "cycle": cycle, "role": role, "slot_id": slot_id})
+
+
+class ProviderEventLedger(_AppendOnlyJsonl):
+    """Soil-only provider telemetry; never exposed through the seed ABI.
+
+    This is deliberately separate from ``soil-model-calls.jsonl`` because the
+    budget reader counts call rows.  Result rows must not consume another call
+    or alter the rolling-window calculation.
+    """
+
+    def record(self, *, cycle: int, mode: str, role: str, slot_id: str,
+               model: str, event: str, status: str | None = None,
+               reason: str | None = None, attempt: int | None = None) -> None:
+        row = {"ts": _utcnow(), "cycle": cycle, "mode": mode, "role": role,
+               "slot_id": slot_id, "model": model, "event": event}
+        if status is not None:
+            row["status"] = status
+        if reason is not None:
+            row["reason"] = reason
+        if attempt is not None:
+            row["attempt"] = attempt
+        self._append_raw(row)
 
 
 def load_policy(path: Path | str | None = None) -> dict:

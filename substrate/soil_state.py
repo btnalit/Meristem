@@ -209,7 +209,7 @@ class _AppendOnlyJsonl:
             raise SoilStateError(f"{self.path} 是 symlink，拒绝写入（§8.1.5）")
         line = json.dumps(record, ensure_ascii=False) + "\n"
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(str(self.path), flags, 0o644)
+        fd = os.open(str(self.path), flags, 0o600)
         try:
             os.write(fd, line.encode("utf-8"))
         finally:
