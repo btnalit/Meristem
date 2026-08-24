@@ -1042,7 +1042,20 @@ soil/model-policies/sensenova.toml
   `OPENROUTER_API_KEY` 或 `SENSENOVA_API_KEY` 注入 worker。
 
 **TDD/验证**：mode allowlist 与默认模式测试先 RED 后 GREEN；相关测试 **51 passed**；
-两个 TOML profile 解析并核对角色/模型成功。尚未执行双 provider 的真实 allowed smoke。
+两个 TOML profile 解析并核对角色/模型成功。
+
+**真实双模式 smoke（2026-08-24）**：首次夹具因 socket 临时目录未按正式 supervisor 设置 soil/worker 权限，
+两个 gateway 均未启动，未发 provider 请求；该结果不计入 provider 判断。修正夹具并补齐
+`deploy-permissions.sh` 对 `soil/model-policies/` 的属主部署后：
+
+```text
+openrouter-free / cycle 930003：gateway started，4 次 provider attempt，最终 deferred
+sensenova      / cycle 930002：gateway started，4 次 provider attempt，最终 deferred
+```
+
+两者均实际到达 provider；`deferred` 按实验规则解释为 provider 可达但当前被限流/暂未返回可用内容，
+不是 provider 不可用。两次均未得到非空 `allowed/content`，因此尚不进入 manual-cycle 或 H1。
+credential 仍为临时 soil:soil 0600 文件，测试后删除；key 未进入 worker、日志、仓库或总结。
 
 ---
 

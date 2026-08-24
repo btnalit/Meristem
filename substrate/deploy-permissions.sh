@@ -88,6 +88,17 @@ for row in matrix["rows"]:
     print(f"    soil:soil {oct(target.stat().st_mode & 0o777)} {path}")
 PY
 
+echo "==> model policy profiles：soil 属主，worker 不可写"
+# Execution-mode profiles are soil policy, but live under a directory rather
+# than the legacy single-file matrix row.  They must receive the same
+# deployment ownership after git checkout/reset, otherwise the soil gateway
+# cannot load them when it drops privileges.
+if [ -d "$REPO/soil/model-policies" ]; then
+    chown -R soil:soil "$REPO/soil/model-policies"
+    find "$REPO/soil/model-policies" -type f -exec chmod u=rw,go=r {} +
+    find "$REPO/soil/model-policies" -type d -exec chmod u=rwx,go=rx {} +
+fi
+
 echo
 echo "==> 自检"
 python3 -c "
