@@ -645,6 +645,14 @@ class TaskDeclarationTests(PipelineTestCase):
         self.assertIs(outcome, pipeline.Outcome.REGRESSED)
         self.assertNotIn("accepted_fitness", [r["kind"] for r in ctx.ledger.read()])
 
+    def test_syntax_preflight_rejects_invalid_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "bad.py").write_text("def broken(:\n", encoding="utf-8")
+            self.assertFalse(pipeline._syntax_preflight(tree))
+            (tree / "bad.py").write_text("def okay():\n    return 1\n", encoding="utf-8")
+            self.assertTrue(pipeline._syntax_preflight(tree))
+
     def test_task_path_contract_rejects_forbidden_and_requires_target(self):
         task = pipeline.Task(task_id="t", kind="repair", target="classifier",
                              primary_probe=PROBE_ID,

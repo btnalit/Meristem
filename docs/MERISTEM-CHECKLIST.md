@@ -1231,7 +1231,22 @@ returned_paths_hash=f7b492...  # 仅 classifier path
 
 真正根因是 worker surface/recovery 断链：`_WORKER_COPY_DIRS` 没有 materialize `tests/`，但 `_WORKER_WRITABLE` 包含 `tests/`；recovery 将 worker 中不存在的 tests 文件错误解释为删除。修复后 recovery 只在已 materialize 的目录推断 deletion，并新增回归测试。此前 cycle31/32/33 的 tests/22 变化不得再归因于模型返回。
 
+### 2026-08-24 · syntax preflight 与 syntax feedback 闭环
+
+Cycle 34 在 recovery 修复后只产生 classifier 路径，但 candidate 编译失败。后续实现 soil-owned 内存 compile preflight：
+
+```text
+invalid Python → candidate_preflight(failure_reason=syntax_failure)
+→ UNMEASURED（不跑 probe、不写 fitness）
+→ bounded projection reason=syntax_failure
+→ diagnosis=model_or_strategy_failure
+→ reflection=compile-safe minimal mutation
+```
+
+`syntax_failure` 计入 semantic failure，连续达到 task threshold 才 parked；不计 mechanism failure。该 preflight 不写 `__pycache__`，不改变 candidate tree identity。
+
 `openai==2.54.0` SDK。SDK 配置 `max_retries=0`，预算、重试、telemetry 和 worker ABI 仍由 Meristem soil 自己控制。
+
 
 新增：
 

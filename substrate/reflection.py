@@ -4,9 +4,13 @@ from __future__ import annotations
 
 def build_reflection(facts: dict) -> dict:
     attempts = facts.get("recent_attempts", []) if isinstance(facts, dict) else []
+    syntax_failures = [a for a in attempts if a.get("reason") == "syntax_failure"]
     repeated = [a for a in attempts if a.get("diagnosis_class") == "repeated_strategy_no_effect"]
     cycles = [a.get("soil_cycle") for a in attempts if a.get("soil_cycle") is not None]
-    if repeated:
+    if syntax_failures:
+        hypothesis = "candidate_syntax_failure_prevented_measurement"
+        next_strategy = "preserve valid Python syntax and run a compile-safe minimal mutation before changing strategy"
+    elif repeated:
         hypothesis = "repeated_strategy_is_not_improving_primary_probe"
         next_strategy = "select a materially different target scope and implementation approach"
     elif attempts:

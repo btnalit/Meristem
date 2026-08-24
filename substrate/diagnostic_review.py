@@ -14,6 +14,10 @@ def diagnose_failure(*, failure_class: str, changed_paths: list[str],
         diagnosis = "mutation_contract_failure"
         mechanism = "healthy"
         constraint = "return a path-to-content map without wrapper keys"
+    elif failure_class == "syntax_failure":
+        diagnosis = "model_or_strategy_failure"
+        mechanism = "healthy"
+        constraint = "return syntactically valid Python before changing strategy"
     elif repeated_strategy and delta == 0.0:
         diagnosis = "repeated_strategy_no_effect"
         mechanism = "healthy"

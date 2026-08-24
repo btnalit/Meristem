@@ -456,6 +456,17 @@ def _task_path_violation(paths: list[str], task: Task) -> str | None:
     return None
 
 
+def _syntax_preflight(tree: Path) -> bool:
+    """Compile every Python file in memory without mutating the candidate tree."""
+    for path in sorted(tree.rglob("*.py")):
+        try:
+            source = path.read_text(encoding="utf-8")
+            compile(source, str(path), "exec")
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            return False
+    return True
+
+
 def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
     """候选处理流水线。无隐式全局；每个非晋升出口都写 `promotion_outcome`。
 
@@ -493,6 +504,15 @@ def process_candidate(commit: str, task: Task, *, repo, panel, ctx) -> Outcome:
                 # 那是「这一次量不出来」（机制故障，不计额度），不是一个 traceback。
                 return finalize_nonpromotion(ctx, Outcome.UNMEASURED, None,
                                              f"cannot materialize trees: {exc}", quota=False)
+
+            if not _syntax_preflight(candidate_tree):
+                ctx.ledger.append({
+                    "kind": "candidate_preflight", "task_id": task.task_id,
+                    "attempt_id": ctx.attempt_id, "soil_cycle": ctx.soil_cycle,
+                    "commit": commit, "failure_reason": "syntax_failure",
+                    "files_checked": sum(1 for _ in candidate_tree.rglob("*.py"))})
+                return finalize_nonpromotion(ctx, Outcome.UNMEASURED, None,
+                                             "syntax_failure", quota=False)
 
             before = probe_runner.run_all(parent_tree, ctx.vault)      # S2
             after = probe_runner.run_all(candidate_tree, ctx.vault)

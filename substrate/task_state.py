@@ -23,6 +23,13 @@ def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dic
             if reason in _MECHANISM_FAILURES:
                 item["mechanism_failures"] += 1
                 item["state"] = "blocked"
+        elif row.get("kind") == "candidate_preflight":
+            if row.get("failure_reason") == "syntax_failure":
+                item["semantic_failures"] += 1
+                if item["semantic_failures"] >= threshold:
+                    item["state"] = "parked"
+                elif item["state"] != "blocked":
+                    item["state"] = "unfulfilled"
         elif row.get("kind") == "promotion_outcome":
             outcome = row.get("outcome")
             if outcome == "UNFULFILLED" and row.get("counts_against_task_quota"):

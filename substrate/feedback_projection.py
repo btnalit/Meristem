@@ -46,7 +46,7 @@ def _safe_reason(*, outcome: str | None = None, failure_reason: str | None = Non
     allowed = {
         "path_violation", "propose_failed", "prompt_over_budget", "provider_error",
         "rate_limited", "gateway_error", "worker_error", "measurement_error",
-        "no_candidate", "empty_mutation", "unfulfilled", "fulfilled",
+        "no_candidate", "empty_mutation", "syntax_failure", "unfulfilled", "fulfilled",
     }
     if failure_reason in allowed:
         return failure_reason
@@ -87,6 +87,7 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
               and r.get("task_id") and r.get("exit_code") is not None
               and (task_id is None or r.get("task_id") == task_id)]
     outcomes = [r for r in rows if r.get("kind") == "promotion_outcome"]
+    preflights = [r for r in rows if r.get("kind") == "candidate_preflight"]
     recent = []
     for event in cycles[-8:]:
         if event.get("commit"):
@@ -113,14 +114,19 @@ def write_projection(repo: pathlib.Path, *, task_id: str | None = None) -> pathl
                         outcome=item.get("outcome"), delta=item.get("delta"))
                 recent.append(item)
                 continue
-        recent.append({k: v for k, v in {
+        syntax_reason = next((p.get("failure_reason") for p in preflights
+                              if p.get("task_id") == event.get("task_id")
+                              and p.get("attempt_id") == event.get("attempt_id")
+                              and p.get("commit") == event.get("commit")), None)
+        recent.append({
             "task_id": event.get("task_id"),
             "attempt_id": event.get("attempt_id"),
             "soil_cycle": event.get("soil_cycle"),
-            "candidate": None,
-            "outcome": "NO_CANDIDATE",
-            "reason": _safe_reason(failure_reason=event.get("failure_reason")),
-        }.items() if v is not None})
+            "candidate": str(event.get("commit", ""))[:12] or None,
+            "outcome": "UNMEASURED" if syntax_reason else "NO_CANDIDATE",
+            "reason": _safe_reason(
+                failure_reason=syntax_reason or event.get("failure_reason")),
+        })
     last = recent[-1] if recent else {}
     observed_by_event = {r.get("event_id"): r for r in observed if r.get("event_id")}
     normalized_rows = []
