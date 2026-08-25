@@ -1654,6 +1654,17 @@ unpark_old_task=false
 ledger_rewrite=false
 ```
 
+### 2026-08-25 · P0-c fifth rotation: revert to prior task format
+
+```text
+previous_task=8895051b086c9292
+previous_state=parked
+new_task=40bfc877fe0661fb
+owner_approval=回退为之前的 bounded alternative decision-rule 任务格式，重新派发
+format=bounded alternative decision-rule hypothesis (continuation round)
+unpark_old_task=false
+ledger_rewrite=false
+```
 
 ## 常用命令（v3.1 诊断，进程已停）
 

@@ -16,4 +16,4 @@
 # 而 soil/p0a-task.json 里的声明必须同步 —— 土壤在 manual-cycle 启动时核对两者，
 # 不一致直接拒绝运行。**一个任务只能有一个身份。**
 
-Improve classifier root-cause classification for probe-classify-basic by testing one falsifiable hypothesis: the visible primary score loss is caused by closure-budget expressions that combine closure context with a numeric or explicit over-cap budget signal but are not recognized by the current decision rule; make one minimal classifier-only change that maps that bounded pattern to closure-budget, without adding bare closure or budget keywords, without hard-coding the exact probe string, without changing contract-budget precedence, without rewriting the keyword table, and without modifying tests, probes, constitution, agenda, ABI, or any soil-owned path.
+Improve classifier root-cause classification for contract-budget and protected-path failures on probe-classify-basic using a bounded alternative decision-rule hypothesis (continuation round); modify only body/organs/classifier/ and do not modify tests, probes, constitution, or agenda.
