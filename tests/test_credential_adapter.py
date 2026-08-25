@@ -110,6 +110,7 @@ class CredentialAdapterTests(unittest.TestCase):
             env_file.write_text(
                 "AGNES_API_KEY=adapter-test-token\n"
                 "MERISTEM_VAULT=/tmp/meristem-vault\n"
+                "MERISTEM_CONTROL=/tmp/meristem-control\n"
                 "MERISTEM_WEBHOOK_URL=source-only-secret\n",
                 encoding="utf-8",
             )
@@ -140,6 +141,7 @@ class CredentialAdapterTests(unittest.TestCase):
             self.assertIn("PATH", names)
             self.assertIn("PYTHONPATH", names)
             self.assertIn("MERISTEM_VAULT", names)
+            self.assertIn("MERISTEM_CONTROL", names)
             self.assertNotIn("AGNES_API_KEY", names)
             self.assertNotIn("OPENROUTER_API_KEY", names)
             self.assertNotIn("SENSENOVA_API_KEY", names)
@@ -186,6 +188,7 @@ class CredentialAdapterTests(unittest.TestCase):
                 while not list(runtime.iterdir()) and time.monotonic() < deadline:
                     time.sleep(0.02)
                 self.assertTrue(list(runtime.iterdir()))
+                time.sleep(0.1)
                 proc.send_signal(signal.SIGTERM)
                 proc.wait(timeout=5)
                 self.assertEqual(proc.returncode, 143)
