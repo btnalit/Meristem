@@ -1548,6 +1548,41 @@ P0-c/heartbeat=not started
 
 本拍是一个 bounded operator invocation；没有把解冻扩展为无人值守连拍。既有 ignition event 仍为 1，P1-5 继续 PARTIAL。
 
+### 2026-08-25 · P0-c 最小波次：契约配额 / 熔断器 / 脉搏（timer 未启用）
+
+设计边界主会话定，子agent 实现，主会话逐行审查 + 服务器验收。
+
+内容：
+- **P2-8**：`path_violation` 计入新计数器 `contract_failures`，阈值 3 粘性
+  parked；`propose_failed`（provider deferral，cycle 47-49 实证）不进任何
+  task 配额——deferral 的有界性由 breaker 承担。
+- **breaker**（S6 projection）：`substrate/breaker.py`，从台账尾部逆向数
+  连续「无候选」task 归属 cycle 行，≥5 即 `panic.engage()` 上闩、退出码 4
+  （新码，与既有 0/1/2/3 无冲突）；只对 `--autonomous` 生效；候选被拒也
+  重置计数——拒绝是 task 配额的事，futility 才是 breaker 的事。
+- **pulse**（S1 projection）：`substrate/pulse-beat.sh` + systemd 单元。
+  webhook 只住 root 包装层（与 run-soil.sh 同款 assignment-only 解析，
+  从不 source、不入子环境——test_credential_adapter 的既有断言不变）；
+  退出码 0/1 正常续跑，2/3/4/未知一律 `systemctl disable --now` + 单条
+  企业微信通知，通知路径逐步骤容错。**无人值守 = 正常时无人，异常时叫人。**
+- 文档：ontology Breaker 实体 + 不变量 12；`docs/MERISTEM-P0C-RUNBOOK.md`；
+  规格 changelog v5.23。§12 判据措辞刻意未动（保 H1→H2 可比性）。
+
+验收（服务器干净 clone）：
+
+```text
+全量 325 passed / 7 skipped（全为既有 no-ledger/NTFS 项）/ 0 failed
+golden：新旧代码对真实 ledger 快照逐字节一致（仅增全零 contract_failures）
+breaker 对真实台账推导 streak=0（尾部 4 连 candidate，与预测吻合）
+pulse 端到端（隔离 runtime）：真 run-soil → manifest 拒绝 rc=2 →
+  systemctl disable 被调 → 真实 webhook 通知送达 → 凭据残留 0
+验收中抓到并修复：pulse-beat.sh 缺可执行位（100644→100755）
+```
+
+**timer 未安装未启用。启用（`systemctl enable --now meristem-pulse.timer`）
+即 owner 的 P0-c 解冻决策，需另行记录。** task 轮换保持人工：parked →
+通知 + 停 timer，铸新 identity 是 owner 动作。
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
