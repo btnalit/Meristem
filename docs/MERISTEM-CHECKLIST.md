@@ -1625,6 +1625,21 @@ unpark_old_task=false
 ledger_rewrite=false
 ```
 
+### 2026-08-25 · P0-c third parked-task rotation and owner approval
+
+```text
+previous_task=e100cebc452edaba
+previous_state=parked
+new_task=d350397e66f4e0b1
+identity_source=seed/agenda.md 首条任务文本 SHA-256 前缀
+owner_approval=继续人工铸造并批准新 task 后恢复运行
+scope=falsifiable alternative hypothesis after prior no-gain attempts
+unpark_old_task=false
+ledger_rewrite=false
+```
+
+调查结论：e100cebc452edaba 的 cycles 64–66 均 `exit_code=0`、`UNFULFILLED`、primary `60→60`、`delta=0`；mechanism failure 为 0，三次 strategy fingerprint 不同但均未改变 primary 结果。新 task 要求形成可证伪的替代假设，不把同一 classifier 失败面继续当作进展。
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash

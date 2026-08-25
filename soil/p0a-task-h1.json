@@ -1,7 +1,7 @@
 {
-  "_comment": "Fresh post-park continuation task for P0-c pulse; parked task eafccd6515ebe6f1 remains historical.",
+  "_comment": "Fresh owner-approved task after e100cebc452edaba parked; bounded falsifiable alternative hypothesis.",
   "_task_id_note": "task_id equals sha256 prefix of the first task line in seed/agenda.md; soil verifies this before manual-cycle.",
-  "task_id": "e100cebc452edaba",
+  "task_id": "d350397e66f4e0b1",
   "kind": "repair",
   "target": "classifier",
   "primary_probe": "probe-classify-basic",
