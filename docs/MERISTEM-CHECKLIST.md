@@ -1459,6 +1459,22 @@ H1=frozen
 
 该 task 只改变 task declaration 文本，不改变 probe、constitution 或测试面；正式 acceptance 仍须通过 `substrate/run-soil.sh --mode agnes-temporary` 执行并回读。
 
+正式 wrapper acceptance 已于 soil_cycle=53 真实执行：
+
+```text
+wrapper=substrate/run-soil.sh --mode agnes-temporary
+provider=agnes-temporary / agnes-2.5-flash / allowed / finish_reason=stop
+candidate=c7c0ce02e7c5b8e7125cdad69acd01aaecce12a6
+primary=60.0→60.0
+anchor=20.0→20.0
+outcome=UNFULFILLED
+accepted_fitness=0（本轮）
+promotion_committed=0（本轮）
+credential residual=0
+```
+
+本轮证明正式 wrapper→soil gateway→worker→真实 provider→measurement 链路成立；因没有 primary 增益，soil 正确拒绝 promotion，未伪造进度。既有 ignition events 仍为 1，H1 继续 frozen。wrapper/CA-11/vault 修复后的全量回归为 `302 passed, 1 skipped, 71 subtests passed`。
+
 
 ## 常用命令（v3.1 诊断，进程已停）
 
