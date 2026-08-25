@@ -17,6 +17,14 @@ TASK_STATES = frozenset({
     "blocked", "needs_reframing",
 })
 
+#: `cycle` row `failure_reason` values that are an environment/mechanism
+#: fault, not a property of the task itself. Single source of truth (P2-7):
+#: `substrate/task_state.py` imports this rather than keeping its own copy.
+MECHANISM_FAILURE_REASONS = frozenset({
+    "provider_error", "rate_limited", "gateway_error",
+    "worker_error", "measurement_error", "prompt_over_budget",
+})
+
 
 def new_attempt_id() -> str:
     return "att-" + uuid.uuid4().hex
@@ -24,36 +32,3 @@ def new_attempt_id() -> str:
 
 def validate_attempt_id(value: Any) -> bool:
     return isinstance(value, str) and bool(_ATTEMPT_RE.fullmatch(value))
-
-
-def classify_attempt(*, failure_reason: str | None,
-                      provider_status: str | None,
-                      candidate: bool,
-                      measured: bool = False,
-                      fulfilled: bool = False) -> dict[str, str]:
-    reason = failure_reason or ""
-    if provider_status == "deferred" or reason == "rate_limited":
-        mechanism = "rate_limited"
-        task = "blocked"
-        fault = "rate_limited"
-    elif provider_status == "refused" or reason in {"provider_error", "gateway_error"}:
-        mechanism = reason if reason in {"provider_error", "gateway_error"} else "gateway_error"
-        task = "blocked"
-        fault = mechanism
-    elif reason in {"measurement_error", "unmeasured"} or (candidate and not measured):
-        mechanism = "measurement_error"
-        task = "blocked"
-        fault = "measurement_error"
-    elif fulfilled:
-        mechanism = "healthy"
-        task = "fulfilled"
-        fault = "fulfilled"
-    elif candidate:
-        mechanism = "healthy"
-        task = "unfulfilled"
-        fault = "unfulfilled"
-    else:
-        mechanism = "healthy"
-        task = "no_candidate"
-        fault = reason if reason in FAULT_CLASSES else "no_candidate"
-    return {"mechanism_status": mechanism, "task_status": task, "fault_class": fault}

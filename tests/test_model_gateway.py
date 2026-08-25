@@ -190,6 +190,21 @@ class NoCredentialsFailsClosedTests(unittest.TestCase):
                                  clear=False):
                 self.assertEqual(model_gateway._credential_value(slot), "unit-test-secret")
 
+    def test_credentials_file_pointer_missing_soil_account_is_refused_not_crashed(self):
+        """P2-6: `pwd.getpwnam("soil")` raises KeyError, not OSError, when the
+        `soil` account does not exist -- that must fail closed the same way
+        a stat failure does, not propagate out of `_credential_value`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            credential_file = Path(tmp) / "provider.key"
+            credential_file.write_text("unit-test-secret\n", encoding="utf-8")
+            credential_file.chmod(0o600)
+            slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE"}
+            with mock.patch.dict(os.environ, {"MERISTEM_TEST_CREDENTIALS_FILE": str(credential_file)},
+                                 clear=False), \
+                 mock.patch("substrate.model_gateway.pwd.getpwnam",
+                            side_effect=KeyError("soil")):
+                self.assertIsNone(model_gateway._credential_value(slot))
+
     def test_credentials_file_pointer_does_not_fall_back_to_api_key_env(self):
         slot = {"credentials_file_env": "MERISTEM_TEST_CREDENTIALS_FILE",
                 "api_key_env": "MERISTEM_TEST_UNSET_KEY"}

@@ -24,6 +24,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+import meristem  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import supervisor  # noqa: E402
 
@@ -151,6 +152,15 @@ class SeedCandidateInjectsGatewayVarTests(unittest.TestCase):
         self.assertIn("MERISTEM_MODEL_SOCKET", env)
         self.assertNotIn("MERISTEM_CREDENTIALS_FILE", env)
         self.assertNotIn("SENSENOVA_API_KEY", env)
+
+
+class WorkerWritableMatchesSeedWritableTests(unittest.TestCase):
+    """P2-9: `_WORKER_WRITABLE` is a second, independently-maintained copy of
+    `meristem.SEED_WRITABLE` (recovery's whitelist has to agree with the
+    seed's own path whitelist, or the two silently drift apart)."""
+
+    def test_worker_writable_equals_seed_writable(self):
+        self.assertEqual(supervisor._WORKER_WRITABLE, meristem.SEED_WRITABLE)
 
 
 class WorkerSurfaceIsolationTests(unittest.TestCase):

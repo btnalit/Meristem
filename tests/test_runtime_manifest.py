@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from substrate.runtime_manifest import RuntimeManifestError, refresh, verify
+from substrate.runtime_manifest import RuntimeManifestError, bootstrap, refresh, verify
 
 
 class RuntimeManifestTests(unittest.TestCase):
@@ -62,6 +62,49 @@ class RuntimeManifestTests(unittest.TestCase):
             os.chmod(paths["soil/frozen-probe-registry.json"], 0o666)
             with self.assertRaises(RuntimeManifestError):
                 verify(repo, task_id="task")
+
+
+class RuntimeManifestBootstrapTests(unittest.TestCase):
+    """P1-4: nothing today creates soil/runtime-manifest.json (or its
+    dependency chain) on a fresh checkout, so verify() can never pass for
+    the first time. bootstrap() must fill exactly that gap."""
+
+    def test_bootstrap_on_fresh_checkout_makes_verify_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            data = bootstrap(repo, task_id="task-fresh")
+            self.assertEqual(data["task_id"], "task-fresh")
+            # verify() is the real acceptance criterion, not bootstrap's
+            # own return value.
+            verify(repo, task_id="task-fresh")
+
+            ledger = repo / "state" / "soil-ledger.jsonl"
+            self.assertTrue(ledger.is_file())
+            self.assertEqual(ledger.read_bytes(), b"")
+            self.assertTrue((repo / "seed" / "feedback.json").is_file())
+            self.assertTrue((repo / "soil" / "report-facts.json").is_file())
+            registry = repo / "soil" / "frozen-probe-registry.json"
+            self.assertTrue(registry.is_file())
+            self.assertEqual(json.loads(registry.read_text(encoding="utf-8")), {})
+
+    def test_bootstrap_preserves_an_existing_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            ledger = repo / "state" / "soil-ledger.jsonl"
+            ledger.parent.mkdir(parents=True)
+            ledger.write_text(json.dumps({"kind": "cycle", "soil_cycle": 1}) + "\n",
+                              encoding="utf-8")
+            before = ledger.read_bytes()
+            bootstrap(repo, task_id="task-fresh")
+            self.assertEqual(ledger.read_bytes(), before)
+            verify(repo, task_id="task-fresh")
+
+    def test_bootstrap_refuses_when_manifest_already_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            bootstrap(repo, task_id="task-fresh")
+            with self.assertRaises(RuntimeManifestError):
+                bootstrap(repo, task_id="task-fresh")
 
 
 if __name__ == "__main__":

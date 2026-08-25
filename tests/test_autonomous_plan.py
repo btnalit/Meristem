@@ -95,7 +95,10 @@ class AutonomousPlanIntegrationTests(unittest.TestCase):
                           from_commit=candidate, restore_commit=stable,
                           phase="promoted_bad_candidate", reason="primary regression",
                           authority="soil-autonomous")
-        self.assertEqual(execute_autonomous_rollback(repo, plan), stable)
+        self.assertEqual(
+            execute_autonomous_rollback(repo, plan, generation=ctx.generation,
+                                       soil_cycle=ctx.soil_cycle),
+            stable)
         receipt = {
             "task_id": "task-test", "attempt_id": intent["attempt_id"],
             "from_commit": candidate, "phase": "promoted_bad_candidate",
