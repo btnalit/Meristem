@@ -1440,6 +1440,25 @@ worker 无 key、无 pointer
 
 本条已完成 contract、实现和回归验证：`substrate/run-soil.sh` 只启动正式 supervisor；adapter 定向测试 `8 passed`，全量 pytest `301 passed, 2 skipped, 71 subtests passed`，compileall 与 `git diff --check` 通过。provider 未由本轮测试调用；正式 provider 运行仍需使用该 wrapper。
 
+### 2026-08-25 · Wrapper acceptance task rotation
+
+正式 wrapper 首次尝试正确拒绝重跑已 fulfilled 的 `948d2c0b3aec5b81`：
+
+```text
+task guarded: 948d2c0b3aec5b81 state=fulfilled
+```
+
+按 content-addressed task 规则不 unpark、不改 ledger，创建新的受控 task：
+
+```text
+task_id=0ea2deaa91ffcb28
+source=seed/agenda.md + soil/p0a-task-h1.json
+purpose=wrapper-based soil-autonomous acceptance
+H1=frozen
+```
+
+该 task 只改变 task declaration 文本，不改变 probe、constitution 或测试面；正式 acceptance 仍须通过 `substrate/run-soil.sh --mode agnes-temporary` 执行并回读。
+
 
 ## 常用命令（v3.1 诊断，进程已停）
 
