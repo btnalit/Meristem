@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import FrozenSet
+
+from substrate.soil_state import Ledger
 
 
 ROLLBACK_PHASES: FrozenSet[str] = frozenset({
@@ -53,13 +54,20 @@ def build_plan(*, task_id: str, attempt_id: str, from_commit: str,
                         reason, authority)
 
 
-def execute_autonomous_rollback(repo: Path, plan: RollbackPlan) -> str:
+def execute_autonomous_rollback(repo: Path, plan: RollbackPlan, *,
+                                 generation: str, soil_cycle: int) -> str:
     """Execute a soil-owned rollback against the explicitly bound candidate.
 
     This mutates only the supplied repository. It refuses a moved HEAD, an
     unresolved restore commit, or a non-autonomous plan, and returns the live
     restored HEAD for receipt construction. Ledger/projection updates remain
     explicit caller-owned facts and must be verified with ``verify_receipt_state``.
+
+    `generation` / `soil_cycle` complete the ledger envelope (P1-3): the plan
+    itself carries no soil-cycle identity, so the caller -- who holds the
+    live `ctx.generation` / `ctx.soil_cycle` -- supplies them explicitly,
+    the same way `_seed_candidate` never lets a cycle event's generation be
+    read implicitly off the environment.
     """
     if plan.authority != "soil-autonomous":
         raise ValueError("autonomous rollback requires soil-autonomous authority")
@@ -75,30 +83,64 @@ def execute_autonomous_rollback(repo: Path, plan: RollbackPlan) -> str:
         raise ValueError("rollback commit identity is not resolvable") from exc
     if head != plan.from_commit:
         raise ValueError("rollback source HEAD moved before autonomous execution")
-    ledger_path = repo / "state" / "soil-ledger.jsonl"
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def append_event(event: dict) -> None:
-        with ledger_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-
-    append_event({"kind": "rollback_intent", "task_id": plan.task_id,
-                  "attempt_id": plan.attempt_id, "from_commit": plan.from_commit,
-                  "restore_commit": plan.restore_commit, "phase": plan.phase,
-                  "authority": plan.authority})
+    # Route through the same `Ledger.append()` every other soil-owned writer
+    # uses (P1-3): this bespoke append previously lacked the ts/event_id
+    # envelope and the symlink-refusal hardening `_AppendOnlyJsonl` gives
+    # every other ledger writer -- two independently-maintained append paths
+    # is exactly the drift this module's own writers must not have.
+    ledger = Ledger(repo / "state" / "soil-ledger.jsonl")
+    ledger.append({"kind": "rollback_intent", "task_id": plan.task_id,
+                   "attempt_id": plan.attempt_id, "from_commit": plan.from_commit,
+                   "restore_commit": plan.restore_commit, "phase": plan.phase,
+                   "authority": plan.authority, "generation": generation,
+                   "soil_cycle": soil_cycle})
     subprocess.check_call(["git", "reset", "--hard", plan.restore_commit],
                           cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     restored = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo,
                                        text=True).strip()
     if restored != plan.restore_commit:
         raise ValueError("autonomous rollback did not restore the planned commit")
-    append_event({"kind": "rollback_committed", "task_id": plan.task_id,
-                  "attempt_id": plan.attempt_id, "from_commit": plan.from_commit,
-                  "restored_commit": restored, "phase": plan.phase,
-                  "authority": plan.authority})
+    ledger.append({"kind": "rollback_committed", "task_id": plan.task_id,
+                   "attempt_id": plan.attempt_id, "from_commit": plan.from_commit,
+                   "restored_commit": restored, "phase": plan.phase,
+                   "authority": plan.authority, "generation": generation,
+                   "soil_cycle": soil_cycle})
     return restored
+
+
+def find_dangling_rollback_intents(repo: Path) -> list[dict]:
+    """Scan the ledger for a `rollback_intent` with no matching
+    `rollback_committed` (same task/attempt/from/restore/phase/authority).
+
+    Mirrors `supervisor._preflight_has_pending_promotion`'s open-transaction
+    scan, for the rollback pair instead of the promotion one: a dangling
+    intent means the process crashed between the `git reset --hard` in
+    `execute_autonomous_rollback` and the matching `rollback_committed`
+    being appended, and the repository's state relative to the ledger is
+    then ambiguous until a human resolves it (see
+    docs/MERISTEM-LAYER0-ROLLBACK.md).
+    """
+    path = Path(repo) / "state" / "soil-ledger.jsonl"
+    try:
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+               if line.strip()]
+    except (OSError, ValueError):
+        return []
+    intents = [row for row in rows if row.get("kind") == "rollback_intent"]
+
+    def resolved(intent: dict) -> bool:
+        return any(
+            row.get("kind") == "rollback_committed"
+            and row.get("task_id") == intent.get("task_id")
+            and row.get("attempt_id") == intent.get("attempt_id")
+            and row.get("from_commit") == intent.get("from_commit")
+            and row.get("restored_commit") == intent.get("restore_commit")
+            and row.get("phase") == intent.get("phase")
+            and row.get("authority") == intent.get("authority")
+            for row in rows)
+
+    return [intent for intent in intents if not resolved(intent)]
 
 
 def validate_receipt_contract(plan: RollbackPlan, receipt: dict) -> None:
@@ -162,6 +204,8 @@ def verify_receipt_state(repo: Path, plan: RollbackPlan, receipt: dict) -> None:
                  and row.get("restore_commit") == plan.restore_commit
                  and row.get("phase") == plan.phase
                  and row.get("authority") == plan.authority
+                 and row.get("generation") == receipt["generation"]
+                 and row.get("soil_cycle") == receipt["soil_cycle"]
                  for row in ledger_rows)
     committed = any(row.get("kind") == "rollback_committed"
                     and row.get("task_id") == plan.task_id
@@ -170,6 +214,8 @@ def verify_receipt_state(repo: Path, plan: RollbackPlan, receipt: dict) -> None:
                     and row.get("restored_commit") == receipt["restored_commit"]
                     and row.get("phase") == plan.phase
                     and row.get("authority") == plan.authority
+                    and row.get("generation") == receipt["generation"]
+                    and row.get("soil_cycle") == receipt["soil_cycle"]
                     for row in ledger_rows)
     if not intent or not committed:
         raise ValueError("rollback ledger intent/commit evidence is unavailable")

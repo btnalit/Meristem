@@ -13,12 +13,6 @@ from typing import Any
 from substrate import diagnostic_review, reflection as reflection_module, strategy_memory, task_state
 
 
-_PUBLIC_KEYS = (
-    "task_id", "soil_cycle", "candidate", "outcome", "reason",
-    "primary_probe", "before", "after", "delta", "status",
-)
-
-
 def _tail_hash(ledger_path: pathlib.Path) -> str:
     return hashlib.sha256(ledger_path.read_bytes()).hexdigest()
 

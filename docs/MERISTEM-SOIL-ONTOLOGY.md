@@ -29,9 +29,12 @@ open -> parked             semantic failure threshold reached
 open -> blocked             mechanism failure
 open -> promotion_gated   valid measured candidate blocked by preflight policy
 open -> fulfilled          accepted_fitness after merge
+blocked -> open/unfulfilled  next task-attributed cycle row, mechanism recovered
 ```
 
 `promotion_gated` is terminal for the current preflight attempt: the soil must preserve the candidate evidence and refuse blind replacement mutation. Formal autonomous H1 uses a different authority/mode and may transition a valid candidate through the normal promotion transaction.
+
+`blocked` is transient, not terminal: it decays on the next task-attributed cycle row once the mechanism is healthy again, landing on `unfulfilled` if the task already carries a semantic failure or `open` otherwise. A persistent mechanism failure (the task keeps landing back on `blocked`) is operator-diagnosed environment breakage, not a task property, and is not something the task-state projection can or should resolve on its own. `prompt_over_budget` is deterministic (closure size), so under decay it becomes a visible retry loop that fails pre-provider and burns no provider spend — this is intended, not a bug to gate against.
 
 ## Invariants
 

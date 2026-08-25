@@ -1476,6 +1476,42 @@ credential residual=0
 本轮证明正式 wrapper→soil gateway→worker→真实 provider→measurement 链路成立；因没有 primary 增益，soil 正确拒绝 promotion，未伪造进度。既有 ignition events 仍为 1，H1 继续 frozen。wrapper/CA-11/vault 修复后的全量回归为 `302 passed, 1 skipped, 71 subtests passed`。
 
 
+### 2026-08-25 · 独立双审查与修复波次：b537c93..b4e4432（学习闭环）
+
+主会话架构审 + 子agent 逐行审 + 服务器实机验证，随后子agent 修复、主会话验收。
+
+审查发现：
+- P0：blocked 无恢复转移（worker_error 可达，task 永久报废）；
+  gateway serve 循环 _recv_json_line/sendall 裸露，畸形连接杀进程。
+- P1：rollback ledger 写入绕过 _AppendOnlyJsonl 且悬空 intent 无 reconcile；
+  runtime manifest 无 bootstrap 路径（fresh checkout 必拒）；
+  strategy fingerprint 掺 patch_sha256，repeated 检测待真实数据验证（未修）。
+- P2：classify_attempt/_PUBLIC_KEYS 死代码、path_violation 无配额（未修，
+  P0-c/无人值守前必补）、worker 网络面（P0-b 递延）等。
+
+修复：commit `d542d46`（20 文件）。blocked 改衰变过渡态并更新本体论；
+gateway per-connection 容错；rollback 事件走 Ledger 封套 + 悬空 intent
+启动拒绝 + runbook 恢复段；新增 `bootstrap-manifest`；
+`MECHANISM_FAILURE_REASONS` 单源化（`classify_attempt` 按 Delete-Don't-Gate
+删除）；规格 changelog v5.22。
+
+验收（clean-checkout 门首次执行）：
+
+```text
+服务器干净 clone → deploy-permissions → 313 passed / 2 skipped / 0 failed
+黄金对比：新旧代码对真实 ledger 快照的 task-state 投影逐字节一致
+bootstrap 端到端：首跑五文件属主/权限吻合契约、二跑拒绝、CA-2=FULL
+全新部署链 clone → deploy-permissions → bootstrap-manifest 首次闭合
+```
+
+CA-2 在干净 clone 上的失败为既有部署步骤问题（main 同挂），非本分支回归：
+`soil/model-policy.toml` / `seed/model-interface.json` 是 git 跟踪文件，
+root clone 后属主为 root，`deploy-permissions.sh` 的既有职责。
+
+完整报告：`D:\RSI\MERISTEM-REVIEW-2026-08-24.md`（仓库外）。
+H1 继续 frozen（解冻另需 owner 决策；P1-5 需真实数据裁决，P2-8 需在
+无人值守形态前补齐）。
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash

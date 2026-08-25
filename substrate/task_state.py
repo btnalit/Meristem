@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-_MECHANISM_FAILURES = {"provider_error", "rate_limited", "gateway_error",
-                       "worker_error", "measurement_error", "prompt_over_budget"}
+from substrate.learning_state import MECHANISM_FAILURE_REASONS as _MECHANISM_FAILURES
 
 
 def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dict]:
@@ -23,12 +22,18 @@ def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dic
             if reason in _MECHANISM_FAILURES:
                 item["mechanism_failures"] += 1
                 item["state"] = "blocked"
+            elif item["state"] == "blocked":
+                # blocked decays: a mechanism failure is an operator-diagnosed
+                # environment fault, not a task property. The next
+                # task-attributed cycle row (mechanism healthy again)
+                # recomputes state normally instead of staying stuck.
+                item["state"] = "unfulfilled" if item["semantic_failures"] > 0 else "open"
         elif row.get("kind") == "candidate_preflight":
             if row.get("failure_reason") == "syntax_failure":
                 item["semantic_failures"] += 1
                 if item["semantic_failures"] >= threshold:
                     item["state"] = "parked"
-                elif item["state"] != "blocked":
+                else:
                     item["state"] = "unfulfilled"
         elif row.get("kind") == "promotion_outcome":
             outcome = row.get("outcome")
@@ -37,13 +42,14 @@ def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dic
                 "H1-preflight: promotion disabled")
             if preflight_gated:
                 item["promotion_gated_attempts"] += 1
-                if item["state"] not in {"blocked", "fulfilled", "parked"}:
+                # parked/fulfilled stay sticky; blocked no longer defers here.
+                if item["state"] not in {"fulfilled", "parked"}:
                     item["state"] = "promotion_gated"
             elif row.get("counts_against_task_quota"):
                 item["semantic_failures"] += 1
                 if item["semantic_failures"] >= threshold:
                     item["state"] = "parked"
-                elif item["state"] != "blocked":
+                else:
                     item["state"] = "unfulfilled"
         elif row.get("kind") == "accepted_fitness":
             item["fulfilled"] = True

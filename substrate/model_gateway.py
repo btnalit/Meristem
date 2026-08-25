@@ -147,7 +147,10 @@ def _credential_value(slot: dict) -> str | None:
                 value = os.read(fd, 8193)
             finally:
                 os.close(fd)
-        except OSError:
+        except (OSError, KeyError):
+            # KeyError: pwd.getpwnam("soil") when the `soil` account does not
+            # exist on this host -- same fail-closed path as any other stat
+            # failure, not a crash (P2-6).
             return None
         if len(value) > 8192:
             return None

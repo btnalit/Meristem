@@ -61,7 +61,18 @@ def _serve(socket_path: Path) -> int:
         while True:
             conn, _ = server.accept()
             with conn:
-                raw = _recv_json_line(conn)
+                # One connection's failure must not take the whole gateway
+                # down. `_recv_json_line` raises ValueError on a half-open or
+                # incomplete request, and `sendall` can raise OSError
+                # (BrokenPipeError included) if the client is already gone --
+                # both used to be outside any try/except here, so either one
+                # crashed the accept loop for every future connection.
+                try:
+                    raw = _recv_json_line(conn)
+                except (ValueError, OSError) as exc:
+                    print(f"model_gateway_server: connection failed before request: {exc!r}",
+                          file=sys.stderr)
+                    continue
                 try:
                     request = json.loads(raw.decode("utf-8").strip())
                     cycle = model_gateway._resolve_cycle()
@@ -80,7 +91,10 @@ def _serve(socket_path: Path) -> int:
                 public = {"status": response.get("status", "refused")}
                 if public["status"] == "allowed":
                     public["content"] = response.get("content", "")
-                conn.sendall((json.dumps(public) + "\n").encode("utf-8"))
+                try:
+                    conn.sendall((json.dumps(public) + "\n").encode("utf-8"))
+                except OSError as exc:
+                    print(f"model_gateway_server: response send failed: {exc!r}", file=sys.stderr)
     finally:
         server.close()
         os.umask(old_umask)

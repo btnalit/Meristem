@@ -33,6 +33,19 @@ A rollback receipt must pass `substrate.rollback.validate_receipt()` and bind:
 `task_id`, `attempt_id`, restored commit, generation, soil cycle, ledger tail
 hash, task state, and `status=rolled_back`.
 
+## Dangling rollback intent recovery
+
+A `rollback_intent` with no matching `rollback_committed` (same task/attempt/
+from/restore/phase/authority) means the process died between the `git reset
+--hard` in `execute_autonomous_rollback` and the receipt being written.
+`manual-cycle` refuses to start in every mode while one is outstanding
+(`substrate.rollback.find_dangling_rollback_intents`). Recovery is
+`root_manual`: compare the live repo HEAD against the dangling intent's
+`restore_commit`, then either append the missing `rollback_committed` once
+HEAD is confirmed to already be there, or restore the intended commit
+yourself and re-run. Do not clear a dangling intent by editing or deleting
+the ledger row.
+
 ## Parked task policy
 
 A parked task is never retried implicitly. The preferred path is a new task

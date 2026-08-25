@@ -52,6 +52,7 @@ from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
 from substrate import soil_state as _soil_state  # noqa: E402
 from substrate import learning_state, strategy_memory
+from substrate import rollback
 from substrate import runtime_manifest
 
 #: §13.3 表 C（v5.9 补）：种子经 `meristem/llm.py` 的每次模型调用都靠这个变量
@@ -258,6 +259,12 @@ def _refuse_if_latched() -> bool:
 
 
 DEFAULT_TASK_DECLARATION = "soil/p0a-task-h1.json"
+
+#: Task states that refuse a new mutation cycle outright (§7 task_guarded).
+#: **`blocked` 不在这里**——它现在是过渡态（P0-1 decay）：一次机制故障不该把任务
+#: 永久焊死，下一次任务归属的台账行会正常重算它。`parked` / `fulfilled` /
+#: `promotion_gated` 仍是需要人工或晋升事务才能解开的终止态，继续拒绝。
+_GUARDED_TASK_STATES = frozenset({"parked", "fulfilled", "promotion_gated"})
 
 
 def _generation(repo=None) -> str:
@@ -646,6 +653,20 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
     if preflight and autonomous:
         print("--preflight and --autonomous are mutually exclusive", file=sys.stderr)
         return 2
+    # 所有模式、任何变更之前：一条 rollback_intent 没有匹配的
+    # rollback_committed，意味着上一次 autonomous rollback 在
+    # `git reset --hard` 与写回执之间崩溃过——仓库相对台账的状态此刻含糊，
+    # 谁都不该在这上面再叠一次变更（P1-3）。
+    dangling = rollback.find_dangling_rollback_intents(repo)
+    if dangling:
+        print(
+            f"rollback ledger 拒绝启动：{len(dangling)} 条 rollback_intent 没有匹配的 "
+            "rollback_committed（上次 autonomous rollback 疑似中断）。恢复路径："
+            "docs/MERISTEM-LAYER0-ROLLBACK.md 的 root_manual 复核——核对仓库 HEAD 是否已落在"
+            "计划的 restore_commit 上，确认后手动补写缺失的 rollback_committed，"
+            "或按计划恢复后再重跑。",
+            file=sys.stderr)
+        return 2
     task = _load_task(repo, task_path)
     manifest_recovery = False
     try:
@@ -697,7 +718,7 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
         task_state = feedback_doc.get("facts", {}).get("task_states", {}).get(task.task_id, {})
     except (OSError, ValueError, TypeError):
         task_state = {}
-    if task_state.get("state") in {"parked", "fulfilled", "blocked", "promotion_gated"}:
+    if task_state.get("state") in _GUARDED_TASK_STATES:
         ctx.ledger.append({"kind": "cycle", "commit": None, "task_id": task.task_id,
                            "attempt_id": getattr(ctx, "attempt_id", learning_state.new_attempt_id()),
                            "generation": ctx.generation, "soil_cycle": ctx.soil_cycle,
@@ -738,6 +759,28 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
     if calibration:
         print("校准：已测量、强制回滚、**永不 merge** —— 结构上产不出 accepted_fitness"
               "，因此永不计入点火（§12.0.1）。")
+    return 0
+
+
+def bootstrap_manifest(*, task_path=None, repo=None) -> int:
+    """一次性建起一份全新 checkout 缺失的最小合法状态（P1-4），让
+    `runtime_manifest.verify()` 第一次能通过。**只是一层瘦 CLI**——依赖链的
+    追踪、缺哪补哪的机制本身都在 `runtime_manifest.bootstrap()`；这里只负责
+    解析 Task 声明拿到 `task_id`（那是 `_load_task` 的职责，不该在
+    `runtime_manifest.py` 里重复一份）与把拒绝翻成可读的操作员消息。
+
+    操作员专用（`_refuse_if_latched()` 之后才会走到这里，见 `main()`）。
+    已存在的 manifest 拒绝重建——静默重建会让 fail-closed 名存实亡，交给
+    `runtime_manifest.bootstrap()` 判定并抛错。
+    """
+    repo = pathlib.Path(repo) if repo is not None else REPO
+    task = _load_task(repo, task_path)
+    try:
+        runtime_manifest.bootstrap(repo, task_id=task.task_id)
+    except runtime_manifest.RuntimeManifestError as exc:
+        print(f"runtime manifest bootstrap 被拒：{exc}", file=sys.stderr)
+        return 2
+    print(f"runtime manifest bootstrapped: task={task.task_id}")
     return 0
 
 
@@ -872,7 +915,8 @@ def ignition_status(repo=None) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="supervisor")
     parser.add_argument("command",
-                        choices=["manual-cycle", "ignition-status", "learning-status", "freeze-probe"])
+                        choices=["manual-cycle", "ignition-status", "learning-status",
+                                "freeze-probe", "bootstrap-manifest"])
     parser.add_argument("--proposal", default=None,
                         help="freeze-probe：要冻结的提案文件（seed/probe-proposals/<id>.json）")
     parser.add_argument("--calibration", action="store_true",
@@ -902,6 +946,9 @@ def main(argv=None) -> int:
             print("freeze-probe 需要 --proposal <path>", file=sys.stderr)
             return 2
         return freeze_probe(args.proposal)
+
+    if args.command == "bootstrap-manifest":
+        return bootstrap_manifest(task_path=args.task)
 
     return manual_cycle(calibration=args.calibration, candidate=args.candidate,
                         task_path=args.task, preflight=args.preflight,

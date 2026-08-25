@@ -33,10 +33,20 @@ import os
 import re
 import threading
 import time
-import pwd
-import grp
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:  # POSIX only; the sole caller is FrozenProbeRegistry._write_all's
+    # soil:soil chown below. Ledger/Scoreboard/PromotionLock never touch
+    # pwd/grp, so this module (and `Ledger` specifically, per P1-3's
+    # rollback.py -> soil_state.Ledger routing) stays importable on a
+    # platform without them; the one caller that needs them still fails
+    # loudly, just at the point of use instead of at import time.
+    import pwd
+    import grp
+except ImportError:  # Windows
+    pwd = None  # type: ignore[assignment]
+    grp = None  # type: ignore[assignment]
 
 from substrate import fitness
 from substrate.learning_state import new_attempt_id
