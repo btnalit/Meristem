@@ -1,0 +1,10 @@
+[Unit]
+Description=Meristem P0-c pulse beat (one bounded manual-cycle --autonomous)
+# EnvironmentFile is deliberately not used here: pulse-beat.sh and
+# run-soil.sh each read /RSI/meristem-env (or MERISTEM_ENV_FILE) themselves,
+# with their own parsing discipline. See docs/MERISTEM-P0C-RUNBOOK.md.
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/RSI/Meristem/substrate/pulse-beat.sh

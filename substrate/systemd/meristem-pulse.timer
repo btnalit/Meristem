@@ -1,0 +1,11 @@
+[Unit]
+Description=Meristem P0-c pulse timer (shipped disabled -- see docs/MERISTEM-P0C-RUNBOOK.md)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+Persistent=false
+Unit=meristem-pulse.service
+
+[Install]
+WantedBy=timers.target

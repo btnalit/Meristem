@@ -9,7 +9,8 @@ from substrate.learning_state import MECHANISM_FAILURE_REASONS as _MECHANISM_FAI
 def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dict]:
     data = defaultdict(lambda: {
         "state": "open", "attempts": 0, "semantic_failures": 0,
-        "mechanism_failures": 0, "promotion_gated_attempts": 0, "fulfilled": False,
+        "mechanism_failures": 0, "contract_failures": 0,
+        "promotion_gated_attempts": 0, "fulfilled": False,
     })
     for row in rows:
         task_id = row.get("task_id")
@@ -22,12 +23,30 @@ def derive_task_states(rows: list[dict], *, threshold: int = 3) -> dict[str, dic
             if reason in _MECHANISM_FAILURES:
                 item["mechanism_failures"] += 1
                 item["state"] = "blocked"
+            elif reason == "path_violation":
+                # P2-8: bounded contract-failure quota. `path_violation` is
+                # the worker breaking the task's writable-surface contract --
+                # it is neither a mechanism fault (must not touch
+                # mechanism_failures) nor a panel/preflight verdict (must not
+                # touch semantic_failures). It gets its own counter, sticky
+                # parked at threshold, mirroring the semantic_failures branches
+                # below.
+                item["contract_failures"] += 1
+                if item["contract_failures"] >= threshold:
+                    item["state"] = "parked"
+                else:
+                    item["state"] = "unfulfilled"
             elif item["state"] == "blocked":
                 # blocked decays: a mechanism failure is an operator-diagnosed
                 # environment fault, not a task property. The next
                 # task-attributed cycle row (mechanism healthy again)
                 # recomputes state normally instead of staying stuck.
                 item["state"] = "unfulfilled" if item["semantic_failures"] > 0 else "open"
+            # `propose_failed` is deliberately NOT counted here or anywhere at
+            # task level: production evidence (cycles 47-49) shows provider
+            # deferrals surface as propose_failed and the task later
+            # fulfilled anyway -- counting them would park a task for
+            # provider weather, not a task-attributable failure.
         elif row.get("kind") == "candidate_preflight":
             if row.get("failure_reason") == "syntax_failure":
                 item["semantic_failures"] += 1

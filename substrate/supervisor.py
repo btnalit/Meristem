@@ -47,6 +47,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from root import panic  # noqa: E402
+from substrate import breaker  # noqa: E402
 from substrate import feedback_projection  # noqa: E402
 from substrate import pipeline as _pipeline  # noqa: E402
 from substrate import probe_runner as _probe_runner  # noqa: E402
@@ -653,6 +654,21 @@ def manual_cycle(*, calibration: bool = False, candidate=None, task_path=None,
     if preflight and autonomous:
         print("--preflight and --autonomous are mutually exclusive", file=sys.stderr)
         return 2
+    # Breaker (P0-c): checked before the dangling-rollback refusal below so a
+    # tripped breaker is reported as itself, not masked by an unrelated
+    # refusal. Autonomous-only -- a human at the manual_prompt panel is
+    # already the stop condition for a futile run.
+    if autonomous:
+        streak = breaker.check(repo)
+        if streak >= breaker.FUTILE_BEAT_THRESHOLD:
+            try:
+                panic.engage(f"breaker: {streak} consecutive futile autonomous beats")
+            except panic.ControlPathMissing as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            print(f"breaker tripped: streak={streak} threshold={breaker.FUTILE_BEAT_THRESHOLD}",
+                  file=sys.stderr)
+            return 4
     # 所有模式、任何变更之前：一条 rollback_intent 没有匹配的
     # rollback_committed，意味着上一次 autonomous rollback 在
     # `git reset --hard` 与写回执之间崩溃过——仓库相对台账的状态此刻含糊，

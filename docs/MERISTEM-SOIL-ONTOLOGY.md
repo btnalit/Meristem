@@ -20,6 +20,7 @@ This document defines the entities and state boundaries used by the soil-learnin
 - **Credential file**: an ephemeral `soil:soil` `0600` regular non-symlink file consumed only by the soil gateway. It is deleted on every adapter exit path and is never a permanent store.
 - **Gateway**: the soil-owned provider execution process. It reads the credential file, applies policy/budget/retry, and exposes only the bounded Unix-socket ABI.
 - **Worker**: the untrusted `worker` UID process. It may receive the socket path and bounded cycle metadata, but never a provider key, credential pointer, source environment, or Git credential.
+- **Breaker**: a loop-level, soil-owned mechanism (`substrate/breaker.py`), not a task property. It measures whether autonomous beats are producing candidates at all -- futility is an environment/loop property, distinct from any one task's `contract_failures`/`semantic_failures`. On `FUTILE_BEAT_THRESHOLD` consecutive futile autonomous beats it trips: engages the panic latch and stops. Only a human clears the latch; the breaker itself never clears or resumes anything.
 
 ## State transitions
 
@@ -49,6 +50,7 @@ blocked -> open/unfulfilled  next task-attributed cycle row, mechanism recovered
 9. Formal H1 bad-candidate rollback is executed by the soil-owned `soil-autonomous` authority. `root_manual` is infrastructure emergency recovery only, not a candidate decision authority.
 10. Rollback receipts describe and bind the autonomous rollback execution; receipt validation is not rollback execution.
 11. Provider success, parser success, strategy variation, or candidate creation alone never establishes H1.
+12. Contract failures (`cycle` rows with `failure_reason=path_violation`) are bounded per task via `contract_failures` and park the task at the threshold, independent of `semantic_failures`/`mechanism_failures`; provider deferral (`propose_failed`) never consumes any task quota.
 
 ## Credential adapter state boundary
 
