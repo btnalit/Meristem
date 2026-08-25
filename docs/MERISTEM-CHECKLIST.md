@@ -36,7 +36,7 @@
 | v5 实现 · P0-a 波次 1 | **已落地**：种子脊柱 6 模块 · `probe_runner` · `fitness` · 点火 organ · 权威矩阵 · SA/CA 断言集 | `meristem/` `substrate/` `body/organs/classifier/` `tests/ci/` |
 | v5 实现 · P0-a 波次 2 | **已落地并在服务器验证**：`pipeline.py` · `soil_state.py` · `manual-cycle` / `ignition-status` · C6 worker 隔离 · anchor 接线 · freeze-probe | `main` `b537c93` |
 | v5 实现 · P0-a 波次 3 | **已落地并推送**：mutation closure · credential file pointer · gateway timeout 1200s · 429 retry | `main` `972afb6` |
-| **P0-a 是否可跑通一圈** | **已通过**：Agnes soil-autonomous cycle50 真实 provider allowed、candidate、anchor 非 calibration measurement、完整 promotion transaction 与 `ignition-status=1` 已回读；H1 仍待 owner 决策 | 见本文件 2026-08-25 最新任务记录 |
+| **P0-a 是否可跑通一圈** | **已通过**：Agnes soil-autonomous cycle50 真实 provider allowed、candidate、anchor 非 calibration measurement、完整 promotion transaction 与 `ignition-status=1` 已回读；当前 H1 仅限 operator 单拍 `manual-cycle --autonomous`，无人值守/P0-c 继续 frozen | 见本文件 2026-08-25 最新任务记录 |
 
 > **这张表 2026-08-23 之前有三行是陈旧的**（规格写 v5.8、清盘写「待合并」、实现写「未开工」），
 > 而那时 P0-a 波次 1 的 5 个 commit 早已在 main 上。
@@ -1511,6 +1511,22 @@ root clone 后属主为 root，`deploy-permissions.sh` 的既有职责。
 完整报告：`D:\RSI\MERISTEM-REVIEW-2026-08-24.md`（仓库外）。
 H1 继续 frozen（解冻另需 owner 决策；P1-5 需真实数据裁决，P2-8 需在
 无人值守形态前补齐）。
+
+### 2026-08-25 · Owner H1 解冻决策：operator 单拍范围
+
+Owner 明确批准 H1 解冻，但仅限以下形态；该记录不代表 H1 已达成：
+
+```text
+H1 解冻：仅限 operator 起拍的 `manual-cycle --autonomous` 单拍形态；每次 operator invocation 只执行一个 bounded cycle，后续 cycle 必须由 operator 另行显式启动，不形成 heartbeat/keeper/P0-c 连拍。
+无人值守/heartbeat/P0-c 连拍继续 frozen，前置为 P2-8（有界拍数配额）。
+P1-5 状态为 PARTIAL：新口径重复策略聚类以 H1 真实运行数据继续取证——
+同一任务上连续同 path-family 且 delta=0 的两拍即为天然重复样本，
+出现时核对 repeated_strategy_count 是否跳变。
+```
+
+本次状态切换同步更新三处权威表面：checklist owner decision、spec 当前状态行、
+`learning-status` 的 `h1=operator-single-shot-open` 标签。新 task `a2b14419e25b5820`
+由 agenda 首条文本内容哈希铸造；parked task `0ea2deaa91ffcb28` 不 unpark、不改台账。
 
 ## 常用命令（v3.1 诊断，进程已停）
 

@@ -1,7 +1,7 @@
 {
-  "_comment": "Fresh controlled task for wrapper-based autonomous acceptance; fulfilled task 948d2c0b3aec5b81 remains historical.",
+  "_comment": "Fresh controlled task for operator-single-shot H1-unfreeze evidence; parked task 0ea2deaa91ffcb28 remains historical.",
   "_task_id_note": "task_id equals sha256 prefix of the first task line in seed/agenda.md; soil verifies this before manual-cycle.",
-  "task_id": "0ea2deaa91ffcb28",
+  "task_id": "a2b14419e25b5820",
   "kind": "repair",
   "target": "classifier",
   "primary_probe": "probe-classify-basic",

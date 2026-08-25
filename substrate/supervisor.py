@@ -839,7 +839,7 @@ def learning_status(repo=None) -> int:
     linked_count = sum(1 for row in linked if row.get("attempt_id"))
     fault_complete = (linked_count / len(linked)) if linked else 1.0
     print(json.dumps({
-        "h1": "frozen",
+        "h1": "operator-single-shot-open",
         "feedback_readable": True,
         "attempts_observed": len(attempts),
         "strategy_count": len(strategies),

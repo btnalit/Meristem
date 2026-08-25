@@ -7,6 +7,12 @@
 
 > **正文冻结**（§17.7 终止条款）。v5.8 修掉外部独立审计判定的 **1 项 P0 + 6 项 bootstrap/P1**；
 > 该审计对架构的裁定是 **APPROVED**，对开工的裁定是 **APPROVED WITH BOOTSTRAP FIXES**——**修完即开工**。
+**当前 H1 状态：`operator-single-shot-open`**。本状态只授权 operator 起拍的
+`manual-cycle --autonomous` 单拍；每次 operator invocation 只执行一个 bounded cycle，后续 cycle
+必须由 operator 另行显式启动，不形成 heartbeat/keeper/P0-c 连拍。无人值守/heartbeat/P0-c
+连拍继续 `frozen`，前置为 P2-8 有界拍数配额。该状态是 owner 明确决策后的治理标签，不代表
+H1 已达成或 H2/H3 成立。
+
 > 冻结靠的是 §17.8 的 CI 断言集，不是自觉。此后新发现走代码评审 + §18 勘误行。
 
 ---

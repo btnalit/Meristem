@@ -36,7 +36,7 @@ class DefaultTaskDeclarationTests(unittest.TestCase):
     def test_default_task_follows_current_agenda_identity(self):
         self.assertEqual(supervisor.DEFAULT_TASK_DECLARATION, "soil/p0a-task-h1.json")
         task = supervisor._load_task(REPO)
-        self.assertEqual(task.task_id, "0ea2deaa91ffcb28")
+        self.assertEqual(task.task_id, "a2b14419e25b5820")
 
 
 class AllowlistWouldSilentlyDropItTests(unittest.TestCase):
