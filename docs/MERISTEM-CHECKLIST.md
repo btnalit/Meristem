@@ -1614,6 +1614,17 @@ credential_residual=0
 
 parked task `a2b14419e25b5820` 未 unpark；新 task 当前剩余两次语义失败配额，继续由 pulse 运行，达到 parked 后再次停止并通知 owner。
 
+### 2026-08-25 · P0-c second parked-task rotation
+
+```text
+previous_task=eafccd6515ebe6f1
+previous_state=parked
+new_task=e100cebc452edaba
+identity_source=seed/agenda.md 首条任务文本 SHA-256 前缀
+unpark_old_task=false
+ledger_rewrite=false
+```
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
