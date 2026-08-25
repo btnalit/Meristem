@@ -1640,6 +1640,21 @@ ledger_rewrite=false
 
 调查结论：e100cebc452edaba 的 cycles 64–66 均 `exit_code=0`、`UNFULFILLED`、primary `60→60`、`delta=0`；mechanism failure 为 0，三次 strategy fingerprint 不同但均未改变 primary 结果。新 task 要求形成可证伪的替代假设，不把同一 classifier 失败面继续当作进展。
 
+### 2026-08-25 · P0-c fourth rotation: owner-approved single hypothesis
+
+```text
+previous_task=d350397e66f4e0b1
+previous_state=parked
+new_task=8895051b086c9292
+owner_approval=确认正式铸 identity、提交、恢复 pulse
+hypothesis=closure-budget numeric/explicit over-cap signal is not recognized
+predicted_flip=visible closure-budget primary case → closure-budget
+constraints=no bare closure/budget keyword; no exact probe hard-code; preserve contract precedence; minimal classifier-only change
+unpark_old_task=false
+ledger_rewrite=false
+```
+
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
