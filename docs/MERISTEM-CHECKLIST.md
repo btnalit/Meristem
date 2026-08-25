@@ -1596,6 +1596,24 @@ ledger_rewrite=false
 
 新 task declaration 与 agenda 已同步；manifest 刷新和 timer 恢复必须在该 task commit 推送后执行。
 
+恢复与第一拍回读：
+
+```text
+manifest_task_id=eafccd6515ebe6f1
+manifest_verify=PASS
+timer=enabled/active
+cycle=60
+attempt_id=att-09ba1cf99f27437aa11539ab06b267f3
+outcome=UNFULFILLED
+task_state=unfulfilled
+accepted_fitness=0（本拍）
+promotion_committed=0（本拍）
+NEXT=16:04:34
+credential_residual=0
+```
+
+parked task `a2b14419e25b5820` 未 unpark；新 task 当前剩余两次语义失败配额，继续由 pulse 运行，达到 parked 后再次停止并通知 owner。
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
