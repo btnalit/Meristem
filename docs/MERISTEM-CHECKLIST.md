@@ -1528,6 +1528,26 @@ P1-5 状态为 PARTIAL：新口径重复策略聚类以 H1 真实运行数据继
 `learning-status` 的 `h1=operator-single-shot-open` 标签。新 task `a2b14419e25b5820`
 由 agenda 首条文本内容哈希铸造；parked task `0ea2deaa91ffcb28` 不 unpark、不改台账。
 
+解冻后的第一拍已通过正式 wrapper 执行并回读：
+
+```text
+soil_cycle=56
+task_id=a2b14419e25b5820
+attempt_id=att-cf8f5acbd18846198d9395e8943e548c
+candidate=d8a4cb46d123a253fe689c67b6d412e79fc0abe2
+strategy_fingerprint=strat-7be75daa058613e7a45b49eb
+outcome=UNFULFILLED
+accepted_fitness=0
+promotion_committed=0
+task_state=unfulfilled
+manifest_verify=PASS
+projection_fresh=PASS
+credential_residual=0
+P0-c/heartbeat=not started
+```
+
+本拍是一个 bounded operator invocation；没有把解冻扩展为无人值守连拍。既有 ignition event 仍为 1，P1-5 继续 PARTIAL。
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
