@@ -134,6 +134,12 @@ class CredentialAdapterTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = report.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines[0], "soil:soil 600")
+            self.assertEqual(
+                subprocess.check_output(
+                    ["stat", "-c", "%U:%G %a", str(runtime)], text=True
+                ).strip(),
+                "root:soil 710",
+            )
             names = set(lines[1:])
             self.assertIn("HOME", names)
             self.assertIn("MERISTEM_CREDENTIALS_FILE", names)

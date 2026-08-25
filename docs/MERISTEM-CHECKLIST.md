@@ -1435,7 +1435,7 @@ backup 必须显式选择，无隐式 fallback
 每次运行临时 soil:soil 0600 credential file
 allowlisted child environment
 worker 无 key、无 pointer
-正常/失败/信号路径均清理 credential file；`SIGKILL` 不可捕获，runtime directory 需保留 root:root 0700 并在下次启动/运维检查清理 stale file
+正常/失败/信号路径均清理 credential file；`SIGKILL` 不可捕获，runtime directory 需 root:soil 0710（soil gateway 可 traverse，worker 不可进入）并在下次启动/运维检查清理 stale file
 ```
 
 本条已完成 contract、实现和回归验证：`substrate/run-soil.sh` 只启动正式 supervisor；adapter 定向测试 `8 passed`，全量 pytest `301 passed, 2 skipped, 71 subtests passed`，compileall 与 `git diff --check` 通过。provider 未由本轮测试调用；正式 provider 运行仍需使用该 wrapper。

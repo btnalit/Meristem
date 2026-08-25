@@ -207,7 +207,8 @@ operator wrapper：`substrate/run-soil.sh`。它是**启动适配器**，不是 
    secret 不得继承到 supervisor、worker 或自定义子命令。
 7. 正常退出、失败、可捕获信号和启动异常都必须删除临时 credential file；清理失败必须
    明确报错并使 wrapper 返回非零。`SIGKILL` 无法由任何 shell trap 捕获，属于明确残余风险；
-   runtime directory 必须 root:root 0700，后续启动/运维检查必须发现并清理 stale credential files。
+   runtime directory 必须 root:soil 0710（soil gateway 可 traverse，worker 不在 soil 组而不可进入），
+   后续启动/运维检查必须发现并清理 stale credential files。
 8. wrapper 只能把 `--` 后参数传给正式 `substrate.supervisor` CLI（由 supervisor 自己执行
    command allowlist）；wrapper 不接受任意 binary，不解析或修改 ledger，不启动 provider fallback，
    也不自行决定 promotion/H1。supervisor/pipeline 仍是唯一 authority；通过 wrapper 调用

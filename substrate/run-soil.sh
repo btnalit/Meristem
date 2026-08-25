@@ -121,7 +121,7 @@ case "$CREDENTIAL_VALUE" in
 esac
 
 RUNTIME_DIR="${MERISTEM_RUNTIME_DIR:-/run/meristem}"
-install -d -o root -g root -m 0700 -- "$RUNTIME_DIR"
+install -d -o root -g soil -m 0710 -- "$RUNTIME_DIR"
 while IFS= read -r -d '' stale; do
     if [[ -L "$stale" || ! -f "$stale" ]]; then
         echo "unsafe stale credential artifact in runtime directory" >&2
