@@ -98,7 +98,7 @@ silently patched green.
 | CA-8 | `state/` files match `^state/soil-[a-z0-9-]+\.jsonl$`; no symlinks; no hardlinks resolving into `seed/`/`soil/` | **SKIPPED** (`state/` directory does not exist yet) | |
 | CA-9 | `probe_manifest_sha` on a Measurement == that probe's frozen registration | **SKIPPED (no ledger yet)** | Also: the frozen probe registry is soil-private with no defined on-disk path in this wave, so even with a ledger there is nothing yet to compare against |
 | CA-10 | One promotion's event chain is field-correspondent, not just count-equal | **SKIPPED (no ledger yet)** | |
-| CA-11 | manual-accept and panel-accept produce identical event sequences except `verdict.authority` | **SKIPPED (no ledger yet)** | *Not explicitly named in the dispatch's "needs real ledger" list (CA-6a/7/9/10/12) -- treated identically here since it has the same dependency (and the ledger schema has no `verdict`/`authority` field at all yet). Flagged as an assumption in the dispatch report.* |
+| CA-11 | Formal `soil-autonomous` promotion intent has required authority/source/commit/parent fields; manual/panel parity is covered by the controlled pipeline test | **PASS when a soil-autonomous intent exists** | Production must not fabricate manual/panel promotions just to satisfy CI |
 | CA-12 | Projections' `source_ledger_tail_hash` == current ledger tail hash | **SKIPPED (no ledger yet)** | Also missing: `soil/report-facts.json`, `seed/feedback.json` |
 
 **The 7 real ledger/fixture/UID-dependent SKIPs above are the honest result on

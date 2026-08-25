@@ -1824,7 +1824,7 @@ CI 无处附着，改动无从追溯，误删无从恢复。
 | **CA-8** | `state/` 下每个文件都匹配 `^state/soil-[a-z0-9-]+\.jsonl$`；**且**无 symlink、无指向 `seed/`/`soil/` 的 hardlink | §8.1.5 | 新增台账落在保护面外；路径族被文件系统语义绕过 |
 | **CA-9** | 每条 Measurement 的 `probe_manifest_sha` == 该 probe 冻结登记的 `frozen_probe_manifest_sha` | §4.1 + C1 | 保持 `probe_id` 不变、偷换 vault 内容 |
 | **CA-10** | **一次晋升的事件链完整且逐字段对应**：`accepted_fitness.source == promotion_intent.source` · `accepted_fitness.commit == promotion_committed.commit` · `== scoreboard.commit` · `parent` 一致 | §10 | **数量相等但张冠李戴**，见下 |
-| **CA-11** | 同一候选下，manual accept 与 panel accept 产生**逐字相同的事件序列**，仅 `verdict.authority` 不同 | §12.0.2 | `manual-cycle` 退化成绕过事务链的特殊晋升路径 |
+| **CA-11** | 正式 `soil-autonomous` authority 的 `promotion_intent` 必须包含完整 authority/source/commit/parent 字段；manual/panel 对等性由受控 pipeline parity test 验证 | §12.0.2 | 防止正式 autonomous authority 绕过完整晋升事务链 |
 | **CA-12** | 每个投影（`soil/report-facts.json`、`seed/feedback.json`）的 `source_ledger_tail_hash` 等于当前 ledger tail；不等则**先重建投影，再放行 seed cycle** | §12.0.3 | 种子读到滞后事实；报告与台账不一致 |
 
 **CA-6 为什么必须拆成两条（v5.8，外部审计第 2 项）。**

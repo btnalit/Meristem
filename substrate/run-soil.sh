@@ -178,7 +178,12 @@ RUN_ENV=(
     "MERISTEM_MODEL_MODE=$MODE"
     "MERISTEM_CREDENTIALS_FILE=$CREDENTIAL_FILE"
 )
-[[ -n "${MERISTEM_VAULT:-}" ]] && RUN_ENV+=("MERISTEM_VAULT=$MERISTEM_VAULT")
+# MERISTEM_VAULT is a soil runtime path, not a provider secret. It may come
+# from the checked source file or an explicitly supplied parent environment,
+# and is visible to soil supervisor/gateway only; supervisor strips it from
+# the worker/seed environment.
+VAULT_PATH="${SOURCE_VALUES[MERISTEM_VAULT]:-${MERISTEM_VAULT:-}}"
+[[ -n "$VAULT_PATH" ]] && RUN_ENV+=("MERISTEM_VAULT=$VAULT_PATH")
 cd -- "$REPO"
 env -i "${RUN_ENV[@]}" python3 -m substrate.supervisor "$@" &
 CHILD_PID=$!

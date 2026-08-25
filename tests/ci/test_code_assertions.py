@@ -554,52 +554,35 @@ class CA10PromotionChainFieldCorrespondence(unittest.TestCase):
         self.assertEqual(failures, [], "CA-10 FAIL: " + "; ".join(failures))
 
 
-class CA11ManualAndPanelProduceIdenticalEventSequences(unittest.TestCase):
-    """CA-11: under the same candidate, a manual accept and a panel accept
-    must produce byte-for-byte identical event sequences except
-    verdict.authority (§12.0.2). Requires a real ledger with at least one
-    manual-authority and one panel-authority promotion to compare -- neither
-    exists pre-wave-2 (no verdict/authority field appears in the ledger
-    schema at all yet), so this legitimately SKIPs.
-
-    NOTE: not explicitly named in the dispatch's "needs real ledger" list
-    (which named CA-6a/7/9/10/12), but it has the identical dependency --
-    treated the same way here; flagged in the dispatch report as an
-    assumption.
+class CA11SoilAutonomousPromotionShape(unittest.TestCase):
+    """CA-11: the formal soil-autonomous authority must emit the same
+    promotion_intent shape exercised by the controlled manual/panel parity
+    test. Production need not contain a human/manual promotion just to make
+    this assertion green.
     """
 
-    def test_ca11_manual_panel_event_parity(self):
-        # **真实的阻塞条件是「台账里还没有两种 authority 各一次晋升」**,
-        # 不是「台账不存在」。上一版无论如何都会再跳一次并仍打印 "no ledger yet" ——
-        # 台账一出现那句话就是假的, 而它永远不会自己醒来。
-        #
-        # 逐字对等的**构造性**版本由 tests/test_pipeline.py::ManualPanelParityTests
-        # 在受控仓库里跑(两次独立全流程, 固定时间与身份使 commit sha 可复现);
-        # 本条断言的职责是在**真实台账**上守同一条性质。
+    def test_ca11_soil_autonomous_authority_shape(self):
         if not LEDGER_PATH.exists():
             print("CA-11: SKIPPED (no ledger yet)")
             self.skipTest("no ledger yet")
             return
         rows = load_jsonl(LEDGER_PATH)
-        by_authority: dict = {}
-        for row in rows:
-            if row.get("kind") == "promotion_intent" and "verdict_authority" in row:
-                by_authority.setdefault(row["verdict_authority"], []).append(row)
-        missing = [a for a in ("manual", "panel") if a not in by_authority]
-        if missing:
-            reason = f"ledger has no promotion under authority {missing} yet"
-            print(f"CA-11: SKIPPED ({reason})")
-            self.skipTest(reason)
+        intents = [
+            row for row in rows
+            if row.get("kind") == "promotion_intent"
+            and row.get("verdict_authority") == "soil-autonomous"
+        ]
+        if not intents:
+            print("CA-11: SKIPPED (no soil-autonomous promotion yet)")
+            self.skipTest("no soil-autonomous promotion yet")
             return
-
-        ignore = {"ts", "event_id", "source", "commit", "parent", "verdict_authority"}
-        shapes = {a: {frozenset(k for k in rows_[0] if k not in ignore)}
-                  for a, rows_ in by_authority.items()}
-        print(f"CA-11: comparing manual vs panel promotion_intent shapes")
-        self.assertEqual(
-            shapes["manual"], shapes["panel"],
-            "CA-11 FAIL: manual and panel promotion_intent events differ in more than "
-            "verdict_authority")
+        required = {"kind", "source", "commit", "parent", "verdict_authority"}
+        failures = [
+            sorted(required - set(row)) for row in intents
+            if required - set(row)
+        ]
+        print(f"CA-11: checked {len(intents)} soil-autonomous promotion_intent event(s)")
+        self.assertEqual(failures, [], "CA-11 FAIL: missing fields " + repr(failures))
 
 
 class CA12ProjectionFreshness(unittest.TestCase):
