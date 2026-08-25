@@ -1,7 +1,7 @@
 {
-  "_comment": "Fresh controlled task for operator-single-shot H1-unfreeze evidence; parked task 0ea2deaa91ffcb28 remains historical.",
+  "_comment": "Fresh post-park controlled task for P0-c pulse; parked task a2b14419e25b5820 remains historical.",
   "_task_id_note": "task_id equals sha256 prefix of the first task line in seed/agenda.md; soil verifies this before manual-cycle.",
-  "task_id": "a2b14419e25b5820",
+  "task_id": "eafccd6515ebe6f1",
   "kind": "repair",
   "target": "classifier",
   "primary_probe": "probe-classify-basic",

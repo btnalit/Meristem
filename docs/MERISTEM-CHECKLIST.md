@@ -1583,6 +1583,19 @@ pulse 端到端（隔离 runtime）：真 run-soil → manifest 拒绝 rc=2 →
 即 owner 的 P0-c 解冻决策，需另行记录。** task 轮换保持人工：parked →
 通知 + 停 timer，铸新 identity 是 owner 动作。
 
+### 2026-08-25 · P0-c parked task rotation
+
+```text
+previous_task=a2b14419e25b5820
+previous_state=parked
+new_task=eafccd6515ebe6f1
+identity_source=seed/agenda.md 首条任务文本 SHA-256 前缀
+unpark_old_task=false
+ledger_rewrite=false
+```
+
+新 task declaration 与 agenda 已同步；manifest 刷新和 timer 恢复必须在该 task commit 推送后执行。
+
 ## 常用命令（v3.1 诊断，进程已停）
 
 ```bash
